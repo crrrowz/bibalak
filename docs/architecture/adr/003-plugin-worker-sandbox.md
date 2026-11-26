@@ -47,4 +47,4 @@ Run each plugin in a **browser Web Worker** created from a `Blob` URL. Before ex
   are refused at install. `net:fetch` needs its own ADR (SSRF guard,
   `connect-src` change) before it can open.
 - Four MIT sample plugins live in `examples/plugins/` and are bundled into the
-  app (Settings → Plugins → install samples). Guide: `docs/guides/plugins.md`.
+  app (Settings → Plugins → install samples). Guide: `docs/plugins/README.md`.

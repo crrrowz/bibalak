@@ -49,3 +49,6 @@ updater.password
 
 # Shell history written by an agent profile
 PowerShellHistory.txt
+
+# Local shell history saved in the repo folder by mistake
+PowerShellHistory.txt

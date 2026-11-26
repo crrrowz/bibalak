@@ -38,7 +38,7 @@ there is no account, no tracking and no cloud requirement.
 - **Optional AI assistant.** Bring your own OpenAI-compatible key (kept in the
   operating-system keychain) or run a local Ollama model. Nothing is sent
   without a preview of exactly what leaves your machine.
-- **Extensible.** Plugins run in an isolated worker with explicit permissions.
+- **Extensible.** Plugins run in an isolated worker with explicit permissions; see the [plugin guide](docs/plugins/README.md).
 
 ## A closer look
 
