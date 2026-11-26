@@ -11,7 +11,7 @@ repository.workspace = true
 bibalak-core.workspace = true
 serde_json.workspace = true
 zip = { version = "9", default-features = false, features = ["deflate"] }
-zstd = "0.13"
+zstd = "0.14"
 csv = "1"
 pulldown-cmark = "0.13"
 tempfile = "3"
