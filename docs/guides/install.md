@@ -18,7 +18,7 @@ for the release process see [`RELEASING.md`](../../RELEASING.md).
 | Work on the code                                    | development setup                    | [section 1](#1-development-setup)            |
 
 Every release is published on the repository's
-[Releases]([PUBLIC_REPO_URL]/releases/latest) page with a `SHA256SUMS` file
+[Releases](https://github.com/crrrowz/bibalak/releases/latest) page with a `SHA256SUMS` file
 to check the downloads.
 
 ## 1. Development setup
@@ -51,7 +51,7 @@ Per system:
 
 ```sh
 git clone https://github.com/crrrowz/bibalak
-cd keepsake
+cd bibalak
 pnpm install
 cargo test -p bibalak-core   # also generates the TypeScript IPC types
 pnpm dev                      # the desktop app with hot reload
@@ -255,7 +255,7 @@ Uninstalling does not delete this folder.
 ## Updates
 
 Download the new version from the
-[Releases]([PUBLIC_REPO_URL]/releases/latest) page and install it over the
+[Releases](https://github.com/crrrowz/bibalak/releases/latest) page and install it over the
 old one (setup or MSI) — your data is kept. For a portable copy, replace
 `Bibalak.exe` and keep the `data` folder. The in-app **Settings → Updates**
 check stays off until automatic updates are switched on; it says so instead of

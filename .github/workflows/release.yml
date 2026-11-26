@@ -184,7 +184,8 @@ jobs:
     # Every build finished and SHA256SUMS is attached: take the release out of
     # draft so it shows on the Releases page. Set the repository variable
     # RELEASE_KEEP_DRAFT=true to review drafts by hand instead.
-    needs: [finalize-checksums]
+    # Waits for the security audit too: a release with a known vulnerability stays a draft.
+    needs: [finalize-checksums, audit]
     if: vars.RELEASE_KEEP_DRAFT != 'true'
     runs-on: ubuntu-latest
     permissions:
