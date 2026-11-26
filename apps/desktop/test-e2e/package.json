@@ -12,7 +12,7 @@
     "@wdio/mocha-framework": "^9.33.1",
     "@wdio/spec-reporter": "^9.33.1",
     "ts-node": "^10",
-    "typescript": "~5.8.3"
+    "typescript": "~5.9.3"
   },
   "license": "AGPL-3.0-or-later"
 }
