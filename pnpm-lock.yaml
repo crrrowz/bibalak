@@ -43,6 +43,15 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@bibalak/ipc-types':
+        specifier: workspace:*
+        version: link:../../packages/ipc-types
+      '@bibalak/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@bibalak/ui-tokens':
+        specifier: workspace:*
+        version: link:../../packages/ui-tokens
       '@fontsource-variable/figtree':
         specifier: 5.2.10
         version: 5.2.10
@@ -58,15 +67,6 @@ importers:
       '@fontsource/ibm-plex-sans-arabic':
         specifier: 5.2.8
         version: 5.2.8
-      '@bibalak/ipc-types':
-        specifier: workspace:*
-        version: link:../../packages/ipc-types
-      '@bibalak/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      '@bibalak/ui-tokens':
-        specifier: workspace:*
-        version: link:../../packages/ui-tokens
       '@tanstack/react-query':
         specifier: ^5.107.1
         version: 5.107.1(@types/react@19.2.17)(react@19.2.7)
@@ -77,8 +77,8 @@ importers:
         specifier: ^3.14.26
         version: 3.14.26(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@tauri-apps/api':
-        specifier: ^2
-        version: 2.11.1
+        specifier: ^2.12.4
+        version: 2.12.4
       '@tauri-apps/plugin-dialog':
         specifier: ^2.7.1
         version: 2.7.1
@@ -1387,9 +1387,6 @@ packages:
 
   '@tanstack/virtual-core@3.19.11':
     resolution: {integrity: sha512-/5iHb0RHBvj8Di59FDs4ESNm45jls33aZAi4zccVXZjc/6ZvwQP6nzEYeT6weXjTf9E6/vrp2JhYWRyO+ZP13A==}
-
-  '@tauri-apps/api@2.11.1':
-    resolution: {integrity: sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA==}
 
   '@tauri-apps/api@2.12.4':
     resolution: {integrity: sha512-pVmfis+4zT8H0Qhp3xPZx9Ju7kpzvA6rr/PSJPyuwfvucTQ8sVt61NYU9KMkK703UFlYadFmjKA4HhybOtN0gg==}
@@ -5368,8 +5365,6 @@ snapshots:
 
   '@tanstack/virtual-core@3.19.11': {}
 
-  '@tauri-apps/api@2.11.1': {}
-
   '@tauri-apps/api@2.12.4': {}
 
   '@tauri-apps/cli-darwin-arm64@2.11.2':
@@ -5421,7 +5416,7 @@ snapshots:
 
   '@tauri-apps/plugin-dialog@2.7.1':
     dependencies:
-      '@tauri-apps/api': 2.11.1
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-global-shortcut@2.4.1':
     dependencies:
@@ -5433,7 +5428,7 @@ snapshots:
 
   '@tauri-apps/plugin-opener@2.5.4':
     dependencies:
-      '@tauri-apps/api': 2.11.1
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-process@2.4.0':
     dependencies:
