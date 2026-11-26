@@ -30,7 +30,7 @@ serde_json = "1"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
-ts-rs = "10"
+ts-rs = "12"
 
 # Internal crates
 bibalak-core = { path = "crates/bibalak-core" }
