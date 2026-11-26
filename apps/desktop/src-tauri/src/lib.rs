@@ -583,7 +583,7 @@ pub fn run() {
             commands::motivation::mark_monthly_badge_seen,
             commands::reminders::plan_reminders,
         ])
-        .build(tauri::generate_context!())
+        .build(app_context())
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
@@ -593,13 +593,20 @@ pub fn run() {
         });
 }
 
+/// The app context, expanded in one place only: on macOS every
+/// `generate_context!` embeds an `Info.plist` symbol, so a second expansion in
+/// the same crate (for example in a test) fails to link.
+fn app_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
     fn quick_add_window_cannot_call_admin_commands() {
         use tauri::ipc::Origin;
 
-        let mut ctx: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let mut ctx = super::app_context();
         let auth = ctx.runtime_authority_mut();
 
         for denied in [

@@ -156,7 +156,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          $zip = ./scripts/package-portable.ps1 -Version $version -OutDir $env:RUNNER_TEMP
+          # With --target the exe is under target\<triple>\release, not target\release.
+          $exe = "target\${{ matrix.target }}\release\desktop.exe"
+          $zip = ./scripts/package-portable.ps1 -Version $version -OutDir $env:RUNNER_TEMP -Exe $exe
           gh release upload "${{ github.ref_name }}" "$zip" --clobber
 
   finalize-checksums:
