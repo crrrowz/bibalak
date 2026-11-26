@@ -222,8 +222,12 @@ describe("StyleHud feedback (16b)", () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.gameState });
     });
     await vi.waitFor(() => expect(gameSpy).toHaveBeenCalledTimes(3));
-    expect(wrapper).toHaveAttribute("data-reacting", "true");
-    expect(wrapper).toHaveAttribute("data-pet-hopping", "true");
+    // The reaction starts after the new game state renders; on a slow CI
+    // machine that can come a moment after the request resolves.
+    await vi.waitFor(() => {
+      expect(wrapper).toHaveAttribute("data-reacting", "true");
+      expect(wrapper).toHaveAttribute("data-pet-hopping", "true");
+    });
     unmount();
 
     // Scholar style also reacts under normal motion, and stays still under reduced motion

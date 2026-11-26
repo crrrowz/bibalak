@@ -1,8 +1,8 @@
 # ADR-026: Game Unlocks, Pets & Mounts, Cosmetic Paths, and Solo Achievements
 
-**Status:** Accepted 2026-11-24 (owner, D41)  
+**Status:** Accepted 2026-11-24 (owner)  
 **Date:** 2026-11-24  
-**Card:** `R4s` (Spec `15a`; Decisions `D1`, `D3`, `D14`, `D30`, `D34`, `D36`, `D40`; `ADR-014`, `ADR-018`, `ADR-019`, `ADR-025`)  
+**Card:** `R4s` (Spec `15a`; `ADR-014`, `ADR-018`, `ADR-019`, `ADR-025`)  
 **Migration:** `v12 -> v13` (exact number **after `ADR-025`**, which takes `v11 -> v12`)
 
 ---
@@ -17,9 +17,9 @@
 2. **Cosmetic pets and mounts** grown from real study/task/habit work (`0..50` bond points).
 3. **Level 10 cosmetic paths** (crest, avatar frame, title line; zero stats).
 4. **25 solo achievements** with one-time historical backfill and permanent retention.
-5. **Local sound cue preferences** reusing `apps/desktop/src/stores/sound.ts` (`D28`).
+5. **Local sound cue preferences** reusing `apps/desktop/src/stores/sound.ts`.
 
-These features require durable, syncable, Postgres-ready (`D3`) persistence that integrates with `ADR-014` sync and references `ADR-025` without duplicating its inventory or gold-spending tables.
+These features require durable, syncable, Postgres-ready persistence that integrates with `ADR-014` sync and references `ADR-025` without duplicating its inventory or gold-spending tables.
 
 ---
 
@@ -27,7 +27,7 @@ These features require durable, syncable, Postgres-ready (`D3`) persistence that
 
 ### 2.1 Schema Migration (`v12 -> v13`, after `ADR-025`)
 
-Appended to `MIGRATIONS` in `crates/bibalak-db/src/schema.rs` immediately after `ADR-025`'s migration (`v11 -> v12`). Every table follows Bibalak's account-ready contract (`D3`, `D30`, `ADR-018 §2.9`): lowercase UUIDv5 `TEXT` primary key, `user_id` (defaulting to `NIL_USER_ID`), UTC millisecond timestamps, `updated_at`, `deleted_at`, and `usn`.
+Appended to `MIGRATIONS` in `crates/bibalak-db/src/schema.rs` immediately after `ADR-025`'s migration (`v11 -> v12`). Every table follows Bibalak's account-ready contract (`ADR-018 §2.9`): lowercase UUIDv5 `TEXT` primary key, `user_id` (defaulting to `NIL_USER_ID`), UTC millisecond timestamps, `updated_at`, `deleted_at`, and `usn`.
 
 ```sql
 -- v12 -> v13 (ADR-026, R4): deterministic unlocks, pets & mounts, cosmetic paths, solo achievements.
@@ -136,9 +136,9 @@ All primary keys are deterministic RFC 4122 v5 UUIDs computed in `bibalak-core` 
 
 ### 2.4 Sound Preference Storage (No Schema Column)
 
-Per **D28**, audio preferences (`volume`, `muted`, and `R4`'s `gameSfxEnabled`) are **per-device app preferences** stored in `localStorage` (`apps/desktop/src/stores/sound.ts`), not inside the synced SQLite collection.
+Audio preferences (`volume`, `muted`, and `R4`'s `gameSfxEnabled`) are **per-device app preferences** stored in `localStorage` (`apps/desktop/src/stores/sound.ts`), not inside the synced SQLite collection.
 
-### 2.5 Sync Integration (`ADR-014`, `D14`)
+### 2.5 Sync Integration (`ADR-014`)
 
 `SyncDelta` (`crates/bibalak-core/src/sync.rs`) gains five `#[serde(default)]` vectors: `game_profile`, `game_unlocks`, `game_pets`, `game_pet_credits`, and `game_achievements`. `game_pet_credits` merges by `id` with LWW on `updated_at`.
 
@@ -150,7 +150,7 @@ Per **D28**, audio preferences (`volume`, `muted`, and `R4`'s `gameSfxEnabled`) 
 - **Acknowledge:** Sets `usn = server_usn` for exported rows with `usn = -1`.
 - **Anki isolation:** Excluded from `.apkg` and `.colpkg` import/export.
 
-### 2.6 PostgreSQL Readiness (`D3`)
+### 2.6 PostgreSQL Readiness
 
 - All five tables map 1:1 to PostgreSQL (`TEXT` UUIDs or `UUID` columns, `BIGINT` UTC ms, `INTEGER` flags/counts, partial unique index `WHERE is_active = 1 AND deleted_at IS NULL`).
 - No SQLite-only syntax (`AUTOINCREMENT`, `GLOB`, `json_extract`) is used in `v12 -> v13`.
@@ -162,11 +162,11 @@ Per **D28**, audio preferences (`volume`, `muted`, and `R4`'s `gameSfxEnabled`) 
 1. **Overloading `progress_ledger` with `xp = 0, gold_cents = 0` for unlocks and achievements:**
    - _Rejected._ `progress_ledger` rows are soft-revoked on undo (`ADR-019 §2.4`) and store only numeric point deltas. Unlocks, pets, and achievements are monotonic, never revoked on undo, and require structured fields (`tier`, `seen_at`, `mount_unlocked_at`, `species_key`).
 2. **Computing achievements purely on read without a table:**
-   - _Rejected._ Pure read-time queries cannot record `earned_at` timestamps, `seen_at` toast acknowledgement, or syncable profile badges for Stage 2 (`D30`).
+   - _Rejected._ Pure read-time queries cannot record `earned_at` timestamps, `seen_at` toast acknowledgement, or syncable profile badges for Stage 2.
 3. **Storing pet growth and unlocked badges as a JSON blob in `sync_state` or `game_profile`:**
    - _Rejected._ Row-level `SyncDelta` merge cannot cleanly combine two offline devices that each unlocked a different pet or raised bond points; normalized tables with deterministic UUIDv5 keys merge losslessly (`ADR-014`).
 4. **Adding `game_sfx_enabled` to `game_profile` in SQLite:**
-   - _Rejected._ Contradicts `D28`, which keeps sound volume and mute as local per-device preferences alongside `keepsake-sound-volume`.
+   - _Rejected._ Contradicts the project rule that keeps sound volume and mute as local per-device preferences alongside `keepsake-sound-volume`.
 
 ---
 

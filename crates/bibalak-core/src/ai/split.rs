@@ -2,11 +2,11 @@
 
 use crate::error::{CoreError, CoreResult};
 
-/// Maximum pasted source length accepted by card generation (D21).
+/// Maximum pasted source length accepted by card generation.
 pub const MAX_GENERATE_SOURCE_CHARS: usize = 50_000;
-/// Default target chunk size in characters (~6,000 per request, D21).
+/// Default target chunk size in characters (~6,000 per request).
 pub const DEFAULT_CHUNK_MAX_CHARS: usize = 6_000;
-/// Minimum/maximum total cards per generation run (D21).
+/// Minimum/maximum total cards per generation run.
 pub const MIN_GENERATE_CARDS: u32 = 5;
 pub const MAX_GENERATE_CARDS: u32 = 50;
 

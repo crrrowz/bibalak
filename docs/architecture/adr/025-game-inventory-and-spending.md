@@ -1,9 +1,9 @@
 # ADR-025: Game Inventory, Equipment, Custom Rewards, Gold Spending, and Freeze Tokens
 
-**Status:** Accepted 2026-11-24 (owner, D41)  
+**Status:** Accepted 2026-11-24 (owner)  
 **Date:** 2026-11-24  
 **Card:** `14a` (`R2s` — Game style spec; implements in `14` / `R2`, `BW2`)  
-**Related:** Decisions D1, D3, D14, D15, D16, D30, D34, D36, D38, D40; ADR-014, ADR-018, ADR-019, ADR-023
+**Related:** ADR-014, ADR-018, ADR-019, ADR-023
 
 ---
 
@@ -21,7 +21,7 @@ Bibalak's single progress engine ([ADR-019](019-progress-engine.md)) records ear
   5. User-defined custom rewards (`custom_rewards`).
   6. Streak freeze token balance and consumption (`freeze_token_ledger`), reversible on `UndoAction::LogHabit` and habit unfreeze/completion.
 
-Per **D3** (Postgres-ready local SQLite), **ADR-014** (sync journal & deterministic LWW merge), **ADR-018 §2.9** (account-ready tables), and **ADR-019 §4.1** (single source of truth, no cached totals, zero penalties), balances must be derived directly from ledger rows rather than stored in mutable counter columns.
+Following the account-ready rules (Postgres-ready local SQLite), **ADR-014** (sync journal & deterministic LWW merge), **ADR-018 §2.9** (account-ready tables), and **ADR-019 §4.1** (single source of truth, no cached totals, zero penalties), balances must be derived directly from ledger rows rather than stored in mutable counter columns.
 
 ---
 
@@ -146,7 +146,7 @@ Changed in review (the internal archive) so the two ADRs share one source of tru
    $$\text{spent\_gold\_cents} = \text{COALESCE}(\sum \text{amount\_cents WHERE user\_id} = u \text{ AND deleted\_at IS NULL}, 0)$$
 3. **Available gold balance:**
    $$\text{available\_gold\_cents} = \max(0,\ \text{earned\_gold\_cents} - \text{spent\_gold\_cents})$$
-   Using `saturating_sub` in Rust guarantees the balance can never go negative even if a later review undo (`undo_answer`) or task reopen reduces `earned_gold_cents` slightly below `spent_gold_cents`. `ProgressSummaryDto.gold_cents` reports `available_gold_cents` across all styles because the engine is shared (D1).
+   Using `saturating_sub` in Rust guarantees the balance can never go negative even if a later review undo (`undo_answer`) or task reopen reduces `earned_gold_cents` slightly below `spent_gold_cents`. `ProgressSummaryDto.gold_cents` reports `available_gold_cents` across all styles because the engine is shared.
 4. **Streak freeze token balance (`freeze_token_ledger`):**
    $$\text{freeze\_tokens\_held} = \max(0,\ \text{COALESCE}(\sum \text{delta WHERE user\_id} = u \text{ AND deleted\_at IS NULL}, 0))$$
    - Cap enforced in Rust transactions: `FREEZE_TOKEN_CAP = 3`.
@@ -229,7 +229,7 @@ All singleton or key-addressed rows use deterministic RFC 4122 v5 UUIDs derived 
   - For `avatar_profile`, `inventory_items`, `avatar_equipped`, `custom_rewards`: standard `ADR-018 §2.9` tie-break (`deleted_at.is_some()` wins, then canonical serialized value comparison).
 - Excluded from `.apkg` / `.colpkg` export and import.
 
-### 2.6 Postgres Stage 2 Mapping (D3)
+### 2.6 Postgres Stage 2 Mapping
 
 Every v12 table maps 1:1 to PostgreSQL (in the Stage 2 `game` or `progress` schema defined by `ADR-017`):
 

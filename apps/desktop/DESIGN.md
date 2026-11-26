@@ -226,7 +226,7 @@ pnpm --filter @bibalak/desktop tauri icon public/logos/bibalak-icon.svg -o src-t
 
 ## 8. Presentation styles
 
-Bibalak ships with `data-style="default"` and `data-style="scholar"` on `<html>` (stored per device in `keepsake-style`). Styles change presentation only (`D1`), never points or scheduling rules.
+Bibalak ships with `data-style="default"` and `data-style="scholar"` on `<html>` (stored per device in `keepsake-style`). Styles change presentation only, never points or scheduling rules.
 
 - **Scholar (`[data-style="scholar"]` and `[data-style="scholar"].dark`):** Classic library palette overriding surface, ink, border, and primary tokens (paper `#F6F1E6` / deep ink `#141820`, card `#FBF8F1` / `#1C2230`, ink `#1F2A3A` / `#E8E2D6`, navy primary `#22406B` / `#8FB0DD`, border `#DDD3C2`), `--radius: 0.5rem` (`8px`), and thin bottom rule lines under section headings. The burgundy accent (`#7A2E3A` light / `#D89AA5` dark) lives in `--scholar-accent` so `--accent` remains a safe hover fill for `hover:bg-accent hover:text-foreground`.
 - **Scholar headings only:** `h1`–`h3` and `.screen-title` use **Literata Variable** (Latin, `@fontsource-variable/literata`, OFL-1.1) and **Amiri** (Arabic, `@fontsource/amiri` weights 400/700, OFL-1.1). Body text stays Figtree / IBM Plex Sans Arabic.

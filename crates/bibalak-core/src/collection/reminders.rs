@@ -1,4 +1,4 @@
-//! `Collection` use-case for OS reminder planning (D45 / ADR-028, 16c).
+//! `Collection` use-case for OS reminder planning (ADR-028, 16c).
 
 use std::sync::atomic::Ordering;
 

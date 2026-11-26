@@ -1,5 +1,5 @@
 //! Pure progress engine rules: card review rewards, deterministic ledger IDs,
-//! and the Bibalak leveling curve (ADR-019, D1, D15).
+//! and the Bibalak leveling curve (ADR-019).
 //!
 //! No IO, no database dependencies, and no system-clock reads.
 
@@ -17,10 +17,10 @@ pub const MS_PER_DAY: i64 = 86_400_000;
 /// Rolling 30-day window (in ms) used for true-retention calculations.
 pub const RETENTION_30D_MS: i64 = 30 * MS_PER_DAY;
 
-/// Nil UUID used as the local single-user `user_id` in Stage 1 (D3, ADR-014 §2.1, ADR-019 §2.4).
+/// Nil UUID used as the local single-user `user_id` in Stage 1 (ADR-014 §2.1, ADR-019 §2.4).
 pub const NIL_USER_ID: &str = "00000000-0000-0000-0000-000000000000";
 
-/// Gold hundredths awarded per eligible card review (`25` = `0.25` gold, D15).
+/// Gold hundredths awarded per eligible card review (`25` = `0.25` gold).
 pub const REVIEW_GOLD_CENTS: u64 = 25;
 
 /// XP awarded per rewarded task completion (ADR-019 §4.3).

@@ -9,6 +9,7 @@
 | macOS    | Intel (`x64`)             | `Bibalak_<version>_x64.dmg`          | Drag `Bibalak.app` to Applications                        |
 | Linux    | x86_64                    | `Bibalak_<version>_amd64.AppImage`   | `chmod +x` and run directly                               |
 | Linux    | x86_64                    | `Bibalak_<version>_amd64.deb`        | Debian / Ubuntu (`sudo apt install ./Bibalak_*.deb`)      |
+| Linux    | x86_64                    | `Bibalak-<version>-1.x86_64.rpm`     | Fedora / openSUSE (`sudo dnf install ./Bibalak-*.rpm`)    |
 
 ### Unsigned installer notice
 

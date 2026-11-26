@@ -1,8 +1,8 @@
 # ADR-014: Sync Journal, Merge Rules, and Unified ID Architecture
 
-**Status:** Accepted (owner, 2026-11-18, together with D27)  
+**Status:** Accepted (owner, 2026-11-18)  
 **Date:** 2026-11-18  
-**Card:** `S1a` (Backlog Step 6a; Decisions D3, D8; Spec the internal planning notes)  
+**Card:** `S1a` (Backlog Step 6a; Spec the internal planning notes)  
 **Gate:** Step 6 (Pre-requisite for Step 6b sync journal and merge engine implementation)
 
 ---
@@ -12,7 +12,7 @@
 Bibalak is a spaced-repetition desktop application designed to support both local-first offline study and multi-device synchronization. Phase 2 introduces cloud synchronization across two primary transports:
 
 1. **Google Drive BYO Storage (Free tier):** File-oriented object storage using app data folders (`appDataFolder` / `drive.file`) with device leases.
-2. **Bibalak Cloud Hosted Sync (Paid SaaS):** Real-time PostgreSQL database hosted on Supabase (D3), providing authentication, Row-Level Security (RLS), and REST/RPC transport.
+2. **Bibalak Cloud Hosted Sync (Paid SaaS):** Real-time PostgreSQL database hosted on Supabase, providing authentication, Row-Level Security (RLS), and REST/RPC transport.
 
 Per the internal planning notes §2, both transports must share **one single deterministic merge engine and delta model** in `crates/bibalak-core` and `crates/bibalak-db`.
 
@@ -39,7 +39,7 @@ We adopt a two-tier identifier model:
    - **Primary Key:** UUIDv4 stored as `TEXT` (`TEXT PRIMARY KEY`).
    - **Multi-Tenancy & Authorization:** `user_id UUID NOT NULL` column on every row.
    - **Deletion Model:** Soft delete via `deleted_at TIMESTAMP WITH TIME ZONE NULL`.
-   - **Rationale (D3):** Native alignment with Supabase Auth and PostgreSQL RLS policies; eliminates primary key allocation contention across offline devices without centralized sequence counters.
+   - **Rationale:** Native alignment with Supabase Auth and PostgreSQL RLS policies; eliminates primary key allocation contention across offline devices without centralized sequence counters.
 
 ---
 
@@ -71,14 +71,14 @@ Forensic audit of `bibalak-db` establishes a strict dichotomy between row-level 
    - Deleting notes, cards, or decks writes to `graves` and updates `collection.modified = now_ms`.
    - `collection.schema_mod` is **NOT** modified.
    - These deletions are synchronized through normal delta journals without requiring a full sync.
-2. **Full Sync via `schema_mod` (structural changes only, D27):**
+2. **Full Sync via `schema_mod` (structural changes only):**
    - Only structural note-type changes bump `collection.schema_mod = now_ms` and `collection.modified = now_ms`: adding, removing or reordering a field or a template, deleting a notetype, and changing the note type of notes.
    - Cosmetic note-type changes are normal row changes (`notetypes.mod = now_ms`, `usn = -1`) and do **not** bump `schema_mod`: renaming a notetype, field or template, editing template text, CSS or field options, and adding a new notetype (including stock ones). This matches Anki.
    - `notetypes`, `fields`, and `templates` do not record individual tombstones in `graves` on deletion.
    - When client and server `schema_mod` values diverge, the merge engine disallows delta merging and triggers a **Full Sync Boundary** (unidirectional collection alignment or interactive user confirmation).
 
-3. **Card state changes (D27):** bury and unbury mark the card dirty (`mod = now_ms`, `usn = -1`) like suspend, so they sync (as in Anki).
-4. **One clock (D27):** every `Storage` write receives `now_ms` from the `Collection` clock; bibalak-db never reads the system clock for sync markers.
+3. **Card state changes:** bury and unbury mark the card dirty (`mod = now_ms`, `usn = -1`) like suspend, so they sync (as in Anki).
+4. **One clock:** every `Storage` write receives `now_ms` from the `Collection` clock; bibalak-db never reads the system clock for sync markers.
 
 ---
 
@@ -96,7 +96,7 @@ When merging deltas between local and remote states:
    - If `local.mod == remote.mod`, tie-breaker is deterministic byte comparison of serialized content.
 3. **Tombstones (`graves` vs Edits):**
    - **Rule:** Tombstone wins over stale edits.
-   - The deletion time lives in the local-only table `grave_times (oid, type, deleted_ms)`, because Anki's `graves` has no time column. It is written in the same transaction as each `graves` row (D29, 2026-11-18).
+   - The deletion time lives in the local-only table `grave_times (oid, type, deleted_ms)`, because Anki's `graves` has no time column. It is written in the same transaction as each `graves` row (2026-11-18).
    - If a `graves` entry exists with `grave.usn > row.usn` or `deleted_ms >= row.mod`, the row is deleted locally.
    - If a local edit occurred strictly _after_ the deletion timestamp (e.g. offline edit before receiving tombstone), the local edit resurrects the entity: the tombstone is removed and `usn = -1`.
 4. **Media Store (`media`):**
@@ -139,7 +139,7 @@ Following acceptance of ADR-014 by the project owner:
 
 The following design decisions are flagged for owner review before Step 6b code is written:
 
-1. **New Tables Sync Representation (D3):**
+1. **New Tables Sync Representation:**
    - For productivity tasks/habits and gamification tables, should sync deltas be tracked via row-level `updated_at` / `deleted_at` timestamps queried with `WHERE updated_at > last_sync_time`, or should a unified changelog table (`sync_journal`) record every change?
    - _Recommendation:_ Use row-level `updated_at` + `deleted_at` directly with Supabase Postgres RLS; it eliminates journal bloat and maps 1:1 to Postgres change-data capture.
 2. **Full Sync UX Trigger:**

@@ -1,5 +1,7 @@
 # Individual Contributor License Agreement (CLA)
 
+**Version 1.0 — 2026-11-26.** A change to this text gets a new version number; signatures name the version they accept.
+
 _Adapted from the [Harmony Individual Contributor License Agreement (HA-ICA-1.0)](https://www.harmonyagreements.org/), licensed under the [Creative Commons Attribution 3.0 Unported License (CC-BY-3.0)](https://creativecommons.org/licenses/by/3.0/), and patterned after the Apache Software Foundation Individual Contributor License Agreement (ICLA)._
 
 Thank you for your interest in contributing to Bibalak ("the Project"), maintained by Hassanein Hassan Alkahafji ("Project Owner", "we", "us").
@@ -12,11 +14,11 @@ By signing this Agreement (including electronically through our CLA tool on a pu
 
 - **"You"** (or **"Your"**) means the individual copyright owner, or a person legally authorized by the copyright owner, entering into this Agreement.
 - **"Contribution"** means any original work of authorship, including source code, documentation, translations, artwork, configuration, or modifications/additions to existing works, that You intentionally Submit to Hassanein Hassan Alkahafji for inclusion in the Project.
-- **"Submit"** (or **"Submitted"**) means any form of electronic, verbal, or written communication sent to Hassanein Hassan Alkahafji or its representatives for the purpose of discussing and improving the Project (including pull requests, patches, issues, and mailing-list or forum posts), excluding communications conspicuously marked in writing by You as `"Not a Contribution."`
+- **"Submit"** (or **"Submitted"**) means sending a Contribution to Hassanein Hassan Alkahafji or the Project for inclusion in the Project, such as through a pull request or a patch; bug reports, feature ideas and discussion posts are not Submissions, excluding communications conspicuously marked in writing by You as `"Not a Contribution."`
 
 ## 2. Grant of Copyright License
 
-Subject to the terms and conditions of this Agreement, You hereby grant to Hassanein Hassan Alkahafji, and to recipients of software distributed by Hassanein Hassan Alkahafji, a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright licence to:
+Subject to the terms and conditions of this Agreement, You hereby grant to Hassanein Hassan Alkahafji, his successors and assigns, and any entity he controls, and to recipients of software distributed by Hassanein Hassan Alkahafji, a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright licence to:
 
 - reproduce, prepare derivative works of, publicly display, publicly perform, and distribute Your Contributions and any derivative works thereof in source or object form; and
 - **sublicense and relicense** Your Contributions (in whole or in part) under any licence terms chosen by Hassanein Hassan Alkahafji, including without limitation the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`), future open-source licences, and proprietary or commercial licences (dual licensing), without any obligation to account to You for fees or royalties.
@@ -25,7 +27,7 @@ You retain ownership of the copyright in Your own original Contributions and rem
 
 ## 3. Grant of Patent License
 
-Subject to the terms and conditions of this Agreement, You hereby grant to Hassanein Hassan Alkahafji, and to recipients of software distributed by Hassanein Hassan Alkahafji, a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable (except as stated in this Section) patent licence to make, have made, use, offer to sell, sell, import, and otherwise transfer the Project, where such licence applies only to those patent claims licensable by You that are necessarily infringed by Your Contribution(s) alone or by combination of Your Contribution(s) with the Project to which such Contribution(s) was Submitted.
+Subject to the terms and conditions of this Agreement, You hereby grant to Hassanein Hassan Alkahafji, his successors and assigns, and any entity he controls, and to recipients of software distributed by Hassanein Hassan Alkahafji, a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable (except as stated in this Section) patent licence to make, have made, use, offer to sell, sell, import, and otherwise transfer the Project, where such licence applies only to those patent claims licensable by You that are necessarily infringed by Your Contribution(s) alone or by combination of Your Contribution(s) with the Project to which such Contribution(s) was Submitted.
 
 If any entity institutes patent litigation against You or any other entity (including a cross-claim or counterclaim in a lawsuit) alleging that Your Contribution, or the Project to which You have contributed, constitutes direct or contributory patent infringement, then any patent licences granted to that entity under this Agreement for that Contribution or the Project shall terminate as of the date such litigation is filed.
 

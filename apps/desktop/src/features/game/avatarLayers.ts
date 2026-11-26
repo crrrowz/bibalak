@@ -74,7 +74,7 @@ function equippedMapFrom(equipped?: EquippedSlotDto[] | null): Map<EquipmentSlot
 
 /**
  * Deterministically resolve the ordered SVG paper-doll layers for `<AvatarStage />`
- * (spec 14a §4.2, D42 #2, and reserved 15a pet/mount/frame slots).
+ * (spec 14a §4.2, and reserved 15a pet/mount/frame slots).
  */
 export function resolveAvatarLayers({
   style,

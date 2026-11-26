@@ -37,6 +37,15 @@ Bibalak is an **owner-led open-source project**. The source code of the desktop 
 - **Stepping down / Emeritus:** A Maintainer may step down at any time by notifying Hassanein Hassan Alkahafji. Maintainers who are inactive for an extended period (for example, 6 months) may be moved to emeritus status and have write permissions paused for repository security; they are always welcome to return.
 - **Removal:** Hassanein Hassan Alkahafji may revoke maintainer status for Code of Conduct violations, security breaches, or persistent disregard for project standards.
 
-## 5. Changes to Governance
+## 5. Continuity
+
+If Hassanein Hassan Alkahafji can no longer lead the project, his rights in
+the project (including the rights granted under the Contributor License
+Agreements) pass to his successors or assigns, who decide who leads it next.
+Until then, the repository stays open under its licence: anyone may keep
+using, studying and forking it under `AGPL-3.0-or-later`, subject to the
+trademark policy.
+
+## 6. Changes to Governance
 
 Hassanein Hassan Alkahafji may update this governance document via a public pull request with a summary of changes.

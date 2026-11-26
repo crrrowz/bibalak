@@ -1,4 +1,4 @@
-//! Filesystem path guards for Tauri IPC commands (H1 / F1, D45).
+//! Filesystem path guards for Tauri IPC commands (H1 / F1).
 //!
 //! Enforces two invariants across Windows, macOS, and Linux:
 //! 1. Backup restore/delete accept only a plain `.zip` filename inside `backups/`.

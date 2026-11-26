@@ -1,9 +1,9 @@
 # ADR-031: Scoped Deck Export, Streaming Media ZIP Writer, and Export Cancellation (`EXP1`)
 
-**Status:** Accepted (D48, 2026-11-26) — Phase 2 builds it after the `STUDY1` merge  
+**Status:** Accepted (2026-11-26) — Phase 2 builds it after the `STUDY1` merge  
 **Date:** 2026-11-26  
 **Card:** `EXP1` (fixes `BW2-17`)  
-**Related:** Deck Export Spec · [ADR-001](001-clean-architecture.md) · [ADR-007](007-note-ids-and-checksums.md) · [ADR-010](010-media-store.md) · [ADR-029](029-ipc-security-hardening.md) · [ADR-030](030-note-type-presets.md) · `decisions.md` (`D6`, `D32`, `D45`)
+**Related:** Deck Export Spec · [ADR-001](001-clean-architecture.md) · [ADR-007](007-note-ids-and-checksums.md) · [ADR-010](010-media-store.md) · [ADR-029](029-ipc-security-hardening.md) · [ADR-030](030-note-type-presets.md) · `decisions.md`
 
 ---
 
@@ -65,7 +65,7 @@ Add `write_apkg_streaming` in `crates/bibalak-ankifmt/src/writer.rs` (keeping ex
 - **Security (`ADR-029`):**
   - `export_package` continues to verify `request.path` exclusively through `PickedPathsState::verify_save_file(&request.path, &["apkg"])` (rejecting unpicked paths, traversal, UNC paths, and `data_dir`).
   - `get_export_estimate`, `export_package`, and `cancel_export` are added to `APP_COMMANDS` (`build.rs`) and granted only to the `main` window (`capabilities/default.json`), **never** to `quick-add` (`capabilities/quick-add.json`).
-- **No new Rust or npm dependencies:** Uses existing workspace `zip` (`9`), `rusqlite` (`0.42`), `tempfile` (`3`), `serde`, `ts-rs`, and standard library I/O/atomics (`D6`).
+- **No new Rust or npm dependencies:** Uses existing workspace `zip` (`9`), `rusqlite` (`0.42`), `tempfile` (`3`), `serde`, `ts-rs`, and standard library I/O/atomics.
 
 ---
 
@@ -87,7 +87,7 @@ Add `write_apkg_streaming` in `crates/bibalak-ankifmt/src/writer.rs` (keeping ex
   - Cold-cache export skips 400 MB of redundant SHA-1 disk reads.
   - Deck export includes only the cards, notes, notetypes, and media that belong to that deck (and optional subdecks).
   - Cancellation is responsive mid-stream and never leaves a corrupt or partial `.apkg` on disk.
-  - Pure core + platform-agnostic `MediaStore::open_reader` keeps desktop, future mobile (`MOB`), and web (`W1`) aligned (`D45`).
+  - Pure core + platform-agnostic `MediaStore::open_reader` keeps desktop, future mobile (`MOB`), and web (`W1`) aligned.
 - **Negative / Migration:**
   - `export_package`'s IPC signature changes from `(path: String) -> u32` to `(request: ExportPackageRequest) -> ExportSummary`, requiring updates to `apps/desktop/src/lib/ipc.ts`, `SettingsScreen.tsx`, `CommandPalette.tsx`, their tests, and `packages/ipc-types`.
   - No database schema migration (`v15` unchanged).

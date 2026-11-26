@@ -290,7 +290,7 @@ pub fn export_delta(conn: &Connection) -> CoreResult<SyncDelta> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
 
-    // 7. Graves (carrying deleted_ms from grave_times, D29)
+    // 7. Graves (carrying deleted_ms from grave_times)
     let mut stmt = conn
         .prepare(
             "SELECT g.oid, g.type, g.usn, COALESCE(gt.deleted_ms, col.modified)

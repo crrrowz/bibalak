@@ -21,7 +21,7 @@ You may use the Bibalak word mark without prior written permission in the follow
 1. **Talking about Bibalak:** Referring to Bibalak in articles, blog posts, tutorials, videos, academic research, or community discussions, provided you do not imply official endorsement or sponsorship.
 2. **Describing compatibility:** Stating truthfully that your plugin, deck pack, or companion tool is `"for Bibalak"` or `"compatible with Bibalak"` (as long as Bibalak is not part of your product's own brand name).
 3. **Unmodified official builds:** Redistributing exact, unmodified source releases or official installers/binaries published by Hassanein Hassan Alkahafji, with all original notices, signatures, and attribution intact.
-4. **Linking:** Linking to https://github.com/crrrowz/bibalak or https://github.com/crrrowz/bibalak using the Bibalak name.
+4. **Linking:** Linking to https://github.com/crrrowz/bibalak using the Bibalak name.
 
 ## 3. Prohibited Uses (Not Allowed Without Written Permission)
 

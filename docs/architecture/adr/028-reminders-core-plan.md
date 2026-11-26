@@ -5,7 +5,7 @@
 
 ## Context
 
-16c adds daily study, evening streak and habit reminders. D45 asks that every
+16c adds daily study, evening streak and habit reminders. asks that every
 feature run on Windows, macOS, Linux, phones and a web version from one core.
 OS notification APIs differ per host, and some hosts (the preview, a browser
 tab that is closed) cannot deliver at a given time.

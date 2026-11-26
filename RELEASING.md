@@ -17,7 +17,7 @@ This guide describes how Bibalak releases are prepared and built across **Window
    ```
    This updates:
    - `Cargo.toml` (`[workspace.package].version`)
-   - every workspace `package.json`
+   - every workspace `package.json` except `packages/plugin-sdk`, which keeps its own plugin API version
    - `apps/desktop/src-tauri/tauri.conf.json`
    - `CHANGELOG.md` (moves `## [Unreleased]` items into `## [<version>] - YYYY-MM-DD`)
 4. Review the diff and commit:
@@ -37,7 +37,7 @@ Only the project owner pushes release tags and publishes GitHub Releases:
 2. GitHub Actions (`.github/workflows/release.yml`) runs automatically on `v*` tags:
    - **Windows (`x86_64`):** NSIS installer (`-setup.exe`), MSI (`.msi`), and portable ZIP (`_x64_portable.zip`).
    - **macOS (`aarch64` & `x86_64`):** `.dmg` disk images.
-   - **Linux (`x86_64`):** `.AppImage` and `.deb`.
+   - **Linux (`x86_64`):** `.AppImage`, `.deb` and `.rpm`.
    - **Checksums:** Generates `SHA256SUMS` covering all release artifacts.
    - **Release body:** Combines the matching `CHANGELOG.md` section with `.github/release-notes-template.md`.
    - **Publish:** Once every platform has uploaded its files and `SHA256SUMS` is attached, the `publish` job takes the release out of draft. A tag with a suffix (`v1.2.0-1`) becomes a pre-release; a plain tag becomes the **Latest** release.

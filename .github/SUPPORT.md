@@ -22,5 +22,5 @@ the people who build and use it, through the channels below.
 
 ## Response times
 
-Bibalak is maintained by a small team. Issues are triaged weekly; security
+Bibalak is maintained by its author with help from contributors. Issues are triaged weekly; security
 reports are answered first.

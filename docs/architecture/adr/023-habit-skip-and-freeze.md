@@ -1,9 +1,9 @@
 # ADR-023: Habit Skip and Freeze States in `habit_logs`
 
-**Status:** Accepted 2026-11-24 (owner, D38)  
+**Status:** Accepted 2026-11-24 (owner)  
 **Date:** 2026-11-23  
-**Card:** `13p` (`PLNs` — Plan screens redesign spec; Decision D37 #4)  
-**Related:** Decisions D1, D3, D14, D15, D30, D34, D36, D37; ADR-014, ADR-018, ADR-019, ADR-022
+**Card:** `13p` (`PLNs` — Plan screens redesign spec)  
+**Related:** ADR-014, ADR-018, ADR-019, ADR-022
 
 ---
 
@@ -11,7 +11,7 @@
 
 In schema `v10` ([ADR-018](018-productivity-data-model.md)), `habit_logs` tracks only `logged_value REAL` and `completed INTEGER CHECK (completed IN (0, 1))`. Any scheduled day without a row where `completed = 1` breaks `compute_habit_streak` (`crates/bibalak-core/src/productivity.rs:L1475-L1561`) and drags down completion rings (`compute_habit_day_rings`, `L1381-L1472`).
 
-Owner decision **D37 #4** defines two non-penalizing protection states on a habit day:
+The project defines two non-penalizing protection states on a habit day:
 
 1. **Skip (`skipped`):** A neutral day state available in **every** presentation style (`Default`, `Scholar`, `Game`) for planned rest, illness, travel, or clinical rotation emergencies. A skipped day preserves the streak without incrementing it and earns no XP or gold.
 2. **Freeze (`frozen`):** Earned streak protection available **only in Game style** (when `14a` / `R2` introduces the Game shop and reward inventory). It preserves the streak across an otherwise missed scheduled day without incrementing it and earns no XP or gold.
@@ -35,7 +35,7 @@ ALTER TABLE habit_logs
 
 - **Backward compatibility:** Every existing `v10` row receives `status = 'logged'` automatically, preserving `completed IN (0, 1)` and `logged_value >= 0.0` with no table rewrite.
 - **Invariant enforced in Rust (`validate_habit_log_input` and `Collection::log_habit`):** Whenever `status != HabitLogStatus::Logged` (`Skipped` or `Frozen`), `completed = false` and `logged_value = 0.0`. (SQLite `ALTER TABLE ADD COLUMN` supports column-level `CHECK` only; cross-column invariants are enforced in `bibalak-core`.)
-- **Postgres Stage 2 mapping (D3, ADR-018 §2.12):** Maps 1:1 to `status TEXT NOT NULL DEFAULT 'logged' CHECK (status IN ('logged', 'skipped', 'frozen'))` in the `productivity` schema.
+- **Postgres Stage 2 mapping (ADR-018 §2.12):** Maps 1:1 to `status TEXT NOT NULL DEFAULT 'logged' CHECK (status IN ('logged', 'skipped', 'frozen'))` in the `productivity` schema.
 
 ### 2.2 Domain & IPC Types (`crates/bibalak-core/src/productivity.rs`)
 
@@ -105,10 +105,10 @@ In `sync_deck_linked_habits_for_day` (`crates/bibalak-core/src/collection/produc
 ### Positive
 
 - One lightweight `ALTER TABLE` (`v10 -> v11`) handles both all-style neutral skips (`PLN3`) and future Game-only freezes (`14a` / `R2`).
-- Zero reward inflation, zero streak inflation, and zero penalty — preserving `ADR-019 §4.1` and `D1`.
+- Zero reward inflation, zero streak inflation, and zero penalty — preserving `ADR-019 §4.1`.
 - Existing `UndoLog` snapshot mechanics (`restore_habit_log_snapshot`) and `ADR-014` sync work unchanged once `status` is included in `HabitLog`.
 
 ### Negative / Trade-offs
 
-- Requires a schema bump (`v10 -> v11`) and one Rust compile batch (`BW1b` per D32) before `PLN3` can persist `Skipped` days.
+- Requires a schema bump (`v10 -> v11`) and one Rust compile batch (`BW1b`) before `PLN3` can persist `Skipped` days.
 - `Frozen` status validation rejects writes until Cycle 2 defines freeze-token storage and consumption rules.

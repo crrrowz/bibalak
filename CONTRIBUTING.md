@@ -9,7 +9,7 @@ Welcome! Contributions of bug fixes, tests, accessibility improvements, document
 | Tool      | Version        | Notes                                                      |
 | --------- | -------------- | ---------------------------------------------------------- |
 | Rust      | stable (1.89+) | Install via `rustup`; on Windows select the MSVC toolchain |
-| Node.js   | 20 LTS or 22   |                                                            |
+| Node.js   | 22 or newer    |                                                            |
 | pnpm      | 11             | `corepack enable`, or `npx pnpm@11.5.0 <cmd>`              |
 | Tauri CLI | v2             | Installed via workspace dependencies (`pnpm dev`)          |
 

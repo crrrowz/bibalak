@@ -1,9 +1,9 @@
 # ADR-030: Note Type Presets — Schema, Deterministic Compilation, and Anki Compatibility
 
-**Status:** Proposed — owner approved `NT0` questions with conditions (2026-11-25; pending `D47` on merge)  
+**Status:** Proposed — owner approved `NT0` questions with conditions (2026-11-25)  
 **Date:** 2026-11-25  
 **Card:** `NT0` (implements in `NT1`–`NT4`)  
-**Related:** Note Types Redesign Blueprint · [ADR-001](001-clean-architecture.md) · [ADR-004](004-sandboxed-card-frame.md) · [ADR-014](014-sync-journal.md) · `decisions.md` (`D27`, `D30`, `D45`)
+**Related:** Note Types Redesign Blueprint · [ADR-001](001-clean-architecture.md) · [ADR-004](004-sandboxed-card-frame.md) · [ADR-014](014-sync-journal.md) · `decisions.md`
 
 ---
 
@@ -14,8 +14,8 @@
 To preserve Bibalak's core promises, the preset representation must satisfy five constraints:
 
 1. **Lossless Anki compatibility:** Imported `.apkg` note types must work without alteration, and any note type created or edited in Simple mode must export as standard Anki HTML/CSS (`.apkg`) and render through the existing `bibalak-render` engine and `CardFace` sandbox (`ADR-004`).
-2. **One core across platforms (`D45`):** Layout compilation, validation, and stock detection must be pure Rust in `bibalak-core`, with zero OS, database, Tauri, or UI dependencies.
-3. **Sync compatibility (`ADR-014`, `D27`):** Editing a preset's layout options or style must sync cleanly as a cosmetic note-type edit (`mod` + `usn = -1`), bumping `schema_mod` only when fields or templates are structurally added/removed/reordered.
+2. **One core across platforms:** Layout compilation, validation, and stock detection must be pure Rust in `bibalak-core`, with zero OS, database, Tauri, or UI dependencies.
+3. **Sync compatibility (`ADR-014`):** Editing a preset's layout options or style must sync cleanly as a cosmetic note-type edit (`mod` + `usn = -1`), bumping `schema_mod` only when fields or templates are structurally added/removed/reordered.
 4. **Minimal schema churn:** Avoid an unnecessary SQLite migration if the existing canonical schema already carries extensible per-notetype metadata.
 5. **Reversibility & safety:** Switching from Simple to Advanced must never break user-edited code; switching back to Simple must never silently overwrite custom HTML/CSS.
 
@@ -112,7 +112,7 @@ All preset logic lives in pure Rust (`crates/bibalak-core/src/notetype_preset.rs
 - **Positive:**
   - Zero SQLite schema migration (`v15` unchanged) and zero changes to `bibalak-ankifmt` or `bibalak-render`.
   - Sync (`ADR-014`) carries `keepsakePreset` across devices automatically with no merge-engine changes.
-  - Works identically on desktop, future mobile (`MOB`), and web (`W1`) per `D45`.
+  - Works identically on desktop, future mobile (`MOB`), and web (`W1`).
   - Pure-core compilation and linting are fast to unit-test in Rust without DB or UI setup.
 - **Negative / Trade-offs:**
   - `notetypes.config` JSON carries a small (~400 byte) `keepsakePreset` object per Simple note type; cosmetic edits overwrite `notetypes.config` as one LWW blob (already the case for `$.css` and `$.sortf`).

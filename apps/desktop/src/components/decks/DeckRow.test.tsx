@@ -7,7 +7,7 @@ import { CreateDeckForm } from "./CreateDeckForm";
 import { ipc } from "@/lib/ipc";
 import type { DeckSummary } from "@bibalak/ipc-types";
 
-describe("DeckRow collapse/expand (D2)", () => {
+describe("DeckRow collapse/expand", () => {
   const dummyDeck: DeckSummary = {
     id: 1,
     name: "Languages",

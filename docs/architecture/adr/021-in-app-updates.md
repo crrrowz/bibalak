@@ -1,13 +1,13 @@
 # ADR-021: In-app updates via official Tauri updater and one-setting switch
 
 Date: 2026-11-16
-Status: Accepted (built in step 4, C1; owner decision D18)
+Status: Accepted (built in step 4, C1)
 
 ## Context
 
 Prior to Card C1, Bibalak checked for updates by calling `fetch()` directly from the Settings webview against `<site>/download/latest.json` (`apps/desktop/src/routes/SettingsScreen.tsx` `UpdateSection`), compared versions with `manifest.version !== current` (offering older versions as available updates), and only linked to an external download page. Meanwhile, `apps/desktop/src-tauri/tauri.conf.json` carried an unreachable private GitHub endpoint (`the prior private repository`), `tauri-plugin-updater` was not installed, and the webview CSP `connect-src` whitelisted GitHub domains solely for that path.
 
-Owner decisions **D4** and **D18** establish that:
+The project's decisions establish that:
 
 1. Bibalak must perform real in-app updates (check signed manifest, show version and notes, and on explicit user confirmation download, verify signature with the existing public key, install, and restart).
 2. Because the download website does not exist yet, the entire feature and release pipeline must ship switched off and activate from **one** GitHub repository variable (`DOWNLOAD_SITE`) plus hosting upload secrets, with zero code changes needed at launch.

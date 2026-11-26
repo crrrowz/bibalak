@@ -7,36 +7,36 @@ only after the owner approves.
 
 ## Accepted
 
-| ADR                                         | Decision                                                                                                                                        |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| [001](001-clean-architecture.md)            | Clean architecture: ports in `bibalak-core`, adapters outside                                                                                   |
-| [002](002-dual-scheduler.md)                | SM-2 and FSRS-6, switchable per deck                                                                                                            |
-| [003](003-plugin-worker-sandbox.md)         | Plugin sandbox via Web Workers                                                                                                                  |
-| [004](004-sandboxed-card-frame.md)          | Card HTML only in a sandboxed iframe (`CardFace`)                                                                                               |
-| [005](005-study-index.md)                   | Covering index for the study queue (schema v4)                                                                                                  |
-| [006](006-portable-mode.md)                 | Portable mode by marker file                                                                                                                    |
-| [007](007-note-ids-and-checksums.md)        | Anki-compatible note guids and checksums                                                                                                        |
-| [008](008-window-state.md)                  | Window state persistence                                                                                                                        |
-| [009](009-arabic-search-normalization.md)   | Arabic/accent-insensitive search (schema v5)                                                                                                    |
-| [010](010-media-store.md)                   | `MediaStore` port, Anki-compatible media on disk                                                                                                |
-| [011](011-text-import.md)                   | CSV/TSV and Markdown import                                                                                                                     |
-| [012](012-stats-revlog-index.md)            | Single-pass stats, `revlog(id, card_id)` index (schema v6)                                                                                      |
-| [013](013-ai-assistant.md)                  | AI assistant adapter, OS keyring, host-pinned CSP                                                                                               |
-| [014](014-sync-journal.md)                  | Sync journal, merge rules, ID model; full sync only for structural changes (D27)                                                                |
-| [018](018-productivity-data-model.md)       | Productivity data model: task lists, tasks, matrix rules, habits, logs, local calendar (schema v10)                                             |
-| [019](019-progress-engine.md)               | Progress engine: XP, level, gold, and undo-safe reward ledger (D1, D15); §4 R3 addendum: task and habit rewards                                 |
-| [021](021-in-app-updates.md)                | In-app updates: Tauri updater and process plugins, one download-site setting (D18)                                                              |
-| [022](022-open-source-model.md)             | Open source (AGPL-3.0 + CLA + trademark), paid cloud services; publish at OS4 (D35)                                                             |
-| [023](023-habit-skip-and-freeze.md)         | Habit skip and freeze: `status` in `habit_logs` (schema v11); skip in every style, freeze only in Game (D37, D38)                               |
-| [025](025-game-inventory-and-spending.md)   | Game inventory, equipment, shop, custom rewards, gold spending ledger, freeze tokens (schema v12, D41)                                          |
-| [026](026-game-unlocks-and-achievements.md) | Game unlocks, pets and mounts (growth credits), cosmetic Paths, solo achievements (schema v13, D41)                                             |
-| [027](027-daily-motivation.md)              | Daily motivation: synced daily goal and onboarding, deterministic quests, comeback bonus, monthly badges, study-streak freeze (schema v15, D44) |
+| ADR                                         | Decision                                                                                                                                   |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| [001](001-clean-architecture.md)            | Clean architecture: ports in `bibalak-core`, adapters outside                                                                              |
+| [002](002-dual-scheduler.md)                | SM-2 and FSRS-6, switchable per deck                                                                                                       |
+| [003](003-plugin-worker-sandbox.md)         | Plugin sandbox via Web Workers                                                                                                             |
+| [004](004-sandboxed-card-frame.md)          | Card HTML only in a sandboxed iframe (`CardFace`)                                                                                          |
+| [005](005-study-index.md)                   | Covering index for the study queue (schema v4)                                                                                             |
+| [006](006-portable-mode.md)                 | Portable mode by marker file                                                                                                               |
+| [007](007-note-ids-and-checksums.md)        | Anki-compatible note guids and checksums                                                                                                   |
+| [008](008-window-state.md)                  | Window state persistence                                                                                                                   |
+| [009](009-arabic-search-normalization.md)   | Arabic/accent-insensitive search (schema v5)                                                                                               |
+| [010](010-media-store.md)                   | `MediaStore` port, Anki-compatible media on disk                                                                                           |
+| [011](011-text-import.md)                   | CSV/TSV and Markdown import                                                                                                                |
+| [012](012-stats-revlog-index.md)            | Single-pass stats, `revlog(id, card_id)` index (schema v6)                                                                                 |
+| [013](013-ai-assistant.md)                  | AI assistant adapter, OS keyring, host-pinned CSP                                                                                          |
+| [014](014-sync-journal.md)                  | Sync journal, merge rules, ID model; full sync only for structural changes                                                                 |
+| [018](018-productivity-data-model.md)       | Productivity data model: task lists, tasks, matrix rules, habits, logs, local calendar (schema v10)                                        |
+| [019](019-progress-engine.md)               | Progress engine: XP, level, gold, and undo-safe reward ledger; §4 R3 addendum: task and habit rewards                                      |
+| [021](021-in-app-updates.md)                | In-app updates: Tauri updater and process plugins, one download-site setting                                                               |
+| [022](022-open-source-model.md)             | Open source (AGPL-3.0 + CLA + trademark), paid cloud services; publish at OS4                                                              |
+| [023](023-habit-skip-and-freeze.md)         | Habit skip and freeze: `status` in `habit_logs` (schema v11); skip in every style, freeze only in Game                                     |
+| [025](025-game-inventory-and-spending.md)   | Game inventory, equipment, shop, custom rewards, gold spending ledger, freeze tokens (schema v12)                                          |
+| [026](026-game-unlocks-and-achievements.md) | Game unlocks, pets and mounts (growth credits), cosmetic Paths, solo achievements (schema v13)                                             |
+| [027](027-daily-motivation.md)              | Daily motivation: synced daily goal and onboarding, deterministic quests, comeback bonus, monthly badges, study-streak freeze (schema v15) |
 
 ## Proposed
 
 | ADR                                  | Topic                                                                                                        |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| [028](028-reminders-core-plan.md)    | Reminders: pure rules in `bibalak-core`, `plan_reminders` IPC, `NotificationsApi` capability (16c, D45)      |
+| [028](028-reminders-core-plan.md)    | Reminders: pure rules in `bibalak-core`, `plan_reminders` IPC, `NotificationsApi` capability (16c)           |
 | [029](029-ipc-security-hardening.md) | IPC path guards, Rust-mediated file dialogs, per-window capabilities, CSP tightening (H1)                    |
 | [030](030-note-type-presets.md)      | Note type presets: Simple-mode config in `notetypes.config`, pure-core compiler, Anki compat (NT0)           |
 | [031](031-deck-export.md)            | Deck export: scoped export, `MediaStore::open_reader` streaming, atomic temp write, cancel & progress (EXP1) |
@@ -50,9 +50,9 @@ reservation is dropped, leave the number unused rather than reusing it.
 
 | ADR | Topic                                                                                           | Card    | Gate                   |
 | --- | ----------------------------------------------------------------------------------------------- | ------- | ---------------------- |
-| 015 | Opt-in crash reporting (payload rules, SDK choice) — Stage 3                                    | `C3`    | owner OK for SDK (D6)  |
+| 015 | Opt-in crash reporting (payload rules, SDK choice) — Stage 3                                    | `C3`    | owner OK for SDK       |
 | 016 | Google Drive storage: OAuth PKCE loopback, keychain tokens, `CloudStore` adapter                | `S3`    | Stage 2, after ADR-017 |
-| 017 | Server stack for Stage 2 (D30: own API server; Supabase/Postgres behind it or not), auth, sync  | `SUPA1` | first step of Stage 2  |
+| 017 | Server stack for Stage 2 (own API server; Supabase/Postgres behind it or not), auth, sync  | `SUPA1` | first step of Stage 2  |
 | 020 | External calendar providers (Google / Graph / CalDAV) adapter crate                             | `CAL2`  | Stage 2, after ADR-017 |
 | 024 | Mobile: form factors, `MobileShell`, density tokens, platform capabilities, data path, keystore | `MOB1`  | after Stage 1          |
 

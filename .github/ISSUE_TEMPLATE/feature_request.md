@@ -5,8 +5,6 @@ title: ""
 labels: enhancement
 ---
 
-<!-- Adapted from GitHub issue template conventions (Open Source Guides, CC-BY-4.0) and the project's internal feature_request.md. -->
-
 ## Problem
 
 What are you trying to do that Bibalak does not support today?

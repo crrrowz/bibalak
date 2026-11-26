@@ -11,7 +11,7 @@ export function plainTextToEditorHtml(text: string): string {
 
 /**
  * HTML-escape plain text from AI card generation and convert line breaks to `<br>`
- * while keeping cloze syntax (`{{cN::...}}`) intact as text (D21).
+ * while keeping cloze syntax (`{{cN::...}}`) intact as text.
  */
 export function plainTextToFieldHtml(text: string): string {
   return escapeHtmlText(text).replace(/\r?\n/g, "<br>");
@@ -19,7 +19,7 @@ export function plainTextToFieldHtml(text: string): string {
 
 /**
  * Append untrusted plain-text AI output to an existing field after `<br><br>`,
- * HTML-escaping the new text and preserving existing field markup (D22).
+ * HTML-escaping the new text and preserving existing field markup.
  */
 export function buildAppendedFieldHtml(existingHtml: string, aiPlainText: string): string {
   const escaped = plainTextToFieldHtml(aiPlainText.trim());

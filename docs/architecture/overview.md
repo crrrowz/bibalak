@@ -37,10 +37,10 @@ Cargo workspace (Rust) + pnpm workspace (TS) in one repo. The Tauri shell is a
 thin adapter; all logic lives in reusable crates.
 
 ```text
-crates/        keepsake-{core,db,scheduler,ankifmt,search,media,render,plugin,ai}
+crates/        bibalak-{core,db,scheduler,ankifmt,search,media,render,plugin,ai}
 apps/desktop/  src-tauri/ (Rust shell)  +  src/ (React frontend)
 packages/      ipc-types (generated), ui-tokens, plugin-sdk
-fixtures/      real .apkg/.colpkg + golden scheduler vectors
+fixtures/      small synthetic .apkg/.colpkg decks + golden scheduler vectors
 docs/          this file + ADRs
 ```
 
@@ -252,7 +252,7 @@ and newer-schema screen). Observability via `tracing` → rolling log.
 `bibalak-core` and the other logic crates are platform-agnostic Rust (zero UI
 deps) and compile for server, iOS, and Android targets unchanged.
 
-Under decision D45 (every platform), domain rules and decisions live in
+Under the every-platform rule, domain rules and decisions live in
 `bibalak-core` (pure Rust), host features (notifications, files, tray, global
 shortcuts, updater) are interfaces in `lib/platform/types.ts` with one adapter
 per host (`desktop.ts`, `index.ts`, `types.ts`) and `null` where a host lacks
@@ -260,7 +260,7 @@ that capability, and nothing assumes Windows (paths, APIs, keys or fonts).
 
 - **Web build (planned, `W1`):** the React UI talks through `lib/platform/`
   and `lib/ipc.ts` so a future web build can swap the Tauri adapter for HTTP
-  calls to the Bibalak API server (`D30`, Stage 2). Not built yet.
+  calls to the Bibalak API server (Stage 2). Not built yet.
 - **Mobile (planned):** Tauri v2 mobile reuses the same core and command layer,
   or the core can be wrapped via UniFFI for a native UI. A CLI reusing the core
   doubles as a scripting/test harness.

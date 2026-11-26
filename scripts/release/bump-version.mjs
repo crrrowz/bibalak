@@ -28,7 +28,9 @@ function findPackageJsonFiles(rootDir) {
         entry.name === ".git" ||
         entry.name === "node_modules" ||
         entry.name === "target" ||
-        entry.name === "dist"
+        entry.name === "dist" ||
+        // The plugin SDK carries its own API version (packages/plugin-sdk).
+        (entry.name === "plugin-sdk" && path.basename(dir) === "packages")
       ) {
         continue;
       }
@@ -44,14 +46,12 @@ function findPackageJsonFiles(rootDir) {
 function updateCargoToml(cargoPath, version) {
   if (!fs.existsSync(cargoPath)) return false;
   const raw = fs.readFileSync(cargoPath, "utf8");
-  const next = raw.replace(
-    /(\[workspace\.package\][\s\S]*?\bversion\s*=\s*")[^"]+(")/,
-    `$1${version}$2`,
-  );
-  if (next === raw) {
+  const pattern = /(\[workspace\.package\][\s\S]*?\bversion\s*=\s*")[^"]+(")/;
+  if (!pattern.test(raw)) {
     throw new Error(`Could not locate [workspace.package] version in ${cargoPath}`);
   }
-  fs.writeFileSync(cargoPath, next, "utf8");
+  // Re-running with the current version is allowed and changes nothing.
+  fs.writeFileSync(cargoPath, raw.replace(pattern, `$1${version}$2`), "utf8");
   return true;
 }
 

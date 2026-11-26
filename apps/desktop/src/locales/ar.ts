@@ -1002,7 +1002,7 @@ export const ar: Record<LocaleKey, string> & Record<string, string> = {
   "settings.updates.install": "تثبيت وإعادة التشغيل",
   "settings.updates.installing": "جارٍ التثبيت…",
   "settings.updates.noSite":
-    "يبدأ التحقق من التحديثات مع أول إصدار عام. حتى ذلك الحين، احصل على الإصدارات الجديدة ممن أعطاك هذه النسخة.",
+    "التحديث التلقائي متوقف في هذا الإصدار. نزّل الإصدارات الجديدة من صفحة الإصدارات: github.com/crrrowz/bibalak/releases",
   "settings.updates.notAvailable": "التحديثات داخل التطبيق متاحة في تطبيق سطح المكتب فقط.",
   "settings.updates.title": "التحديثات",
   "settings.updates.upToDate": "Bibalak محدّث.",

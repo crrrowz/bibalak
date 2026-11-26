@@ -7,7 +7,7 @@ import type {
 } from "@bibalak/ipc-types";
 import { buildClozePreviewHtml, plainTextToFieldHtml } from "@/lib/aiFormat";
 
-/** Maximum notes sent in one deck-quality scan (D23). */
+/** Maximum notes sent in one deck-quality scan. */
 export const MAX_QUALITY_SCAN_NOTES = 200;
 
 /** Default number of notes sent per AI request chunk. */

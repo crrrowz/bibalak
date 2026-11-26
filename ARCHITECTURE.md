@@ -53,7 +53,7 @@ Shared TypeScript packages live under `packages/`:
 - **Portable mode (Windows):** Placing an empty `portable.txt` file beside `Bibalak.exe` redirects `data_dir` to `./data/` next to the executable so nothing is written to `%APPDATA%`.
 - **Automatic backups:** Daily startup backups plus automatic pre-migration `.pre-v<N>.sqlite` snapshots before schema upgrades.
 
-## 5. Every-platform rule (D45)
+## 5. Every-platform rule
 
 Bibalak targets Windows, macOS, and Linux today and keeps the core ready for future web and mobile shells:
 

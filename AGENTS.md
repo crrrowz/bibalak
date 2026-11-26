@@ -21,7 +21,7 @@ Rules for AI coding agents working on Bibalak. Read this file, [`CONTRIBUTING.md
    - `pnpm --filter @bibalak/desktop build`
 3. UI text only through `t()` / `tn()` with keys in `apps/desktop/src/locales/en.ts` and `ar.ts`; layout classes logical only (`ms-`, `me-`, `ps-`, `pe-`, `start`, `end`, `text-start` — enforced by `src/test/i18nGuards.test.ts`).
 4. Card HTML is untrusted: render it only through `CardFace` (sandboxed iframe, ADR-004).
-5. Host APIs (`@tauri-apps/*`) live only inside `apps/desktop/src/lib/platform/` (`platformGuard.test.ts`); screens use `src/lib/ipc.ts` and `platform` (cross-platform D45 rule).
+5. Host APIs (`@tauri-apps/*`) live only inside `apps/desktop/src/lib/platform/` (`platformGuard.test.ts`); screens use `src/lib/ipc.ts` and `platform` (cross-platform rule).
 6. UI checks without Tauri: `pnpm dev:web` → `http://localhost:1420/preview.html`.
 7. Any new dependency must be compatible with `AGPL-3.0-or-later` (`about.toml`) and reflected via `node scripts/licenses/generate-notices.mjs --write`. Any third-party art, icon, font, or sound gets a row in `docs/legal/third-party-assets-register.md`.
 8. Never commit keys, signing secrets, `.env` files, or personal collections (`fixtures/` holds synthetic test decks only).
@@ -43,7 +43,7 @@ Rules for AI coding agents working on Bibalak. Read this file, [`CONTRIBUTING.md
 
 When preparing a release (see [`RELEASING.md`](RELEASING.md)):
 
-### What the AI agent prepares (never pushes tags)
+### What a contributor or agent prepares (never pushes tags)
 
 1. Choose the semantic version `<ver>` (numeric pre-release only if pre-release, e.g. `1.0.1-1`).
 2. Review merged PRs since the previous tag and draft concise entries under `## [Unreleased]` in `CHANGELOG.md` (Keep a Changelog format: `Added`, `Changed`, `Security`, `Fixed`).
@@ -51,7 +51,7 @@ When preparing a release (see [`RELEASING.md`](RELEASING.md)):
    ```sh
    node scripts/release/bump-version.mjs <ver>
    ```
-   This updates `Cargo.toml`, every workspace `package.json`, `apps/desktop/src-tauri/tauri.conf.json`, and promotes `## [Unreleased]` to `## [<ver>] - YYYY-MM-DD` in `CHANGELOG.md`.
+   This updates `Cargo.toml`, every workspace `package.json` (except the plugin SDK), `apps/desktop/src-tauri/tauri.conf.json`, and promotes `## [Unreleased]` to `## [<ver>] - YYYY-MM-DD` in `CHANGELOG.md`.
 4. Verify `.github/release-notes-template.md` and `pnpm check` (all Rust + TypeScript + licence checks green).
 5. Commit the version bump (`chore(release): prepare v<ver>`) and report readiness to the owner.
 
@@ -59,4 +59,4 @@ When preparing a release (see [`RELEASING.md`](RELEASING.md)):
 
 - Reviews the release commit and `CHANGELOG.md`.
 - Creates and pushes the release tag (`git tag -a v<ver> -m "v<ver>" && git push origin v<ver>`), which triggers `.github/workflows/release.yml`.
-- Reviews the draft GitHub Release artifacts and publishes the release.
+- Watches the release run. The workflow publishes the release once every platform, `SHA256SUMS` and the security audit have passed (set the repository variable `RELEASE_KEEP_DRAFT=true` to review drafts by hand instead).

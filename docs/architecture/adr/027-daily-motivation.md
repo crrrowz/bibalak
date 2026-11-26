@@ -1,9 +1,9 @@
 # ADR-027: Daily Motivation Loop — Goal, Quests, Monthly Badges, Comeback Bonus, and Onboarding
 
-**Status:** Accepted 2026-11-24 (owner, D44)  
+**Status:** Accepted 2026-11-24 (owner)  
 **Date:** 2026-11-24  
 **Card:** `16a` (`MOTs` — Daily motivation spec; implements in `16d` `MOTd`, `16e` `TODAY`, `16f` `ONBRD`, `16g` `QUEST`)  
-**Related:** Decisions `D1`, `D3`, `D14`, `D15`, `D30`, `D34`, `D36`, `D40`, `D41`, `D43`; `ADR-014`, `ADR-018`, `ADR-019`, `ADR-023`, `ADR-025`, `ADR-026`; `01-daily-loop-spec.md`  
+**Related:** `ADR-014`, `ADR-018`, `ADR-019`, `ADR-023`, `ADR-025`, `ADR-026`; `01-daily-loop-spec.md`  
 **Migration:** `v14 -> v15` (`MIGRATIONS[14]`, strictly **after `14c` `GPERF`**, which adds `v14`)
 
 ---
@@ -12,7 +12,7 @@
 
 `ADR-019` established Bibalak's single `progress_ledger` (integer XP, level curve, `gold_cents`) with strict non-negotiable invariants (`§4.1`): rewards only for real work, zero penalties, no multipliers, no random drops, and atomic undo revocation. `ADR-025` (`v11 -> v12`) added gold spending and `freeze_token_ledger`; `ADR-026` (`v12 -> v13`) added monotonic unlocks, pet growth, paths, and solo achievements; and `14c` (`GPERF`, `v13 -> v14`) indexes `game_pet_credits(user_id, ledger_id)`.
 
-Cycle 3 (`D43`) closes the daily motivation loop across all three presentation styles (`Default`, `Scholar`, `Game`):
+Cycle 3 closes the daily motivation loop across all three presentation styles (`Default`, `Scholar`, `Game`):
 
 1. A synced **daily XP goal** (`10 / 20 / 30 / 50 XP`, default `20`).
 2. **First-run onboarding** state (`onboarding_completed_at`) so existing users and synced second devices never repeat first-run setup.
@@ -21,7 +21,7 @@ Cycle 3 (`D43`) closes the daily motivation loop across all three presentation s
 5. **Comeback bonus** after `K = 7` days away, granted once per return when the daily goal is reached.
 6. **Study-streak freeze** support in the existing `freeze_token_ledger` (`freeze_use:study:<day_index>`).
 
-These require a small, account-ready (`D3`, `D30`) schema migration (`v14 -> v15`), deterministic UUIDv5 keys, `progress_ledger` key-parser extensions, and `SyncDelta` merge rules (`ADR-014`).
+These require a small, account-ready schema migration (`v14 -> v15`), deterministic UUIDv5 keys, `progress_ledger` key-parser extensions, and `SyncDelta` merge rules (`ADR-014`).
 
 ---
 
@@ -29,7 +29,7 @@ These require a small, account-ready (`D3`, `D30`) schema migration (`v14 -> v15
 
 ### 2.1 Migration `v14 -> v15` (`MIGRATIONS[14]`)
 
-Appended to `MIGRATIONS` in `crates/bibalak-db/src/schema.rs` immediately after `14c`'s `v13 -> v14` index migration (never editing `MIGRATIONS[0..=13]`). Every table follows Bibalak's account-ready contract (`D3`, `D30`, `ADR-018 §2.9`): lowercase UUIDv5 `TEXT` primary key, `user_id` (defaulting to `NIL_USER_ID`), UTC millisecond timestamps (`created_at`, `updated_at`, `deleted_at`), and `usn`.
+Appended to `MIGRATIONS` in `crates/bibalak-db/src/schema.rs` immediately after `14c`'s `v13 -> v14` index migration (never editing `MIGRATIONS[0..=13]`). Every table follows Bibalak's account-ready contract (`ADR-018 §2.9`): lowercase UUIDv5 `TEXT` primary key, `user_id` (defaulting to `NIL_USER_ID`), UTC millisecond timestamps (`created_at`, `updated_at`, `deleted_at`), and `usn`.
 
 ```sql
 -- v14 -> v15 (ADR-027, MOTd): synced daily goal, onboarding state, comeback tracking,
@@ -110,7 +110,7 @@ CREATE TABLE monthly_badges (
 | Study-streak freeze uses                                         | `freeze_token_ledger` (existing v12 table)        | **Yes** (`SyncDelta`) | Reuses `freeze_token_ledger` with `source_key = "freeze_use:study:<day_index>"`, `delta = -1`.                                                           |
 | Daily/weekly quest definitions & progress                        | **Computed in Rust** (`bibalak-core::motivation`) | N/A                   | Pure deterministic function of `day_index` / `week_index` + live SQL counts over `revlog`, `tasks`, `habits`, `progress_ledger`. Zero duplicate state.   |
 | `goal_celebrated_day`                                            | Local `sync_state` (`"goal_celebrated_day"`)      | **No** (per-device)   | Prevents re-toasting the daily goal celebration on a device after raising/lowering or reopening, matching `yesterday_summary_seen_day` (`ADR-019 §4.8`). |
-| `locale`, `theme`, `style`, `sound` (`16h`), `reminders` (`16c`) | `localStorage` (`stores/`)                        | **No** (per-device)   | Device UI/audio/notification preferences (`D28`, `16c`, `16h`).                                                                                          |
+| `locale`, `theme`, `style`, `sound` (`16h`), `reminders` (`16c`) | `localStorage` (`stores/`)                        | **No** (per-device)   | Device UI/audio/notification preferences (`16c`, `16h`).                                                                                                 |
 
 ### 2.3 Deterministic Keys & `progress_ledger` Source Keys
 
@@ -152,7 +152,7 @@ pub enum ParsedSourceKey {
 - `freeze_study_day(day_index)` validates `day_index` is yesterday (`today - 1`) or `today - 2` (within allowed grace), verifies `freeze_tokens_held >= 1`, confirms the day is not already active in `progress_ledger`, and inserts `source_key = "freeze_use:study:<day_index>"`, `delta = -1`.
 - `study_streak_from_days` treats days with an active `freeze_use:study:<day_index>` row as bridging the study streak (without adding XP or counting as an active review day for quests).
 
-### 2.5 `SyncDelta` Integration (`ADR-014`, `D14`)
+### 2.5 `SyncDelta` Integration (`ADR-014`)
 
 `SyncDelta` (`crates/bibalak-core/src/sync.rs`) adds two `#[serde(default)]` vectors:
 
@@ -176,7 +176,7 @@ pub enum ParsedSourceKey {
 3. **`progress_ledger`** (unchanged from `ADR-019 §2.6`):
    - LWW by `updated_at`; on tie, revoke (`deleted_at IS NOT NULL`) wins.
 
-### 2.6 PostgreSQL Mapping (`D3`)
+### 2.6 PostgreSQL Mapping
 
 Both v15 tables map 1:1 to PostgreSQL (Stage 2 `progress` / `motivation` schema in `ADR-017`):
 
@@ -200,7 +200,7 @@ Both v15 tables map 1:1 to PostgreSQL (Stage 2 `progress` / `motivation` schema 
 3. **Grant XP (`xp > 0`) on daily quests and comeback bonus:**
    - _Rejected (proposed `xp = 0`, Gold only)._ If quest/comeback bonuses granted XP, completing a quest would inflate `today_xp` and could recursively trigger the daily XP goal or an XP quest (`ADR-019 §4.1` rewards real study work). Gold-only bonuses (`200 / 500 / 1000 gold_cents`) keep XP purely tied to cards, tasks, and habits while rewarding engagement in every style.
 4. **Store `monthly_badges` inside `game_achievements`:**
-   - _Rejected._ `game_achievements` is scoped to fixed one-time Game tiers (`1..=3`), whereas monthly badges repeat per `YYYY-MM`, are visible in Default and Scholar as well as Game (`D1`, `D43`), and carry `month_key` + `quest_count_at_earn`.
+   - _Rejected._ `game_achievements` is scoped to fixed one-time Game tiers (`1..=3`), whereas monthly badges repeat per `YYYY-MM`, are visible in Default and Scholar as well as Game, and carry `month_key` + `quest_count_at_earn`.
 
 ---
 

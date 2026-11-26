@@ -27,7 +27,7 @@ describe("AISetupForm (E11 / AI0)", () => {
     );
   }
 
-  it("shows test request preview with D20 Ollama defaults and runs test-connection only on click", async () => {
+  it("shows test request preview with Ollama defaults and runs test-connection only on click", async () => {
     vi.spyOn(ipc, "aiGetConfig").mockResolvedValue({
       enabled: false,
       provider: "open-ai-compatible",

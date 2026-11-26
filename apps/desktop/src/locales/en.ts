@@ -862,7 +862,7 @@ export const en = {
   "settings.updates.install": "Install and restart",
   "settings.updates.installing": "Installing…",
   "settings.updates.noSite":
-    "Update checks start with the first public release. Until then, get new versions from whoever gave you this copy.",
+    "Automatic updates are off in this version. Get new versions from the Releases page: github.com/crrrowz/bibalak/releases",
   "settings.updates.notAvailable": "In-app updates are only available in the desktop app.",
   "settings.updates.title": "Updates",
   "settings.updates.upToDate": "Bibalak is up to date.",

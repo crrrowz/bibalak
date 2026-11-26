@@ -740,7 +740,7 @@ describe("SettingsScreen (Q2)", () => {
     const { unmount } = renderScreen();
     expect(
       await screen.findByText(
-        "Update checks start with the first public release. Until then, get new versions from whoever gave you this copy.",
+        "Automatic updates are off in this version. Get new versions from the Releases page: github.com/crrrowz/bibalak/releases",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();

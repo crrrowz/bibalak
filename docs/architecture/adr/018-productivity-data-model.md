@@ -3,14 +3,14 @@
 **Status:** Accepted (2026-11-22, owner approval)  
 **Date:** 2026-11-22  
 **Card:** `M1s` (Backlog Step 9a; contract for Phase C Steps `9` `M1`, `10` `M2`, `11` `M3`, `12` `CAL1`, `13` `R3`)  
-**Related:** Decisions D1, D2, D3, D9, D14, D15, D16, D17, D27, D29, D30, D32; ADR-001, ADR-014, ADR-019  
+**Related:** ADR-001, ADR-014, ADR-019  
 **Supersedes (where they differ):** internal design notes (and `01`–`03` §1 where noted)
 
 ---
 
 ## 1. Context
 
-Bibalak adds Stage 1 local productivity tools — **task lists, tasks, Eisenhower matrix rules, habits, habit logs, and local calendar events** — to organize study alongside spaced repetition (D2, the internal planning notes). Under the Phase C workflow (the internal planning notes), Steps `9` (`M1`), `10` (`M2`), `11` (`M3`), `12` (`CAL1`), and `13` (`R3`) are authored in Rust and TypeScript before the Build Window (`BW1`) compiles them. This ADR therefore specifies the exact SQLite `v10` migration, domain types, `Storage` port methods, `Collection` methods, Tauri IPC commands and TypeScript DTOs, sync and undo semantics, Postgres mapping, and failing-first test list.
+Bibalak adds Stage 1 local productivity tools — **task lists, tasks, Eisenhower matrix rules, habits, habit logs, and local calendar events** — to organize study alongside spaced repetition (the internal planning notes). Under the Phase C workflow (the internal planning notes), Steps `9` (`M1`), `10` (`M2`), `11` (`M3`), `12` (`CAL1`), and `13` (`R3`) are authored in Rust and TypeScript before the Build Window (`BW1`) compiles them. This ADR therefore specifies the exact SQLite `v10` migration, domain types, `Storage` port methods, `Collection` methods, Tauri IPC commands and TypeScript DTOs, sync and undo semantics, Postgres mapping, and failing-first test list.
 
 ### Owner Decisions Resolved Before Finalizing This Contract
 
@@ -28,7 +28,7 @@ The following product choices left open by the blueprints were confirmed by the 
 
 ### 2.1 Tables for Migration `v9 -> v10` (`MIGRATIONS[9]`)
 
-The live schema is `v9` (`MIGRATIONS` in `crates/bibalak-db/src/schema.rs:L8-L231`). Step `9` (`M1`) appends `MIGRATIONS[9]` (`v9 -> v10`) adding six neutral domain tables (never `rpg_`-prefixed, per D1 and internal design notes §3):
+The live schema is `v9` (`MIGRATIONS` in `crates/bibalak-db/src/schema.rs:L8-L231`). Step `9` (`M1`) appends `MIGRATIONS[9]` (`v9 -> v10`) adding six neutral domain tables (never `rpg_`-prefixed, per and internal design notes §3):
 
 1. `task_lists` — user-defined task folders (`Inbox` is `tasks.list_id IS NULL`).
 2. `tasks` — one-off actionable tasks with optional due date, optional calendar time-block, priority, matrix pin, and optional deck link.
@@ -42,16 +42,16 @@ The live schema is `v9` (`MIGRATIONS` in `crates/bibalak-db/src/schema.rs:L8-L23
 - `tasks` and `habits` have different lifecycles: a task completes once (`completed_at`, `completed_day`, `priority`, `manual_quadrant`, `due_date`, `scheduled_start_ms`/`end_ms`) and appears in the Eisenhower Matrix; a habit never permanently completes, repeats on a schedule (`frequency_kind`, `weekdays_json`, `weekly_target`, `interval_days`), tracks quantitative/boolean daily goals (`goal_mode`, `goal_target`, `goal_unit`), belongs to a time-of-day `section`, and records daily state in `habit_logs`.
 - Merging them into one table leaves ~12 columns unused on every task and ~8 columns unused on every habit, weakens SQL `CHECK` constraints, and forces every Matrix query to filter out habits.
 
-**External calendar accounts (D30):**
+**External calendar accounts:**
 
-- **No `calendar_accounts` table in `v10`.** Under D30, Google/Outlook/CalDAV accounts and OAuth tokens belong to Stage 2 through the Bibalak API server (`CAL2`/`CAL3`, ADR-020).
+- **No `calendar_accounts` table in `v10`.** Google/Outlook/CalDAV accounts and OAuth tokens belong to Stage 2 through the Bibalak API server (`CAL2`/`CAL3`, ADR-020).
 - `calendar_events` reserves only two cheap nullable columns — `external_account_id TEXT NULL` and `external_event_id TEXT NULL` — so Stage 2 can link synced external events without rewriting `calendar_events` or adding half-built sync state (`sync_cursor`, `remote_etag`, `raw_provider_json`) in Stage 1.
 
 ---
 
 ### 2.2 Account-Ready Rules & Exact SQLite `v10` SQL (`MIGRATIONS[9]`)
 
-Per the internal planning notes ("Account-ready rules for every new table") and D3 / ADR-014 §2.1:
+Per the internal planning notes ("Account-ready rules for every new table") and / ADR-014 §2.1:
 
 - Every table uses a **lowercase hyphenated RFC 4122 UUID `TEXT PRIMARY KEY`** (no composite primary keys, no integer counters).
 - Every table includes `user_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'` (`NIL_USER_ID` in `crates/bibalak-core/src/progress.rs:L21`), `created_at INTEGER NOT NULL`, `updated_at INTEGER NOT NULL`, `deleted_at INTEGER NULL`, and `usn INTEGER NOT NULL DEFAULT -1`.
@@ -349,7 +349,7 @@ Create/update mutations (`create_task`, `update_task`, `create_habit`, `update_h
 
 ---
 
-### 2.9 Sync (ADR-014, D27, D29)
+### 2.9 Sync (ADR-014)
 
 1. **Export (`crates/bibalak-db/src/sync.rs#export_delta`):** Queries all rows with `usn = -1` ordered by `id` from `task_lists`, `tasks`, `matrix_quadrants`, `habits`, `habit_logs`, and `calendar_events`.
 2. **`SyncDelta` & `MergeSummary` (`crates/bibalak-core/src/sync.rs:L39-L99`):**
@@ -374,7 +374,7 @@ Create/update mutations (`create_task`, `update_task`, `create_habit`, `update_h
        1. Deletion (`deleted_at.is_some()`) wins over active (`deleted_at.is_none()`), matching ADR-019 §2.6 (`crates/bibalak-db/src/sync.rs:L820-L834`).
        2. Otherwise, deterministic lexicographical byte comparison of canonical serialized fields (`remote_repr > local_repr`).
 6. **Acknowledge (`acknowledge_delta`, `crates/bibalak-db/src/sync.rs:L906-L920`):** Sets `usn = {server_usn} WHERE usn = -1` on all six new tables.
-7. **Full sync (`schema_mod`, D27):** **No** productivity mutation ever modifies `collection.schema_mod` or forces a full sync.
+7. **Full sync (`schema_mod`):** **No** productivity mutation ever modifies `collection.schema_mod` or forces a full sync.
 
 ---
 
@@ -973,9 +973,9 @@ Added inside a new `// ── Productivity (M1) ──` section at the bottom of
 
 ---
 
-### 2.12 PostgreSQL Mapping (Stage 2, D30)
+### 2.12 PostgreSQL Mapping (Stage 2)
 
-In Stage 2 (`SUPA1`), all six tables live in a dedicated schema (e.g. `productivity`), isolated behind the Bibalak API server (D30) and Postgres RLS (ADR-017).
+In Stage 2 (`SUPA1`), all six tables live in a dedicated schema (e.g. `productivity`), isolated behind the Bibalak API server and Postgres RLS (ADR-017).
 
 | SQLite (`v10`) Column / Type                                                                                                                                                 | PostgreSQL Type                                             | Notes / Non-1:1 Mapping Items                                                                                                                                                                       |
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1055,6 +1055,6 @@ Step `9` writes these tests **before** each implementation step (per Phase C/D r
 
 ## 6. Open Questions (For Later Cards)
 
-- **RRULE crate in `CAL2` (Stage 2):** When Stage 2 adds Google/Outlook/CalDAV sync (`CAL2`), evaluate whether to keep our pure formatter/expander or adopt an `rrule` crate (requires owner dependency approval per D6 and `AGENTS.md`).
+- **RRULE crate in `CAL2` (Stage 2):** When Stage 2 adds Google/Outlook/CalDAV sync (`CAL2`), evaluate whether to keep our pure formatter/expander or adopt an `rrule` crate (requires owner dependency approval per and `AGENTS.md`).
 - **Reward numbers (`13a` / `R3`):** XP and gold constants for `task_done:<task_id>` and `habit_log:<habit_id>:<day_index>` are decided in spec `13a` (`R3s`).
 - **Claiming deterministic IDs in Stage 2 (`SUPA2`, ADR-017):** Deterministic RFC 4122 v5 IDs derived from `NIL_USER_ID` (`matrix_quadrants`, `habit_logs`, `progress_ledger`) must be re-derived from the signed-in account's `user_id` or remapped when local data is claimed.

@@ -11,19 +11,19 @@ use ts_rs::TS;
 
 use crate::error::{CoreError, CoreResult};
 
-/// Maximum streak freeze tokens a learner can hold at once (D41 #3).
+/// Maximum streak freeze tokens a learner can hold at once.
 pub const FREEZE_TOKEN_CAP: u32 = 3;
 
-/// Shop price of one streak freeze token in gold cents (`25` gold, D41 #3).
+/// Shop price of one streak freeze token in gold cents (`25` gold).
 pub const FREEZE_TOKEN_PRICE_CENTS: u64 = 2_500;
 
 /// Special shop item key for buying a streak freeze token.
 pub const STREAK_FREEZE_ITEM_KEY: &str = "streak_freeze";
 
-/// Refund window for accidental shop / custom-reward purchases (`5` minutes, D41 #4).
+/// Refund window for accidental shop / custom-reward purchases (`5` minutes).
 pub const REFUND_WINDOW_MS: i64 = 300_000;
 
-/// Consecutive active study days per free streak-freeze milestone (D41 #3).
+/// Consecutive active study days per free streak-freeze milestone.
 pub const STREAK_FREEZE_MILESTONE_DAYS: u32 = 7;
 
 /// Maximum number of active custom rewards per user.
@@ -57,7 +57,7 @@ const VALID_REWARD_ICONS: [&str; 8] = [
     "gift", "coffee", "film", "gamepad", "music", "book", "sun", "sparkles",
 ];
 
-/// Game rank brackets (D41 #5).
+/// Game rank brackets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -82,7 +82,7 @@ impl GameRank {
 }
 
 /// Map a 1-based player level to its Game rank (Novice 1-4, Apprentice 5-9,
-/// Explorer 10-19, Champion 20-34, Legend 35+; D41 #5).
+/// Explorer 10-19, Champion 20-34, Legend 35+).
 pub const fn rank_for_level(level: u32) -> GameRank {
     match level {
         0..=4 => GameRank::Novice,

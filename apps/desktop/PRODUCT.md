@@ -48,7 +48,7 @@ Not Anki's own UI: the cluttered, inconsistent, dated look that Bibalak exists t
 
 ## Progress & presentation styles
 
-Owner decision D1. Points (XP, level, gold) are
+Points (XP, level, gold) are
 part of the product for everyone and reward real learning across reviews,
 Matrix tasks, and Habits (`ADR-019`). **Default** and **Scholar** ship today;
 the opt-in **Game** style (avatar, HUD, equipment, shop) is planned for Cycle 2.
@@ -57,7 +57,7 @@ emoji.
 
 ## Study organization (Plan)
 
-Owner decision D2. Bibalak includes local-first
+Bibalak includes local-first
 **Eisenhower Matrix**, **Habit Tracker**, and **Calendar** tools under the
 **Plan** sidebar group so learners can organize study reviews alongside tasks,
 routines, and schedules (`ADR-018`). External calendar sync (`CAL2`, `CAL3`) is

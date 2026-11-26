@@ -294,7 +294,7 @@ pub fn restore_notes(
 /// missing notes, and returning pre-edit [`NoteSnapshot`]s for single-step undo.
 ///
 /// Note fields are not deck-specific, so edits are permitted even when a card of the note
-/// currently resides in a filtered deck (D24).
+/// currently resides in a filtered deck.
 pub fn apply_quality_fixes(
     conn: &mut Connection,
     edits: &[QualityNoteEdit],

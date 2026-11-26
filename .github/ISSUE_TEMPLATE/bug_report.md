@@ -5,8 +5,6 @@ title: ""
 labels: bug
 ---
 
-<!-- Adapted from GitHub issue template conventions (Open Source Guides, CC-BY-4.0) and the project's internal bug_report.md. -->
-
 ## Steps to reproduce
 
 1. ...
@@ -25,6 +23,6 @@ labels: bug
 
 ## Logs & Privacy
 
-Attach the log from `Help → Open Log Folder` if relevant.
+If the app crashed, attach `bibalak-crash.txt` from your temporary folder (`%TEMP%` on Windows, `$TMPDIR` on macOS, `/tmp` on Linux). Remove anything private first.
 
 > **Privacy reminder:** Do not attach personal `.apkg`/`.colpkg` files containing private notes, API keys, or sensitive personal information. If a sample deck is needed, attach a minimal public reproduction deck.

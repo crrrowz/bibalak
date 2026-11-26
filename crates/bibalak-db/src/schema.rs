@@ -200,7 +200,7 @@ pub const MIGRATIONS: &[&str] = &[
         value TEXT NOT NULL
     );
     "#,
-    // v7 -> v8 (ADR-014, D29): local-only grave deletion timestamps to support
+    // v7 -> v8 (ADR-014): local-only grave deletion timestamps to support
     // accurate deterministic LWW tombstone reconciliation without altering Anki's graves schema.
     r#"
     CREATE TABLE grave_times (

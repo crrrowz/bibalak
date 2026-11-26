@@ -65,10 +65,11 @@ test("bumpVersion updates Cargo.toml, all workspace package.json files, tauri.co
         .version,
       "1.2.0",
     );
+    // The plugin SDK keeps its own API version.
     assert.equal(
       JSON.parse(fs.readFileSync(path.join(root, "packages/plugin-sdk/package.json"), "utf8"))
         .version,
-      "1.2.0",
+      "0.1.0",
     );
     assert.equal(
       JSON.parse(fs.readFileSync(path.join(root, "apps/desktop/src-tauri/tauri.conf.json"), "utf8"))

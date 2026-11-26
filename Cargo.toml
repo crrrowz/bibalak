@@ -17,7 +17,7 @@ members = [
 version = "1.0.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
-authors = ["Bibalak contributors"]
+authors = ["Hassanein Hassan Alkahafji and Bibalak contributors"]
 repository = "https://github.com/crrrowz/bibalak"
 rust-version = "1.89"
 

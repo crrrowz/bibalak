@@ -1,4 +1,4 @@
-//! Thin Tauri IPC command for OS reminder planning (D45 / ADR-028, 16c).
+//! Thin Tauri IPC command for OS reminder planning (ADR-028, 16c).
 
 use bibalak_core::ipc::IpcError;
 use bibalak_core::reminders::{ReminderPlanDto, ReminderSettingsInput};

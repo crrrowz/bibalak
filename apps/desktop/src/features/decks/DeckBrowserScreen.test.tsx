@@ -24,7 +24,7 @@ vi.mock("@tanstack/react-router", () => ({
   useSearch: () => ({ create: false }),
 }));
 
-describe("DeckBrowserScreen Undo & Empty failures (D1)", () => {
+describe("DeckBrowserScreen Undo & Empty failures", () => {
   it("disables Undo and sets title when undoStatus is null", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -146,7 +146,7 @@ describe("DeckBrowserScreen Undo & Empty failures (D1)", () => {
     expect(errorMsg).toBeInTheDocument();
   });
 
-  it("hides child subdecks when parent deck is collapsed (D2)", async () => {
+  it("hides child subdecks when parent deck is collapsed", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -187,7 +187,7 @@ describe("DeckBrowserScreen Undo & Empty failures (D1)", () => {
     expect(screen.queryByText("Spanish")).not.toBeInTheDocument();
   });
 
-  it("renders Arabic dual plurals with tn() in import summary (D3)", async () => {
+  it("renders Arabic dual plurals with tn() in import summary", async () => {
     const { setLocale } = await import("@/lib/i18n");
     const { platform } = await import("@/lib/platform");
     setLocale("ar");

@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Bibalak is derived in part from Synapse, whose MIT License notice is preserved below.
+Bibalak is derived in part from [Synapse](https://github.com/Emadab/Synapse), whose MIT License notice is preserved below.
 
 MIT License
 

@@ -16,31 +16,31 @@ use crate::productivity::{
     start_of_week_day_index, WeekStart,
 };
 
-/// Allowed daily XP goal choices (ADR-027 §1, D43).
+/// Allowed daily XP goal choices (ADR-027 §1).
 pub const DAILY_GOAL_XP_CHOICES: [u32; 4] = [10, 20, 30, 50];
 
 /// Default daily XP goal for new and upgraded collections.
 pub const DEFAULT_DAILY_GOAL_XP: u32 = 20;
 
-/// Gold reward (`gold_cents`) for completing a daily quest (`2.00` gold, D44 #4).
+/// Gold reward (`gold_cents`) for completing a daily quest (`2.00` gold).
 pub const DAILY_QUEST_GOLD_CENTS: u64 = 200;
 
-/// Gold reward (`gold_cents`) for completing a weekly quest (`10.00` gold, D44 #4).
+/// Gold reward (`gold_cents`) for completing a weekly quest (`10.00` gold).
 pub const WEEKLY_QUEST_GOLD_CENTS: u64 = 1_000;
 
-/// Gold reward (`gold_cents`) for earning a monthly badge (`10.00` gold, D44 #4).
+/// Gold reward (`gold_cents`) for earning a monthly badge (`10.00` gold).
 pub const MONTHLY_BADGE_GOLD_CENTS: u64 = 1_000;
 
 /// Number of daily quests completed in a calendar month to earn the monthly badge.
 pub const MONTHLY_BADGE_TARGET_QUESTS: u32 = 20;
 
-/// Minimum full days away before the comeback bonus triggers (`K = 7`, D44 #3).
+/// Minimum full days away before the comeback bonus triggers (`K = 7`).
 pub const COMEBACK_AWAY_DAYS: i32 = 7;
 
 /// Active return window in days (`today - return_day <= 3`, 4 days inclusive).
 pub const COMEBACK_RETURN_WINDOW_DAYS: i32 = 3;
 
-/// Gold reward (`gold_cents`) for the comeback bonus (`5.00` gold, D44 #3).
+/// Gold reward (`gold_cents`) for the comeback bonus (`5.00` gold).
 pub const COMEBACK_BONUS_GOLD_CENTS: u64 = 500;
 
 /// Streak milestone thresholds shown on `/streak` and Session-end.

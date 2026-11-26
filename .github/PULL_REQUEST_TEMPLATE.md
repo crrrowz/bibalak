@@ -1,5 +1,3 @@
-<!-- Adapted from GitHub pull request template conventions (Open Source Guides, CC-BY-4.0) and the project's internal PULL_REQUEST_TEMPLATE.md. -->
-
 ## What / why
 
 Fixes #

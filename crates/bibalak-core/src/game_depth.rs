@@ -23,7 +23,7 @@ pub const MAX_PET_GROWTH: u32 = 50;
 pub const PATH_UNLOCK_LEVEL: u32 = 10;
 
 /// Gold cost (`100` gold = `10,000` gold_cents) to switch paths after the
-/// free initial pick (D41 #1).
+/// free initial pick.
 pub const PATH_SWITCH_COST_CENTS: u64 = 10_000;
 
 /// Bond points awarded per newly rewarded card review.

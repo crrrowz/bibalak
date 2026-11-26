@@ -13,7 +13,7 @@ impl Collection {
 
     /// Apply a remote sync delta to local state.
     ///
-    /// Safety contract (ADR-014 §2.5, D29):
+    /// Safety contract (ADR-014 §2.5):
     /// 1. Takes `now_ms` from the Collection's `Clock` port.
     /// 2. Performs a pre-merge database snapshot to `backup_path` via `Storage::backup_db`.
     /// 3. Applies the remote delta via `Storage::apply_sync_delta`.

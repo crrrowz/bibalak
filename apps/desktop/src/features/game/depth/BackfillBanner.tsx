@@ -24,7 +24,7 @@ function writeSeenFlag(): void {
 }
 
 /**
- * One-time calm summary banner for past-work unlocks (D41 #10).
+ * One-time calm summary banner for past-work unlocks.
  * Dismissing persists in `localStorage` so it never repeats.
  */
 export function BackfillBanner() {

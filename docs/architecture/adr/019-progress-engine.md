@@ -2,27 +2,27 @@
 
 **Status:** Accepted (owner, 2026-11-21)  
 **Date:** 2026-11-21  
-**Card:** `R1` (Backlog Step 7; Decisions D1, D3, D14, D15, D30; ADR-001, ADR-007, ADR-014)  
+**Card:** `R1` (Backlog Step 7; ADR-001, ADR-007, ADR-014)  
 **Gate:** Step 7 (Owner acceptance required before Part B implementation)
 
 ---
 
 ## 1. Context
 
-Bibalak makes learning progress visible to every user through points earned from real study activity: **XP, levels, and gold** (D1). Presentation styles (`Default`, `Scholar`, `Game`, built in Step 8 `P1` and Step 14 `G1`) only change how this progress is displayed; the underlying points engine and ledger are one and the same.
+Bibalak makes learning progress visible to every user through points earned from real study activity: **XP, levels, and gold**. Presentation styles (`Default`, `Scholar`, `Game`, built in Step 8 `P1` and Step 14 `G1`) only change how this progress is displayed; the underlying points engine and ledger are one and the same.
 
-To integrate with Bibalak's local SQLite collection today and Stage 2 multi-device sync tomorrow (D3, D14, D30, ADR-014), the progress engine must:
+To integrate with Bibalak's local SQLite collection today and Stage 2 multi-device sync tomorrow (ADR-014), the progress engine must:
 
 1. Prevent the **answer → undo → re-answer farming exploit** (at most one reward per card per collection day, cleanly revoked on undo without revoking an earlier same-day answer's reward).
 2. Store all amounts as exact integers (no floating-point drift in SQLite or PostgreSQL).
 3. Use a deterministic UUID primary key so reviewing the same card on two offline devices on the same day merges into a single reward row on sync.
-4. Keep all reward math and leveling curves pure in `bibalak-core::progress` with original constants (D15).
+4. Keep all reward math and leveling curves pure in `bibalak-core::progress` with original constants.
 
 ---
 
 ## 2. Decision
 
-### 2.1 Card Review Reward Rule & Idempotency Key (D15)
+### 2.1 Card Review Reward Rule & Idempotency Key
 
 - **Per-rating rewards:**
   - `Rating::Again` (`ease = 1`): **1 XP**, **25 gold_cents** (`0.25` gold)
@@ -41,7 +41,7 @@ To integrate with Bibalak's local SQLite collection today and Stage 2 multi-devi
 - **XP:** integer (`i64` in SQLite `INTEGER`, `u64` in domain totals).
 - **Gold:** integer hundredths (`gold_cents: i64` in SQLite `INTEGER`, `25` per rewarded review = `0.25` gold). Floating-point columns are never used in the database.
 
-### 2.3 Level Curve (Bibalak Constants, D15)
+### 2.3 Level Curve (Bibalak Constants)
 
 Players start at **Level 1** (`0 XP`). The XP required to advance from Level $L$ to $L + 1$ is:
 
@@ -90,7 +90,7 @@ CREATE TABLE progress_ledger (
 In `v13 -> v14` (`MIGRATIONS[13]`), `CREATE INDEX idx_progress_ledger_active_created ON progress_ledger(user_id, deleted_at, created_at)` is added for indexed per-day ledger existence checks and skip scans.
 
 - **No historical backfill:** Imported `.apkg` / `.colpkg` `revlog` rows and pre-v9 review history earn no rewards. Upgrading users start at Level 1 (`0 XP`, `0 gold_cents`).
-- **Local `user_id`:** Nil UUID (`"00000000-0000-0000-0000-000000000000"`) in Stage 1 (D3, ADR-014 §2.1).
+- **Local `user_id`:** Nil UUID (`"00000000-0000-0000-0000-000000000000"`) in Stage 1 (ADR-014 §2.1).
 - **Deterministic `id`:** Lowercase hyphenated UUID (RFC 4122 v5 layout: version `5`, variant `10xx`) derived from SHA-1 over a fixed Bibalak progress namespace + `user_id` + `":"` + `source_key` using the existing `sha1` (`0.10`) crate in the workspace. Two devices reviewing the same card on the same day generate the exact same `id`.
 - **Grant, Undo, and Re-answer semantics:**
   1. **First answer on day $D$:** Inserts row with `deleted_at = NULL, created_at = now_ms, updated_at = now_ms, usn = -1`. `Storage::apply_answer` returns `Ok(true)` (reward was granted by this answer).
@@ -108,7 +108,7 @@ In `v13 -> v14` (`MIGRATIONS[13]`), `CREATE INDEX idx_progress_ledger_active_cre
   - New read method in a dedicated `// ── Progress (R1) ──` section in `ports.rs` and `fake_storage.rs`:
     `fn progress_totals(&self, user_id: &str, today: i32) -> CoreResult<ProgressTotals>`.
 
-### 2.6 Sync Integration (D14, ADR-014)
+### 2.6 Sync Integration (ADR-014)
 
 - `SyncDelta` (`bibalak-core::sync`) gains `#[serde(default)] pub progress_ledger: Vec<ProgressLedgerEntry>`.
 - **Export:** Includes all `progress_ledger` rows with `usn = -1`.
@@ -130,7 +130,7 @@ In `v13 -> v14` (`MIGRATIONS[13]`), `CREATE INDEX idx_progress_ledger_active_cre
 - Progress UI panel & presentation styles (`Default`, `Scholar`, `Game`) → Step 8 (`P1`).
 - Tasks, matrix, habits, dailies, calendar → Steps 9–13 (`M1`–`CAL1`, ADR-018).
 - Avatar, shop, spending gold, HP, mana, streaks, parties, bosses → Step 14 (`G1`).
-- Hosted API server & Supabase sync transport → Stage 2 (ADR-017, D30).
+- Hosted API server & Supabase sync transport → Stage 2 (ADR-017).
 
 ---
 
@@ -140,7 +140,7 @@ Step `8a` (`P2`) adds three read-only queries and IPC commands for Scholar extra
 
 1. **`progress_history()` -> `Vec<ProgressDay>`**
    - `ProgressDay { day: i32, date: String, xp: u64, gold_cents: u64, cumulative_xp: u64, level_after: u32 }`.
-   - Reads active (`deleted_at IS NULL`) `progress_ledger` rows for `NIL_USER_ID`, parses the collection `day_index` from `source_key` in Rust (`parse_review_source_key`, splitting on `:` — malformed keys are skipped and counted in a debug log), sums XP/gold per day in ascending `day` order, computes `cumulative_xp` and `level_after` via `level_from_xp` in Rust (so the UI never computes levels, D1), and formats `date` (`YYYY-MM-DD`) using the collection's timezone offset and rollover hour. Only days with active rewards appear.
+   - Reads active (`deleted_at IS NULL`) `progress_ledger` rows for `NIL_USER_ID`, parses the collection `day_index` from `source_key` in Rust (`parse_review_source_key`, splitting on `:` — malformed keys are skipped and counted in a debug log), sums XP/gold per day in ascending `day` order, computes `cumulative_xp` and `level_after` via `level_from_xp` in Rust (so the UI never computes levels), and formats `date` (`YYYY-MM-DD`) using the collection's timezone offset and rollover hour. Only days with active rewards appear.
 
 2. **`study_days(limit: Option<u32>)` -> `Vec<StudyDay>`**
    - `StudyDay { day: i32, date: String, reviews: u32, minutes: f64, deck_ids: Vec<i64>, xp: u64, gold_cents: u64 }`.
@@ -158,13 +158,13 @@ Step `8a` (`P2`) adds three read-only queries and IPC commands for Scholar extra
 
 **Status:** Accepted (owner, 2026-11-22)  
 **Card:** `R3s` (spec for Phase C Step `13` `R3`, building on ADR-018 `Accepted` and ADR-019 `Accepted`)  
-**Related:** Decisions D1, D3, D14, D15, D16, D30; `apps/desktop/PRODUCT.md`; internal design notes §6–7  
+**Related:** `apps/desktop/PRODUCT.md`; internal design notes §6–7  
 **Overrides:** internal design notes §5 and `08-implementation-roadmap.md` Phase 3 where they differ (no HP, no damage, no streak/crit multipliers, no random drops in Stage 1 Cycle 1).
 
 ### 4.1 Voice & Non-Negotiable Invariants
 
-- **Rewards only for real work; zero penalties (D1, `PRODUCT.md`):** No HP, no damage, no losing XP or gold on a missed day, and no "streak lost" shaming.
-- **No manipulative multipliers:** No streak multiplier, no critical-hit roll, and no random rewards. Easy work is never worth more than careful work (D15).
+- **Rewards only for real work; zero penalties (`PRODUCT.md`):** No HP, no damage, no losing XP or gold on a missed day, and no "streak lost" shaming.
+- **No manipulative multipliers:** No streak multiplier, no critical-hit roll, and no random rewards. Easy work is never worth more than careful work.
 - **One engine for all styles:** `Default`, `Scholar`, and `Game` read from the exact same `progress_ledger` and Rust computations; styles only alter presentation.
 - **Single ledger, no cached totals:** All productivity rewards go exclusively through `progress_ledger` (`crates/bibalak-db/src/schema.rs:L218-L229`) with deterministic UUIDv5 keys (`ledger_id`, `crates/bibalak-core/src/progress.rs:L475-L498`). No second ledger table and no cached totals table.
 - **Backend day boundaries only:** All "today" and "yesterday" checks use `Collection::today()`, `Collection::today_start_ms()`, and `Collection::today_end_ms()` (`crates/bibalak-core/src/collection.rs:L89-L120`). The UI never computes day indices.

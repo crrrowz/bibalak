@@ -1,4 +1,4 @@
-//! Pure desktop/mobile reminder planning rules (D45 / ADR-028, 16c).
+//! Pure desktop/mobile reminder planning rules (ADR-028, 16c).
 //!
 //! No OS, Tauri, wall-clock, database, or UI dependencies: `now_ms`, settings,
 //! and domain state are passed as arguments so planning is deterministic across

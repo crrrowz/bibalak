@@ -4,7 +4,7 @@ import { TodaySummary } from "./TodaySummary";
 import { setLocale } from "@/lib/i18n";
 import type { DeckSummary } from "@bibalak/ipc-types";
 
-describe("TodaySummary responsive & i18n (D3)", () => {
+describe("TodaySummary responsive & i18n", () => {
   afterEach(() => {
     setLocale("en");
   });

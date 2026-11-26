@@ -27,7 +27,7 @@ accepted = [
 [private]
 ignore = true
 
-# First-party workspace crates are proprietary; allow them here and omit them from generated notices.
+# First-party workspace crates (the project itself); allow their licence here.
 [bibalak-core]
 accepted = ["AGPL-3.0-or-later"]
 
