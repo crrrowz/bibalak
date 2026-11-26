@@ -1,4 +1,4 @@
-# License configuration for cargo-about (backlog step 3 / C2).
+# License configuration for cargo-about.
 
 ignore-build-dependencies = true
 ignore-dev-dependencies = true

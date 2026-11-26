@@ -13,5 +13,8 @@ pub mod testkit;
 pub mod text_import;
 pub mod writer;
 
-pub use reader::{read_package, read_package_with_media};
-pub use writer::{write_apkg, write_apkg_with_media};
+pub use reader::{read_package, read_package_with_media, read_package_with_progress};
+pub use writer::{
+    write_apkg, write_apkg_streaming, write_apkg_with_media, ExportProgressUpdate,
+    StreamingExportOutcome,
+};

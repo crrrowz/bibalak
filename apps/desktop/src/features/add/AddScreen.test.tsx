@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -403,18 +403,45 @@ describe("AddScreen 16j shared toolbar", () => {
     });
 
     const [frontBox, backBox] = screen.getAllByRole("textbox");
-    await user.click(backBox);
-    await user.click(screen.getByTitle("Bold"));
-    await user.type(backBox, "answer");
+    // Wait for frontBox's autoFocus rAF to settle before switching focus to backBox.
+    await waitFor(() => {
+      expect(frontBox).toHaveFocus();
+      expect(screen.getByTitle("Bold")).toBeEnabled();
+    });
 
-    expect(backBox.querySelector("strong")?.textContent).toBe("answer");
+    await user.click(backBox);
+    await waitFor(() => {
+      expect(backBox).toHaveFocus();
+    });
+
+    await user.click(screen.getByTitle("Bold"));
+    await waitFor(() => {
+      expect(screen.getByTitle("Bold").className).toContain("bg-primary/15");
+    });
+    await user.keyboard("answer");
+
+    await waitFor(() => {
+      expect(backBox.querySelector("strong")?.textContent).toBe("answer");
+    });
     expect(frontBox.querySelector("strong")).toBeNull();
 
-    // Blurring backBox keeps it as the last-focused target until another field is focused
-    backBox.blur();
+    // Blurring backBox keeps it as the last-focused target until another field is focused.
+    act(() => {
+      backBox.blur();
+    });
+    await waitFor(() => {
+      expect(backBox).not.toHaveFocus();
+    });
     await user.click(screen.getByTitle("Italic"));
-    await user.type(backBox, "more");
-    expect(backBox.querySelector("em")?.textContent).toBe("more");
+    // Clicking Italic runs editor.chain().focus().toggleItalic().run(), which refocuses backBox via rAF.
+    await waitFor(() => {
+      expect(backBox).toHaveFocus();
+      expect(screen.getByTitle("Italic").className).toContain("bg-primary/15");
+    });
+    await user.keyboard("more");
+    await waitFor(() => {
+      expect(backBox.querySelector("em")?.textContent).toBe("more");
+    });
     expect(frontBox.querySelector("em")).toBeNull();
   });
 

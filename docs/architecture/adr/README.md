@@ -34,13 +34,13 @@ only after the owner approves.
 
 ## Proposed
 
-| ADR                                  | Topic                                                                                                        |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| [028](028-reminders-core-plan.md)    | Reminders: pure rules in `bibalak-core`, `plan_reminders` IPC, `NotificationsApi` capability (16c)           |
-| [029](029-ipc-security-hardening.md) | IPC path guards, Rust-mediated file dialogs, per-window capabilities, CSP tightening (H1)                    |
-| [030](030-note-type-presets.md)      | Note type presets: Simple-mode config in `notetypes.config`, pure-core compiler, Anki compat (NT0)           |
-| [031](031-deck-export.md)            | Deck export: scoped export, `MediaStore::open_reader` streaming, atomic temp write, cancel & progress (EXP1) |
-| [032](032-deck-reset.md)             | Deck progress reset: `deck_card_ids` IPC, reuse `forget_cards` with undo (STUDY1 / BW2-23)                   |
+| ADR                                  | Topic                                                                                                 |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| [028](028-reminders-core-plan.md)    | Reminders: pure rules in `bibalak-core`, `plan_reminders` IPC, `NotificationsApi` capability (16c)    |
+| [029](029-ipc-security-hardening.md) | IPC path guards, Rust-mediated file dialogs, per-window capabilities, CSP tightening                  |
+| [030](030-note-type-presets.md)      | Note type presets: Simple-mode config in `notetypes.config`, pure-core compiler, Anki compat          |
+| [031](031-deck-export.md)            | Deck export: scoped export, `MediaStore::open_reader` streaming, atomic temp write, cancel & progress |
+| [032](032-deck-reset.md)             | Deck progress reset: `deck_card_ids` IPC, reuse `forget_cards` with undo                              |
 
 ## Reserved numbers (not written yet)
 

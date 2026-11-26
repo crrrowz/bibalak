@@ -7,7 +7,7 @@ mod templates;
 
 pub use crud::{
     create_notetype, delete_notetype, duplicate_notetype, get_notetype_detail,
-    note_count_for_notetype, rename_notetype, save_notetype_css,
+    note_count_for_notetype, rename_notetype, save_notetype_css, save_notetype_preset,
 };
 pub use field_config::{reorder_fields, save_field_options, set_sort_field};
 pub use fields::{add_field, check_field_remove, remove_field, rename_field};

@@ -1,6 +1,7 @@
 use crate::error::CoreResult;
 use crate::ipc::{FieldOptions, FieldRemoveWarning, NotetypeDetail};
 use crate::model::{Field, NoteTypeChangeSnapshot, Notetype, Template};
+use crate::notetype_preset::{CompiledNotetype, NotetypePreset};
 
 /// Note-type, field, and template persistence.
 pub trait NotetypeStore: Send + Sync {
@@ -38,6 +39,16 @@ pub trait NotetypeStore: Send + Sync {
 
     /// Save a note type's custom card CSS.
     fn save_notetype_css(&self, notetype_id: i64, css: &str, now_ms: i64) -> CoreResult<()>;
+
+    /// Persist a note type's `keepsakePreset` config and (when in Simple mode)
+    /// its compiled `kind`, `templates`, and `css` in one transaction.
+    fn save_notetype_preset(
+        &self,
+        notetype_id: i64,
+        preset: &NotetypePreset,
+        compiled: Option<&CompiledNotetype>,
+        now_ms: i64,
+    ) -> CoreResult<()>;
 
     /// Add a field at the end of `notetype_id`; appends an empty value to every
     /// existing note of that type.

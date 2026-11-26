@@ -29,8 +29,7 @@ import { useNotificationStore, type PopupNotification } from "./notificationStor
 
 const MAX_VISIBLE_POPUPS = 3;
 const MIN_POPUP_TOP_PX = 48; // 36px TitleBar (h-9) + 12px gap
-const TOP_TOOLBAR_SELECTOR =
-  '.glass-panel.sticky.z-20, .glass-panel.relative.z-20, [data-testid="study-progress-strip"]';
+const TOP_TOOLBAR_SELECTOR = "[data-toast-anchor]";
 
 function computePopupTopOffset(): number {
   if (typeof document === "undefined") return MIN_POPUP_TOP_PX;
@@ -347,7 +346,14 @@ export function NotificationToastHost() {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["role", "aria-modal", "class", "data-testid", "data-style"],
+      attributeFilter: [
+        "role",
+        "aria-modal",
+        "class",
+        "data-testid",
+        "data-style",
+        "data-toast-anchor",
+      ],
     });
     window.addEventListener("resize", update);
     return () => {

@@ -25,7 +25,7 @@ import {
 } from "@/lib/styles/scholar";
 import { useTheme, type Theme } from "@/stores/theme";
 import { useWeekStart } from "@/stores/weekStart";
-import { ipc, isTauri, pickAndExportPackage, errorMessage } from "@/lib/ipc";
+import { ipc, isTauri } from "@/lib/ipc";
 import type { WeekStart } from "@bibalak/ipc-types";
 import { formatDate, t, useLocale, LOCALE_NAMES, type Locale } from "@/lib/i18n";
 import { handleRadioGroupKeyDown } from "@/lib/radioGroupKeys";
@@ -39,8 +39,8 @@ import { MaintenanceSection } from "./MaintenanceSection";
 import { NotificationsSection } from "./NotificationsSection";
 import { PluginManagerSection } from "./PluginManagerSection";
 import { RolloverSection } from "./RolloverSection";
-import { Spinner } from "./SettingsSpinner";
 import { UpdateSection } from "./UpdateSection";
+import { ExportDialog } from "@/components/importExport/ExportDialog";
 
 export type SettingsCategory =
   | "general"
@@ -188,7 +188,7 @@ export function SettingsScreen() {
   const locale = useLocale((s) => s.locale);
   const setLocale = useLocale((s) => s.setLocale);
   const tauri = isTauri();
-  const [exportState, setExportState] = useState<"idle" | "busy" | "done" | string>("idle");
+  const [exportOpen, setExportOpen] = useState(false);
   const appInfoQuery = useQuery({
     queryKey: queryKeys.appInfo,
     queryFn: ipc.appInfo,
@@ -564,37 +564,17 @@ export function SettingsScreen() {
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={exportState === "busy"}
-                      onClick={async () => {
-                        setExportState("busy");
-                        try {
-                          const count = await pickAndExportPackage();
-                          setExportState(count === null ? "idle" : "done");
-                        } catch (e) {
-                          setExportState(errorMessage(e));
-                        }
-                      }}
-                    >
-                      {exportState === "busy" && <Spinner />}
-                      {exportState === "busy"
-                        ? t("settings.export.busy")
-                        : t("settings.export.button")}
+                    <Button variant="outline" size="sm" onClick={() => setExportOpen(true)}>
+                      {t("settings.export.button")}
                     </Button>
-                    {exportState === "done" && (
-                      <span className="text-sm text-muted-foreground" aria-live="polite">
-                        {t("settings.export.done")}
-                      </span>
-                    )}
-                    {exportState !== "idle" && exportState !== "busy" && exportState !== "done" && (
-                      <span className="text-sm text-destructive" aria-live="polite">
-                        {exportState}
-                      </span>
-                    )}
                   </div>
                 </section>
+
+                <ExportDialog
+                  open={exportOpen}
+                  scope={{ kind: "collection" }}
+                  onClose={() => setExportOpen(false)}
+                />
 
                 <BackupSection />
               </div>

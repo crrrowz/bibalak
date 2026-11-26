@@ -377,6 +377,16 @@ impl NotetypeStore for FakeStorage {
         Ok(())
     }
 
+    fn save_notetype_preset(
+        &self,
+        _notetype_id: i64,
+        _preset: &crate::notetype_preset::NotetypePreset,
+        _compiled: Option<&crate::notetype_preset::CompiledNotetype>,
+        _now_ms: i64,
+    ) -> CoreResult<()> {
+        Ok(())
+    }
+
     fn add_field(&self, _notetype_id: i64, _name: &str, _now_ms: i64) -> CoreResult<()> {
         Ok(())
     }
@@ -831,7 +841,10 @@ impl StudyStore for FakeStorage {
             .lock()
             .unwrap()
             .iter()
-            .filter(|c| deck_ids.contains(&c.deck_id))
+            .filter(|c| {
+                deck_ids.contains(&c.deck_id)
+                    || (c.original_deck_id != 0 && deck_ids.contains(&c.original_deck_id))
+            })
             .map(|c| c.id)
             .collect();
         ids.sort_unstable();

@@ -464,6 +464,7 @@ export const en = {
   "decks.emptyHint": "Return all cards to original decks",
   "decks.emptyNamed": "Empty {{name}}",
   "decks.expand": "Expand subdecks",
+  "decks.export": "Export deck…",
   "decks.filtered": "Filtered",
   "decks.filteredBadge": "filtered",
   "decks.filteredHint": "Create a filtered (custom study) deck",
@@ -471,6 +472,7 @@ export const en = {
   "decks.importFailed": "Import failed: {{error}}",
   "decks.importFromAnki": "Import from Anki",
   "decks.importHint": "Import an Anki .apkg / .colpkg",
+  "decks.importNothingNew": "Already in your collection — nothing new",
   "decks.importSummary":
     "Imported {{notes}} notes, {{cards}} cards, {{decks}} decks, {{media}} media",
   "decks.importSummary.cards_one": "{{count}} card",
@@ -788,6 +790,46 @@ export const en = {
   "settings.export.description": "Export your full collection as an Anki-compatible .apkg file.",
   "settings.export.done": "Exported.",
   "settings.export.title": "Export",
+  "export.asNewNote": "Cards will be exported as new cards.",
+  "export.cancelled": "Export cancelled. No file was written.",
+  "export.cancelling": "Cancelling…",
+  "export.done": "Export complete",
+  "export.doneButton": "Done",
+  "export.doneSummary": "Exported {{cards}} · {{media}}",
+  "export.estimateLoading": "Estimating export size…",
+  "export.estimateSummary": "{{cards}} · {{media}}",
+  "export.cardsCount_one": "{{count}} card",
+  "export.cardsCount_other": "{{count}} cards",
+  "export.mediaCount_one": "{{count}} media file ({{size}})",
+  "export.mediaCount_other": "{{count}} media files ({{size}})",
+  "export.mediaExported_one": "{{count}} media file",
+  "export.mediaExported_other": "{{count}} media files",
+  "export.includeMedia": "Include media files",
+  "export.includeMediaAllHint": "All media files in your collection folder",
+  "export.includeMediaDeckHint": "Only media referenced by cards and templates in this export",
+  "export.includeScheduling": "Include scheduling & review history",
+  "export.includeSubdecks": "Include subdecks",
+  "export.mediaProgress": "{{done}} of {{total}} media files ({{bytesDone}} / {{bytesTotal}})",
+  "export.notesProgress": "{{done}} of {{total}} notes",
+  "export.skippedMissing_one": "{{count}} missing media file was skipped.",
+  "export.skippedMissing_other": "{{count}} missing media files were skipped.",
+  "export.stage.finalizing": "Finalizing…",
+  "export.stage.packing-media": "Packing media…",
+  "export.stage.preparing": "Preparing…",
+  "export.stage.writing-db": "Writing database…",
+  "export.startButton": "Export…",
+  "export.subtitleCollection": "Save your full collection as an Anki-compatible .apkg package.",
+  "export.subtitleDeck": "Save this deck as an Anki-compatible .apkg package.",
+  "export.titleCollection": "Export collection",
+  "export.titleDeck": "Export {{name}}",
+  "export.tryAgain": "Try again",
+  "import.cancelled": "Import cancelled. Your collection was not changed.",
+  "import.cancelling": "Cancelling…",
+  "import.mediaProgress": "Copying media {{done}} of {{total}}…",
+  "import.stage.copying-media": "Copying media…",
+  "import.stage.merging": "Merging notes and cards…",
+  "import.stage.reading-package": "Reading package…",
+  "import.title": "Importing package",
   "settings.integrity.busy": "Checking…",
   "settings.integrity.check": "Check integrity",
   "settings.integrity.healthy": "Database is healthy.",
@@ -1710,7 +1752,7 @@ export const en = {
   "habits.error": "Could not load habits.",
   "habits.noTauri.title": "Habits require the desktop app",
   "habits.noTauri.description": "Habits and logs are stored in your local collection.",
-  // PLN3 — Habits
+  // Habits (history, archive, skips)
   "habits.addAmountAria": "Add {{amount}} to {{title}}",
   "habits.archived.title": "Archived habits",
   "habits.archived.archivedOn": "Archived {{date}}",
@@ -1802,7 +1844,7 @@ export const en = {
   "calendar.error": "Could not load calendar.",
   "calendar.noTauri.title": "Calendar requires the desktop app",
   "calendar.noTauri.description": "Events and schedules are stored in your local collection.",
-  // PLN1 — Calendar
+  // Calendar (retry, drag, mini-month)
   "calendar.retry": "Retry",
   "calendar.emptyHint": "Click or drag any hour to add an event.",
   "calendar.slotAria": "{{date}}, {{time}}",
@@ -1846,7 +1888,7 @@ export const en = {
   "matrix.deckDue.openInBrowse": "Open in Browse",
   "matrix.deckDue.editRule": "Edit this box's rule",
   "matrix.task.linkedDeck": "Linked deck: {{deck}}",
-  // PLN0 — Plan shared
+  // Plan shared (week start, calendar/matrix views)
   "settings.appearance.weekStart.label": "Week starts on",
   "settings.appearance.weekStart.sat": "Saturday",
   "settings.appearance.weekStart.sun": "Sunday",
@@ -1876,7 +1918,7 @@ export const en = {
   "matrix.detail.title": "Task details",
   "matrix.task.reorderAria": "Reorder {{title}}",
   "matrix.group.toggleAria": "Toggle group {{name}}",
-  // PLN2 — Matrix
+  // Matrix (manual sort, detail, quick-add)
   "matrix.sortedManually": "Sorted manually",
   "matrix.task.moveUp": "Move up",
   "matrix.task.moveDown": "Move down",
@@ -2180,7 +2222,7 @@ export const en = {
   "matrix.deckDue.reasonRule": "Placed in {{quadrant}} by this box's custom deck rule.",
   "matrix.deckDue.reasonAuto":
     "Placed in {{quadrant}} automatically because this deck has cards due today and matches this box's rule first.",
-  // UXB
+  // Editor, media, browse, and settings polish
   "add.moreFields_one": "More fields ({{count}})",
   "add.moreFields_other": "More fields ({{count}})",
   "add.hideMoreFields": "Hide extra fields",
@@ -2281,7 +2323,7 @@ export const en = {
   "settings.plugins.consentNone": "This plugin requests no special permissions.",
   "settings.plugins.consentAllow": "Allow and enable",
 
-  // STUDY1
+  // Study limits and deck reset
   "limit.subdecksHint":
     "Also raises each subdeck's today limit by {{count}} (parent cap keeps total at +{{count}}).",
   "options.extraToday": "(+{{count}} today)",

@@ -117,3 +117,6 @@ Synapse release, kept as history. Source:
 - Full FSRS-5 and SM-2 schedulers, switchable per deck
 - Bidirectional .apkg/.colpkg import/export (Anki schema v11/v18)
 - Statistics dashboards
+
+[unreleased]: https://github.com/crrrowz/bibalak/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/crrrowz/bibalak/releases/tag/v1.0.0

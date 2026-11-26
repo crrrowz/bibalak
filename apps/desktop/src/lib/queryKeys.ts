@@ -1,4 +1,4 @@
-import type { MediaLibraryFilter, TextImportOptions } from "@bibalak/ipc-types";
+import type { ExportScope, MediaLibraryFilter, TextImportOptions } from "@bibalak/ipc-types";
 
 /**
  * Centralized TanStack Query keys. Domain events (re-emitted from the Rust core)
@@ -98,4 +98,7 @@ export const queryKeys = {
     ["deck-card-ids", deckId, includeSubdecks] as const,
   statsFsrsDecks: (deckId: number | null, deckIds: number[]) =>
     ["stats", "fsrs-decks", deckId, deckIds] as const,
+  // EXP1
+  exportEstimate: (scope: ExportScope | null, includeMedia: boolean) =>
+    ["export-estimate", scope, includeMedia] as const,
 };

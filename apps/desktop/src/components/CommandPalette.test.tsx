@@ -25,6 +25,7 @@ vi.mock("@/lib/platform", () => ({
   platform: {
     isAvailable: () => true,
     invoke: vi.fn(),
+    listen: vi.fn(() => () => {}),
   },
 }));
 
@@ -65,5 +66,30 @@ describe("CommandPalette completeness (U4)", () => {
     const quickAddItem = screen.getByText("Open quick add");
     await user.click(quickAddItem);
     expect(toggleQuickAddSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens ExportDialog from Export collection command", async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
+    vi.spyOn(ipc.ipc, "getExportEstimate").mockResolvedValue({
+      notes: 1,
+      cards: 2,
+      media_files: 0,
+      media_bytes: 0,
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <CommandPalette />
+      </QueryClientProvider>,
+    );
+
+    act(() => {
+      useUi.getState().openPalette();
+    });
+
+    await user.click(await screen.findByText("Export collection as .apkg"));
+    expect(await screen.findByRole("heading", { name: "Export collection" })).toBeInTheDocument();
   });
 });

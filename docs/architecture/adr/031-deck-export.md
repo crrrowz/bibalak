@@ -1,21 +1,21 @@
-# ADR-031: Scoped Deck Export, Streaming Media ZIP Writer, and Export Cancellation (`EXP1`)
+# ADR-031: Scoped Deck Export, Streaming Media ZIP Writer, and Export Cancellation
 
-**Status:** Accepted (2026-11-26) — Phase 2 builds it after the `STUDY1` merge  
+**Status:** Accepted (2026-11-26)  
 **Date:** 2026-11-26  
-**Card:** `EXP1` (fixes `BW2-17`)  
+**Scope:** Deck export redesign  
 **Related:** Deck Export Spec · [ADR-001](001-clean-architecture.md) · [ADR-007](007-note-ids-and-checksums.md) · [ADR-010](010-media-store.md) · [ADR-029](029-ipc-security-hardening.md) · [ADR-030](030-note-type-presets.md) · `decisions.md`
 
 ---
 
 ## Context
 
-`BW2-17` identified three structural limitations in Bibalak's `.apkg` export pipeline (`apps/desktop/src-tauri/src/commands/export.rs`, `crates/bibalak-ankifmt/src/writer.rs`):
+The export redesign identified three structural limitations in Bibalak's `.apkg` export pipeline (`apps/desktop/src-tauri/src/commands/export.rs`, `crates/bibalak-ankifmt/src/writer.rs`):
 
 1. **Public IPC API has no scope or options:** `export_package(path: String) -> u32` accepts only a file path. There is no way to export a single deck (with or without subdecks), toggle media, toggle scheduling history, track progress, or cancel a running export.
 2. **Full-collection SHA-1 hashing & RAM buffering:** `write_apkg_with_media` calls `MediaStore::list()` (which lazily computes SHA-1 on every unhashed file in `collection.media/`, reading all 400 MB on a cold index) and `MediaStore::read()` into `Vec<(String, Vec<u8>)>`, materializing the entire media folder in RAM before writing a byte to the ZIP. `build_sqlite` likewise reads the full temp SQLite database back into `Vec<u8>`.
 3. **Non-atomic output:** `zip::ZipWriter` writes directly to `dest_path`, so an error or interruption leaves a corrupt partial `.apkg` at the user's chosen path.
 
-Because `EXP1` changes the public IPC contract (`export_package`, new commands/events, new `CoreError`/`IpcErrorKind` variant) and extends the `MediaStore` port trait (`ADR-001`, `ADR-010`), an ADR is required before Phase 2 implementation (`AGENTS.md` "Agent workflow" §3).
+Because the export redesign changes the public IPC contract (`export_package`, new commands/events, new `CoreError`/`IpcErrorKind` variant) and extends the `MediaStore` port trait (`ADR-001`, `ADR-010`), an ADR is required before implementation (`CONTRIBUTING.md`).
 
 ---
 
@@ -42,7 +42,7 @@ fn open_reader(&self, filename: &str) -> CoreResult<Box<dyn std::io::Read + Send
   - **Collection scope:** Packs **all** regular files in `collection.media` enumerated via `list_sizes()` (backup semantics).
   - **Deck scope:** Filters strictly to local media referenced by exported note fields, template `qfmt`/`afmt`, and notetype `css` via `bibalak_core::media_refs::extract_media_refs` (extended to also match `<script ... src=...>`, so `_`-prefixed assets are included only when referenced).
 - Missing media files on disk are skipped without failing the export and counted in `ExportSummary.media_skipped_missing`.
-- Browse-selection export is deferred to a later card outside `EXP1` Phase 2.
+- Browse-selection export is deferred to a follow-up outside this redesign.
 
 ### 3. Streaming `.apkg` Writer & Atomic Temp-File Replacement (`bibalak-ankifmt`)
 
@@ -72,9 +72,9 @@ Add `write_apkg_streaming` in `crates/bibalak-ankifmt/src/writer.rs` (keeping ex
 ## Alternatives Considered
 
 1. **Keep `export_package(path)` and add a separate `export_deck_package(...)` command:**  
-   Rejected because Settings collection export also needs `include_media`, `include_scheduling`, progress events, and cancellation (`BW2-17`). One `ExportPackageRequest` with `ExportScope` serves both entry points and future scopes (such as Browse selection) without duplicating streaming, cancellation, or guard logic.
+   Rejected because Settings collection export also needs `include_media`, `include_scheduling`, progress events, and cancellation. One `ExportPackageRequest` with `ExportScope` serves both entry points and future scopes (such as Browse selection) without duplicating streaming, cancellation, or guard logic.
 2. **Use Anki `.colpkg` / v18 protobuf format for deck exports:**  
-   Rejected for `EXP1`. Anki v11 `.apkg` (`writer.rs`) already opens in every Anki version ≥ 2.0 and round-trips cleanly through `reader.rs`. Switching container format is orthogonal and can be added later without changing the IPC contract.
+   Rejected for this redesign. Anki v11 `.apkg` (`writer.rs`) already opens in every Anki version ≥ 2.0 and round-trips cleanly through `reader.rs`. Switching container format is orthogonal and can be added later without changing the IPC contract.
 3. **Keep media in memory and only add `include_media` filtering:**  
    Rejected because a single deck with heavy audio/video can still exceed 200–400 MB, and `MediaStore::list()` would still waste time hashing unrelated files on disk.
 

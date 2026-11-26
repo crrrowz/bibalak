@@ -1,11 +1,11 @@
 # ADR-021: In-app updates via official Tauri updater and one-setting switch
 
 Date: 2026-11-16
-Status: Accepted (built in step 4, C1)
+Status: Accepted ()
 
 ## Context
 
-Prior to Card C1, Bibalak checked for updates by calling `fetch()` directly from the Settings webview against `<site>/download/latest.json` (`apps/desktop/src/routes/SettingsScreen.tsx` `UpdateSection`), compared versions with `manifest.version !== current` (offering older versions as available updates), and only linked to an external download page. Meanwhile, `apps/desktop/src-tauri/tauri.conf.json` carried an unreachable private GitHub endpoint (`the prior private repository`), `tauri-plugin-updater` was not installed, and the webview CSP `connect-src` whitelisted GitHub domains solely for that path.
+Previously, Bibalak checked for updates by calling `fetch()` directly from the Settings webview against `<site>/download/latest.json` (`apps/desktop/src/routes/SettingsScreen.tsx` `UpdateSection`), compared versions with `manifest.version !== current` (offering older versions as available updates), and only linked to an external download page. Meanwhile, `apps/desktop/src-tauri/tauri.conf.json` carried an unreachable legacy repository endpoint, `tauri-plugin-updater` was not installed, and the webview CSP `connect-src` whitelisted GitHub domains solely for that path.
 
 The project's decisions establish that:
 
@@ -34,7 +34,7 @@ The project's decisions establish that:
 
 5. **Security and user consent:**
    - **Cryptographic verification:** `tauri-plugin-updater` verifies every downloaded installer against the `.sig` file using the committed minisign public key (`plugins.updater.pubkey` in `tauri.conf.json`; private key remains outside the repo in `.keepsake-signing/` / GitHub secrets).
-   - **Version ordering:** `tauri-plugin-updater` performs semver comparison and ignores older or equal manifests, resolving the `!==` downgrade bug from `01-Q2.md`.
+   - **Version ordering:** `tauri-plugin-updater` performs semver comparison and ignores older or equal manifests, preventing version downgrades.
    - **Explicit consent:** Checking only displays version and notes; downloading, installing, and restarting never happen silently and run only after the user clicks `"Install and restart"`.
 
 6. **CSP tightening (`connect-src`):**

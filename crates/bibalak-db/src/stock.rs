@@ -5,70 +5,12 @@
 //! user-editable afterward from the notetype's Styling tab.
 
 use bibalak_core::error::{CoreError, CoreResult};
+pub use bibalak_core::notetype_preset::DEFAULT_CARD_CSS;
 use rusqlite::{params, Connection, Transaction};
 
 fn err(e: impl std::fmt::Display) -> CoreError {
     CoreError::Storage(e.to_string())
 }
-
-/// Modern-editorial default card CSS: serif question typography, generous
-/// spacing, a soft hairline divider, and a pill-styled cloze — layered over
-/// `card-base.css`'s reset inside the study webview's shadow root.
-pub const DEFAULT_CARD_CSS: &str = r#".card {
-  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-  font-size: 1.25rem;
-  line-height: 1.65;
-  letter-spacing: -0.01em;
-  padding: 2.5rem 2rem;
-}
-
-.card b,
-.card strong {
-  font-weight: 650;
-}
-
-.card hr#answer {
-  width: 4rem;
-  height: 1px;
-  margin: 1.75rem auto;
-  border: none;
-  background: linear-gradient(to right, transparent, hsl(var(--border)), transparent);
-}
-
-.card .cloze {
-  font-family: "Figtree Variable", ui-sans-serif, system-ui, sans-serif;
-  font-weight: 600;
-  letter-spacing: 0;
-  color: hsl(var(--primary));
-  background: hsl(var(--primary) / 0.08);
-  padding: 0.05em 0.35em;
-  border-radius: 0.375rem;
-}
-
-.card.night_mode .cloze,
-.card.nightMode .cloze {
-  background: hsl(var(--primary) / 0.16);
-}
-
-.card img {
-  border-radius: 0.5rem;
-  box-shadow:
-    0 1px 3px hsl(var(--foreground) / 0.12),
-    0 1px 2px hsl(var(--foreground) / 0.08);
-}
-
-.card .keepsake-extra {
-  font-family: "Figtree Variable", ui-sans-serif, system-ui, sans-serif;
-  font-size: 0.95rem;
-  color: hsl(var(--muted-foreground));
-  margin-top: 1.25rem;
-}
-
-.card .keepsake-io-wrap {
-  position: relative;
-  display: inline-block;
-}
-"#;
 
 /// One card template definition for seeding.
 pub(crate) struct StockTemplate {

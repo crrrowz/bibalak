@@ -15,4 +15,10 @@ describe("statQuery (S4)", () => {
     const query = maturityQuery("new", "Japanese::Kanji");
     expect(query).toBe('deck:"Japanese::Kanji*" is:new');
   });
+
+  it("escapes backslashes before quotes in deck names", () => {
+    const deckWithBackslashes = 'Unit\\1\\"Final"\\';
+    const query = maturityQuery("new", deckWithBackslashes);
+    expect(query).toBe('deck:"Unit\\\\1\\\\\\"Final\\"\\\\*" is:new');
+  });
 });

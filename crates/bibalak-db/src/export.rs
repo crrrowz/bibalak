@@ -13,29 +13,79 @@ fn err(e: impl std::fmt::Display) -> CoreError {
 }
 
 pub fn dump_collection(conn: &Connection) -> CoreResult<CanonicalModel> {
+    dump_collection_scoped(conn, None, true)
+}
+
+pub fn dump_collection_scoped(
+    conn: &Connection,
+    deck_ids: Option<&[i64]>,
+    include_revlog: bool,
+) -> CoreResult<CanonicalModel> {
     let created_ms: Option<i64> = conn
         .query_row("SELECT created FROM collection WHERE id = 1", [], |r| {
             r.get(0)
         })
         .optional()
         .map_err(err)?;
+
+    let Some(ids) = deck_ids else {
+        return Ok(CanonicalModel {
+            created_ms,
+            deck_configs: dump_deck_configs(conn, None)?,
+            decks: dump_decks(conn, None)?,
+            notetypes: dump_notetypes(conn, None)?,
+            fields: dump_fields(conn, None)?,
+            templates: dump_templates(conn, None)?,
+            notes: dump_notes(conn, None)?,
+            cards: dump_cards(conn, None)?,
+            revlog: if include_revlog {
+                dump_revlog(conn, None)?
+            } else {
+                Vec::new()
+            },
+        });
+    };
+
+    if ids.is_empty() {
+        return Ok(CanonicalModel {
+            created_ms,
+            ..Default::default()
+        });
+    }
+
+    let id_list = ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let filter = Some(id_list.as_str());
+
     Ok(CanonicalModel {
         created_ms,
-        deck_configs: dump_deck_configs(conn)?,
-        decks: dump_decks(conn)?,
-        notetypes: dump_notetypes(conn)?,
-        fields: dump_fields(conn)?,
-        templates: dump_templates(conn)?,
-        notes: dump_notes(conn)?,
-        cards: dump_cards(conn)?,
-        revlog: dump_revlog(conn)?,
+        deck_configs: dump_deck_configs(conn, filter)?,
+        decks: dump_decks(conn, filter)?,
+        notetypes: dump_notetypes(conn, filter)?,
+        fields: dump_fields(conn, filter)?,
+        templates: dump_templates(conn, filter)?,
+        notes: dump_notes(conn, filter)?,
+        cards: dump_cards(conn, filter)?,
+        revlog: if include_revlog {
+            dump_revlog(conn, filter)?
+        } else {
+            Vec::new()
+        },
     })
 }
 
-fn dump_deck_configs(conn: &Connection) -> CoreResult<Vec<DeckConfig>> {
-    let mut stmt = conn
-        .prepare("SELECT id, name, mod, usn, config FROM deck_config")
-        .map_err(err)?;
+fn dump_deck_configs(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<DeckConfig>> {
+    let sql = match deck_filter {
+        Some(ids) => format!(
+            "SELECT id, name, mod, usn, config FROM deck_config
+             WHERE id IN (SELECT DISTINCT config_id FROM decks WHERE id IN ({ids}))"
+        ),
+        None => "SELECT id, name, mod, usn, config FROM deck_config".to_string(),
+    };
+    let mut stmt = conn.prepare(&sql).map_err(err)?;
     let rows = stmt
         .query_map([], |r| {
             Ok(DeckConfig {
@@ -50,13 +100,17 @@ fn dump_deck_configs(conn: &Connection) -> CoreResult<Vec<DeckConfig>> {
     rows.collect::<rusqlite::Result<_>>().map_err(err)
 }
 
-fn dump_decks(conn: &Connection) -> CoreResult<Vec<Deck>> {
-    let mut stmt = conn
-        .prepare(
+fn dump_decks(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<Deck>> {
+    let sql = match deck_filter {
+        Some(ids) => format!(
             r#"SELECT id, name, parent_id, config_id, "mod", usn, collapsed, is_filtered
-               FROM decks ORDER BY id"#,
-        )
-        .map_err(err)?;
+               FROM decks WHERE id IN ({ids}) ORDER BY id"#
+        ),
+        None => r#"SELECT id, name, parent_id, config_id, "mod", usn, collapsed, is_filtered
+               FROM decks ORDER BY id"#
+            .to_string(),
+    };
+    let mut stmt = conn.prepare(&sql).map_err(err)?;
     let rows = stmt
         .query_map([], |r| {
             Ok(Deck {
@@ -74,10 +128,20 @@ fn dump_decks(conn: &Connection) -> CoreResult<Vec<Deck>> {
     rows.collect::<rusqlite::Result<_>>().map_err(err)
 }
 
-fn dump_notetypes(conn: &Connection) -> CoreResult<Vec<Notetype>> {
-    let mut stmt = conn
-        .prepare("SELECT id, name, kind, mod, usn, config FROM notetypes ORDER BY id")
-        .map_err(err)?;
+fn dump_notetypes(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<Notetype>> {
+    let sql = match deck_filter {
+        Some(ids) => format!(
+            "SELECT id, name, kind, mod, usn, config FROM notetypes
+             WHERE id IN (
+                 SELECT DISTINCT n.notetype_id FROM notes n
+                 JOIN cards c ON c.note_id = n.id
+                 WHERE c.deck_id IN ({ids})
+             )
+             ORDER BY id"
+        ),
+        None => "SELECT id, name, kind, mod, usn, config FROM notetypes ORDER BY id".to_string(),
+    };
+    let mut stmt = conn.prepare(&sql).map_err(err)?;
     let rows = stmt
         .query_map([], |r| {
             Ok(Notetype {
@@ -95,10 +159,21 @@ fn dump_notetypes(conn: &Connection) -> CoreResult<Vec<Notetype>> {
     rows.collect::<rusqlite::Result<_>>().map_err(err)
 }
 
-fn dump_fields(conn: &Connection) -> CoreResult<Vec<Field>> {
-    let mut stmt = conn
-        .prepare("SELECT notetype_id, ord, name, config FROM fields ORDER BY notetype_id, ord")
-        .map_err(err)?;
+fn dump_fields(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<Field>> {
+    let sql = match deck_filter {
+        Some(ids) => format!(
+            "SELECT notetype_id, ord, name, config FROM fields
+             WHERE notetype_id IN (
+                 SELECT DISTINCT n.notetype_id FROM notes n
+                 JOIN cards c ON c.note_id = n.id
+                 WHERE c.deck_id IN ({ids})
+             )
+             ORDER BY notetype_id, ord"
+        ),
+        None => "SELECT notetype_id, ord, name, config FROM fields ORDER BY notetype_id, ord"
+            .to_string(),
+    };
+    let mut stmt = conn.prepare(&sql).map_err(err)?;
     let rows = stmt
         .query_map([], |r| {
             Ok(Field {
@@ -114,13 +189,23 @@ fn dump_fields(conn: &Connection) -> CoreResult<Vec<Field>> {
     rows.collect::<rusqlite::Result<_>>().map_err(err)
 }
 
-fn dump_templates(conn: &Connection) -> CoreResult<Vec<Template>> {
-    let mut stmt = conn
-        .prepare(
+fn dump_templates(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<Template>> {
+    let sql = match deck_filter {
+        Some(ids) => format!(
             "SELECT notetype_id, ord, name, qfmt, afmt, config
-             FROM templates ORDER BY notetype_id, ord",
-        )
-        .map_err(err)?;
+             FROM templates
+             WHERE notetype_id IN (
+                 SELECT DISTINCT n.notetype_id FROM notes n
+                 JOIN cards c ON c.note_id = n.id
+                 WHERE c.deck_id IN ({ids})
+             )
+             ORDER BY notetype_id, ord"
+        ),
+        None => "SELECT notetype_id, ord, name, qfmt, afmt, config
+             FROM templates ORDER BY notetype_id, ord"
+            .to_string(),
+    };
+    let mut stmt = conn.prepare(&sql).map_err(err)?;
     let rows = stmt
         .query_map([], |r| {
             Ok(Template {
@@ -138,13 +223,19 @@ fn dump_templates(conn: &Connection) -> CoreResult<Vec<Template>> {
     rows.collect::<rusqlite::Result<_>>().map_err(err)
 }
 
-fn dump_notes(conn: &Connection) -> CoreResult<Vec<Note>> {
-    let mut stmt = conn
-        .prepare(
+fn dump_notes(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<Note>> {
+    let sql = match deck_filter {
+        Some(ids) => format!(
             r#"SELECT id, guid, notetype_id, "mod", usn, tags, fields, sort_field, checksum
-               FROM notes ORDER BY id"#,
-        )
-        .map_err(err)?;
+               FROM notes
+               WHERE id IN (SELECT DISTINCT note_id FROM cards WHERE deck_id IN ({ids}))
+               ORDER BY id"#
+        ),
+        None => r#"SELECT id, guid, notetype_id, "mod", usn, tags, fields, sort_field, checksum
+               FROM notes ORDER BY id"#
+            .to_string(),
+    };
+    let mut stmt = conn.prepare(&sql).map_err(err)?;
     let rows = stmt
         .query_map([], |r| {
             let tags: String = r.get(5)?;
@@ -165,15 +256,21 @@ fn dump_notes(conn: &Connection) -> CoreResult<Vec<Note>> {
     rows.collect::<rusqlite::Result<_>>().map_err(err)
 }
 
-fn dump_cards(conn: &Connection) -> CoreResult<Vec<Card>> {
-    let mut stmt = conn
-        .prepare(
+fn dump_cards(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<Card>> {
+    let sql = match deck_filter {
+        Some(ids) => format!(
             r#"SELECT id, note_id, deck_id, ord, "mod", usn, type, queue, due, interval,
                       ease_factor, reps, lapses, remaining, original_due, original_deck_id,
                       flags, fsrs_stability, fsrs_difficulty, fsrs_last_review, data
-               FROM cards ORDER BY id"#,
-        )
-        .map_err(err)?;
+               FROM cards WHERE deck_id IN ({ids}) ORDER BY id"#
+        ),
+        None => r#"SELECT id, note_id, deck_id, ord, "mod", usn, type, queue, due, interval,
+                      ease_factor, reps, lapses, remaining, original_due, original_deck_id,
+                      flags, fsrs_stability, fsrs_difficulty, fsrs_last_review, data
+               FROM cards ORDER BY id"#
+            .to_string(),
+    };
+    let mut stmt = conn.prepare(&sql).map_err(err)?;
     let rows = stmt
         .query_map([], |r| {
             Ok(Card {
@@ -204,14 +301,21 @@ fn dump_cards(conn: &Connection) -> CoreResult<Vec<Card>> {
     rows.collect::<rusqlite::Result<_>>().map_err(err)
 }
 
-fn dump_revlog(conn: &Connection) -> CoreResult<Vec<Revlog>> {
-    let mut stmt = conn
-        .prepare(
+fn dump_revlog(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<Revlog>> {
+    let sql = match deck_filter {
+        Some(ids) => format!(
             "SELECT id, card_id, usn, ease, interval, last_interval,
                     ease_factor, taken_ms, review_kind
-             FROM revlog ORDER BY id",
-        )
-        .map_err(err)?;
+             FROM revlog
+             WHERE card_id IN (SELECT id FROM cards WHERE deck_id IN ({ids}))
+             ORDER BY id"
+        ),
+        None => "SELECT id, card_id, usn, ease, interval, last_interval,
+                    ease_factor, taken_ms, review_kind
+             FROM revlog ORDER BY id"
+            .to_string(),
+    };
+    let mut stmt = conn.prepare(&sql).map_err(err)?;
     let rows = stmt
         .query_map([], |r| {
             Ok(Revlog {
@@ -438,5 +542,89 @@ mod tests {
         );
         drop(restored);
         let _ = std::fs::remove_file(&backup_path);
+    }
+
+    #[test]
+    fn scoped_dump_isolates_deck_and_partial_split_notes_and_skips_revlog() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        storage.ensure_collection(1_700_000_000_000).unwrap();
+
+        let parent = storage.create_deck("Lang", 1_000).unwrap().id;
+        let child = storage.create_deck("Lang::Verbs", 1_000).unwrap().id;
+        let sibling = storage.create_deck("History", 1_000).unwrap().id;
+
+        let nt_basic = storage
+            .list_notetypes()
+            .unwrap()
+            .into_iter()
+            .find(|n| n.name == "Basic")
+            .unwrap()
+            .id;
+        let nt_rev = storage
+            .list_notetypes()
+            .unwrap()
+            .into_iter()
+            .find(|n| n.name == "Basic (and reversed card)")
+            .unwrap()
+            .id;
+
+        // Multi-card note split across Lang::Verbs (card 0) and History (card 1).
+        let (split_note_id, _) = storage
+            .add_note_with_cards(nt_rev, child, &["hola".into(), "hello".into()], &[], 2_000)
+            .unwrap();
+        let split_cards: Vec<i64> = storage
+            .dump_collection()
+            .unwrap()
+            .cards
+            .into_iter()
+            .filter(|c| c.note_id == split_note_id)
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(split_cards.len(), 2);
+        storage
+            .move_cards_to_deck(&[split_cards[1]], sibling, 2_100)
+            .unwrap();
+
+        // Sibling-only note using Basic notetype.
+        storage
+            .add_note_with_cards(
+                nt_basic,
+                sibling,
+                &["1914".into(), "WWI".into()],
+                &[],
+                2_200,
+            )
+            .unwrap();
+
+        // Add revlog entries for both cards.
+        {
+            let conn = storage.lock();
+            conn.execute(
+                "INSERT INTO revlog (id, card_id, usn, ease, interval, last_interval, ease_factor, taken_ms, review_kind)
+                 VALUES (?1, ?2, 0, 3, 1, 0, 2500, 1200, 0),
+                        (?3, ?4, 0, 3, 1, 0, 2500, 1300, 0)",
+                rusqlite::params![900_001i64, split_cards[0], 900_002i64, split_cards[1]],
+            )
+            .unwrap();
+        }
+
+        let scoped_with_sched = storage
+            .dump_collection_scoped(Some(&[parent, child]), true)
+            .unwrap();
+        assert_eq!(scoped_with_sched.decks.len(), 2);
+        assert!(scoped_with_sched.decks.iter().all(|d| d.id != sibling));
+        assert_eq!(scoped_with_sched.cards.len(), 1);
+        assert_eq!(scoped_with_sched.cards[0].id, split_cards[0]);
+        assert_eq!(scoped_with_sched.notes.len(), 1);
+        assert_eq!(scoped_with_sched.notes[0].id, split_note_id);
+        assert_eq!(scoped_with_sched.notetypes.len(), 1);
+        assert_eq!(scoped_with_sched.notetypes[0].id, nt_rev);
+        assert_eq!(scoped_with_sched.revlog.len(), 1);
+        assert_eq!(scoped_with_sched.revlog[0].card_id, split_cards[0]);
+
+        let scoped_no_sched = storage
+            .dump_collection_scoped(Some(&[parent, child]), false)
+            .unwrap();
+        assert!(scoped_no_sched.revlog.is_empty());
     }
 }

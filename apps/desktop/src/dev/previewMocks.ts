@@ -17,6 +17,7 @@ import { gameMocks } from "./mocks/game";
 import { gameDepthMocks } from "./mocks/gameDepth";
 import { motivationMocks } from "./mocks/motivation";
 import { mockDecks } from "./mocks/decks";
+import { exportMocks } from "./mocks/export";
 import { pluginMocks } from "./mocks/plugins";
 import { pluginHost } from "@/lib/pluginHost";
 
@@ -308,6 +309,7 @@ const responses: Record<string, unknown> = {
   ...gameDepthMocks,
   ...motivationMocks,
   ...pluginMocks,
+  ...exportMocks,
 };
 
 export function installPreviewMocks() {

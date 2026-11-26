@@ -8,6 +8,7 @@ import {
   Settings,
   Sparkles,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import type { DeckSummary } from "@bibalak/ipc-types";
@@ -24,6 +25,7 @@ export function DeckActionsMenu({
   onOptions,
   onCheckQuality,
   onResetProgress,
+  onExport,
   onDelete,
   onRebuild,
   onEmpty,
@@ -35,6 +37,7 @@ export function DeckActionsMenu({
   onOptions: () => void;
   onCheckQuality?: () => void;
   onResetProgress?: () => void;
+  onExport?: () => void;
   onDelete: () => void;
   onRebuild: () => void;
   onEmpty: () => void;
@@ -74,6 +77,9 @@ export function DeckActionsMenu({
           label={t("decks.actions.resetProgress")}
           onSelect={onResetProgress}
         />
+      )}
+      {!deck.is_filtered && onExport && (
+        <ActionMenuItem icon={<Upload />} label={t("decks.export")} onSelect={onExport} />
       )}
       {deck.is_filtered && (
         <ActionMenuItem icon={<RefreshCw />} label={t("decks.rebuild")} onSelect={onRebuild} />

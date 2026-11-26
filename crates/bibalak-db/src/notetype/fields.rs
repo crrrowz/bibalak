@@ -2,6 +2,9 @@ use bibalak_core::error::{CoreError, CoreResult};
 use bibalak_core::ipc::{
     parse_notetype_sort_field, set_notetype_sort_field_in_config, FieldRemoveWarning,
 };
+use bibalak_core::notetype_preset::{
+    remove_field_from_preset_config, rename_field_in_preset_config, CompiledTemplate,
+};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use super::templates::{rewrite_template_field, template_uses_field};
@@ -175,6 +178,15 @@ pub fn remove_field(
         return Err(CoreError::Invalid("cannot remove the last field".into()));
     }
 
+    let removed_name: Option<String> = tx
+        .query_row(
+            "SELECT name FROM fields WHERE notetype_id = ?1 AND ord = ?2",
+            params![notetype_id, ord],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+
     tx.execute(
         "DELETE FROM fields WHERE notetype_id = ?1 AND ord = ?2",
         params![notetype_id, ord],
@@ -203,8 +215,17 @@ pub fn remove_field(
     } else {
         old_sortf
     };
-    if new_sortf != old_sortf {
-        let updated_cfg = set_notetype_sort_field_in_config(&nt_config, new_sortf);
+    let mut updated_cfg = if new_sortf != old_sortf {
+        set_notetype_sort_field_in_config(&nt_config, new_sortf)
+    } else {
+        nt_config.clone()
+    };
+    if let Some(ref field_name) = removed_name {
+        if let Some(preset_cleared) = remove_field_from_preset_config(&updated_cfg, field_name) {
+            updated_cfg = preset_cleared;
+        }
+    }
+    if updated_cfg != nt_config {
         tx.execute(
             r#"UPDATE notetypes SET config = ?1, "mod" = ?2, usn = -1 WHERE id = ?3"#,
             params![updated_cfg, now_ms, notetype_id],
@@ -291,21 +312,24 @@ pub fn rename_field(
 
     // Rewrite all templates of this notetype in the same transaction
     let mut tmpl_stmt = tx
-        .prepare("SELECT ord, qfmt, afmt FROM templates WHERE notetype_id = ?1")
+        .prepare("SELECT ord, name, qfmt, afmt FROM templates WHERE notetype_id = ?1 ORDER BY ord")
         .map_err(err)?;
-    let templates: Vec<(i64, String, String)> = tmpl_stmt
+    let templates: Vec<(i64, String, String, String)> = tmpl_stmt
         .query_map([notetype_id], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
             ))
         })
         .map_err(err)?
         .collect::<rusqlite::Result<_>>()
         .map_err(err)?;
 
-    for (t_ord, qfmt, afmt) in templates {
+    let mut old_compiled = Vec::with_capacity(templates.len());
+    let mut new_compiled = Vec::with_capacity(templates.len());
+    for (t_ord, t_name, qfmt, afmt) in templates {
         let new_qfmt = rewrite_template_field(&qfmt, &old_name, clean_name);
         let new_afmt = rewrite_template_field(&afmt, &old_name, clean_name);
         if new_qfmt != qfmt || new_afmt != afmt {
@@ -315,13 +339,46 @@ pub fn rename_field(
             )
             .map_err(err)?;
         }
+        old_compiled.push(CompiledTemplate {
+            name: t_name.clone(),
+            qfmt,
+            afmt,
+        });
+        new_compiled.push(CompiledTemplate {
+            name: t_name,
+            qfmt: new_qfmt,
+            afmt: new_afmt,
+        });
     }
 
-    tx.execute(
-        r#"UPDATE notetypes SET "mod" = ?1, usn = -1 WHERE id = ?2"#,
-        params![now_ms, notetype_id],
-    )
-    .map_err(err)?;
+    let (nt_config, css): (String, String) = tx
+        .query_row(
+            "SELECT config, coalesce(json_extract(config, '$.css'), '') FROM notetypes WHERE id = ?1",
+            [notetype_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(err)?;
+
+    if let Some(updated_cfg) = rename_field_in_preset_config(
+        &nt_config,
+        &old_name,
+        clean_name,
+        &old_compiled,
+        &new_compiled,
+        &css,
+    ) {
+        tx.execute(
+            r#"UPDATE notetypes SET config = ?1, "mod" = ?2, usn = -1 WHERE id = ?3"#,
+            params![updated_cfg, now_ms, notetype_id],
+        )
+        .map_err(err)?;
+    } else {
+        tx.execute(
+            r#"UPDATE notetypes SET "mod" = ?1, usn = -1 WHERE id = ?2"#,
+            params![now_ms, notetype_id],
+        )
+        .map_err(err)?;
+    }
     Ok(())
 }
 
@@ -447,6 +504,97 @@ mod tests {
         assert_eq!(
             detail.templates[1].afmt,
             "{{FrontSide}}\n\n{{^Question}}No front{{/Question}}"
+        );
+    }
+
+    #[test]
+    fn rename_field_updates_keepsake_preset_slots_and_digest() {
+        use bibalak_core::notetype_preset::{
+            compute_compiled_digest, parse_keepsake_preset, CompiledTemplate, LayoutId,
+            NotetypePreset,
+        };
+        use bibalak_core::{Collection, SystemClock};
+        use std::sync::Arc;
+
+        let Setup { s, nt_id, .. } = setup();
+        let col = Collection::new(Box::new(s), Arc::new(SystemClock)).unwrap();
+        let preset = NotetypePreset::for_layout(LayoutId::Basic);
+        let before = col.save_notetype_preset(nt_id, preset).unwrap();
+        let prev_digest = before.preset.unwrap().compiled_digest.unwrap();
+
+        col.rename_field(nt_id, 0, "Prompt").unwrap();
+
+        let after = col.get_notetype_detail(nt_id).unwrap().unwrap();
+        let updated_preset = after.preset.unwrap();
+        assert_eq!(
+            updated_preset.slots.get("front").map(String::as_str),
+            Some("Prompt")
+        );
+        let expected_digest = compute_compiled_digest(
+            &after
+                .templates
+                .iter()
+                .map(|t| CompiledTemplate {
+                    name: t.name.clone(),
+                    qfmt: t.qfmt.clone(),
+                    afmt: t.afmt.clone(),
+                })
+                .collect::<Vec<_>>(),
+            &after.css,
+        );
+        assert_ne!(prev_digest, expected_digest);
+        assert_eq!(
+            updated_preset.compiled_digest.as_deref(),
+            Some(expected_digest.as_str())
+        );
+        assert_eq!(
+            parse_keepsake_preset(&col.dump_collection().unwrap().notetypes[0].config_json)
+                .unwrap()
+                .slots
+                .get("front")
+                .map(String::as_str),
+            Some("Prompt")
+        );
+    }
+
+    #[test]
+    fn remove_field_clears_keepsake_preset_slot() {
+        use bibalak_core::notetype_preset::{
+            parse_keepsake_preset, set_keepsake_preset_in_config, LayoutId, NotetypePreset,
+        };
+
+        let Setup { s, nt_id, .. } = setup();
+        s.add_field(nt_id, "Extra", 1_000).unwrap();
+        let mut preset = NotetypePreset::for_layout(LayoutId::Basic);
+        preset.slots.insert("extra".into(), "Extra".into());
+        {
+            let conn = s.lock();
+            let cfg: String = conn
+                .query_row("SELECT config FROM notetypes WHERE id = ?1", [nt_id], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            let new_cfg = set_keepsake_preset_in_config(&cfg, Some(&preset)).unwrap();
+            conn.execute(
+                "UPDATE notetypes SET config = ?1 WHERE id = ?2",
+                rusqlite::params![new_cfg, nt_id],
+            )
+            .unwrap();
+        }
+
+        s.remove_field(nt_id, 2, 2_000).unwrap();
+
+        let cfg: String = s
+            .lock()
+            .query_row("SELECT config FROM notetypes WHERE id = ?1", [nt_id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let updated_preset = parse_keepsake_preset(&cfg).unwrap();
+        assert!(!updated_preset.slots.contains_key("extra"));
+        assert_eq!(
+            updated_preset.slots.get("front").map(String::as_str),
+            Some("Front")
         );
     }
 }

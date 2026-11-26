@@ -1,7 +1,7 @@
 //! Helpers for extracting and rewriting local media references in note fields,
 //! templates, and CSS.
 //!
-//! Matches `<img|audio|video|source ... src=...>`, CSS `url(...)`, and `[sound:name]`.
+//! Matches `<img|audio|video|source|script ... src=...>`, CSS `url(...)`, and `[sound:name]`.
 
 use std::collections::BTreeSet;
 use unicode_normalization::UnicodeNormalization;
@@ -109,7 +109,7 @@ pub fn decode_media_ref(raw: &str) -> String {
 }
 
 fn match_media_tag_len(bytes: &[u8], start: usize) -> Option<usize> {
-    let prefixes: &[&[u8]] = &[b"<img", b"<audio", b"<video", b"<source"];
+    let prefixes: &[&[u8]] = &[b"<img", b"<audio", b"<video", b"<source", b"<script"];
     for &prefix in prefixes {
         let len = prefix.len();
         if bytes
@@ -496,6 +496,19 @@ mod tests {
                 "bg.jpg".into(),
                 "font.woff2".into(),
             ])
+        );
+    }
+
+    #[test]
+    fn extracts_script_src_local_media_refs() {
+        let text = concat!(
+            r#"<script src="_helper.js"></script> "#,
+            r#"<SCRIPT SRC='https://cdn.example.com/lib.js'></SCRIPT> "#,
+            r#"<script type="module" src=_mod.mjs></script>"#,
+        );
+        assert_eq!(
+            extract_media_refs(text),
+            BTreeSet::from(["_helper.js".into(), "_mod.mjs".into()])
         );
     }
 }

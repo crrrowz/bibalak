@@ -19,6 +19,7 @@ pub mod ipc;
 pub mod media_refs;
 pub mod model;
 pub mod motivation;
+pub mod notetype_preset;
 pub mod ports;
 pub mod productivity;
 pub mod progress;
@@ -30,7 +31,9 @@ pub mod undo;
 
 pub use search_norm::normalize_search_text;
 
-pub use collection::Collection;
+pub use collection::{
+    collect_export_media_refs, strip_export_scheduling, Collection, PreparedExport,
+};
 pub use error::{CoreError, CoreResult};
 pub use events::{CoreEventName, DomainEvent, EventBus, EventSink};
 pub use model::{

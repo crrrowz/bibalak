@@ -51,7 +51,7 @@ When preparing a release (see [`RELEASING.md`](RELEASING.md)):
    ```sh
    node scripts/release/bump-version.mjs <ver>
    ```
-   This updates `Cargo.toml`, every workspace `package.json` (except the plugin SDK), `apps/desktop/src-tauri/tauri.conf.json`, and promotes `## [Unreleased]` to `## [<ver>] - YYYY-MM-DD` in `CHANGELOG.md`.
+   This updates `Cargo.toml`, `package.json`, `apps/desktop/package.json`, `packages/ipc-types/package.json`, `packages/ui-tokens/package.json`, `apps/desktop/test-e2e/package.json` (skipping `packages/plugin-sdk`, which keeps its own API version), `apps/desktop/src-tauri/tauri.conf.json`, and promotes `## [Unreleased]` to `## [<ver>] - YYYY-MM-DD` in `CHANGELOG.md`.
 4. Verify `.github/release-notes-template.md` and `pnpm check` (all Rust + TypeScript + licence checks green).
 5. Commit the version bump (`chore(release): prepare v<ver>`) and report readiness to the owner.
 

@@ -8,10 +8,14 @@
 //! template's q/a format needs protobuf decoding — see [`crate::pb`]). Notes,
 //! cards and revlog share identical columns across both.
 
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use bibalak_core::error::{CoreError, CoreResult};
+use bibalak_core::ipc::ImportStage;
 use bibalak_core::model::{
     CanonicalModel, Card, Deck, DeckConfig, Field, Note, Notetype, Revlog, Template,
 };
@@ -34,7 +38,8 @@ const COLLECTION_CANDIDATES: &[(&str, bool)] = &[
 /// Read a package. If `media_dir` is `Some`, media files are extracted there
 /// (deduped by the on-disk filename) and the count is returned.
 pub fn read_package(path: &Path, media_dir: Option<&Path>) -> CoreResult<(CanonicalModel, u32)> {
-    read_package_inner(path, media_dir, None)
+    let cancel = AtomicBool::new(false);
+    read_package_inner(path, media_dir, None, &cancel, &mut |_, _, _| {})
 }
 
 /// Read a package, extracting any bundled media through [`bibalak_core::ports::MediaStore`]
@@ -43,14 +48,39 @@ pub fn read_package_with_media(
     path: &Path,
     media_store: Option<&dyn bibalak_core::ports::MediaStore>,
 ) -> CoreResult<(CanonicalModel, u32)> {
-    read_package_inner(path, None, media_store)
+    let cancel = AtomicBool::new(false);
+    read_package_inner(path, None, media_store, &cancel, &mut |_, _, _| {})
+}
+
+/// Read a package with staged progress callbacks (`ReadingPackage`, `CopyingMedia`)
+/// and cooperative cancellation before the database merge starts.
+pub fn read_package_with_progress(
+    path: &Path,
+    media_store: Option<&dyn bibalak_core::ports::MediaStore>,
+    cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(ImportStage, u32, u32),
+) -> CoreResult<(CanonicalModel, u32)> {
+    read_package_inner(path, None, media_store, cancel, on_progress)
+}
+
+fn check_cancelled(cancel: &AtomicBool) -> CoreResult<()> {
+    if cancel.load(Ordering::Relaxed) {
+        Err(CoreError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 fn read_package_inner(
     path: &Path,
     media_dir: Option<&Path>,
     media_store: Option<&dyn bibalak_core::ports::MediaStore>,
+    cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(ImportStage, u32, u32),
 ) -> CoreResult<(CanonicalModel, u32)> {
+    check_cancelled(cancel)?;
+    on_progress(ImportStage::ReadingPackage, 0, 0);
+
     let file = std::fs::File::open(path).map_err(fmt)?;
     let mut archive = zip::ZipArchive::new(file).map_err(fmt)?;
 
@@ -66,6 +96,7 @@ fn read_package_inner(
         .find(|(name, _)| names.iter().any(|n| n == name))
         .ok_or_else(|| CoreError::Format("no collection database found in package".into()))?;
 
+    check_cancelled(cancel)?;
     let mut bytes = Vec::new();
     {
         let mut entry = archive.by_name(coll_name).map_err(fmt)?;
@@ -75,6 +106,7 @@ fn read_package_inner(
         bytes = zstd::stream::decode_all(std::io::Cursor::new(bytes)).map_err(fmt)?;
     }
 
+    check_cancelled(cancel)?;
     // SQLite needs a path; use a temp dir (no lingering file handle, unlike a
     // NamedTempFile, which can clash with SQLite's own open on Windows).
     let dir = tempfile::tempdir().map_err(fmt)?;
@@ -84,15 +116,17 @@ fn read_package_inner(
 
     let mut model = read_collection(&conn)?;
     drop(conn);
+    check_cancelled(cancel)?;
 
     let media_count = if let Some(store) = media_store {
-        extract_media_to_store(&mut archive, &mut model, store)?
+        extract_media_to_store(&mut archive, &mut model, store, cancel, on_progress)?
     } else if let Some(target) = media_dir {
         extract_media(&mut archive, target)?
     } else {
         0
     };
 
+    check_cancelled(cancel)?;
     Ok((model, media_count))
 }
 
@@ -442,15 +476,35 @@ fn extract_media_to_store(
     archive: &mut Archive,
     model: &mut CanonicalModel,
     store: &dyn bibalak_core::ports::MediaStore,
+    cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(ImportStage, u32, u32),
 ) -> CoreResult<u32> {
     let mapping = read_media_mapping(archive);
     if mapping.is_empty() {
         return Ok(0);
     }
 
+    let total = mapping.len() as u32;
+    on_progress(ImportStage::CopyingMedia, 0, total);
+    let existing_before: HashSet<String> = store
+        .list_sizes()?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let mut newly_added: Vec<String> = Vec::new();
     let mut count = 0u32;
+    let mut processed = 0u32;
     let mut renames: Vec<(String, String)> = Vec::new();
+    let mut last_emit = Instant::now();
+
     for (entry_name, filename) in mapping {
+        if cancel.load(Ordering::Relaxed) {
+            if !newly_added.is_empty() {
+                let _ = store.delete(&newly_added);
+            }
+            return Err(CoreError::Cancelled);
+        }
+        processed += 1;
         let Some(safe) = Path::new(&filename).file_name().and_then(|n| n.to_str()) else {
             continue;
         };
@@ -461,12 +515,31 @@ fn extract_media_to_store(
         let stored_name = match store.add(safe, &decoded) {
             Ok(name) => name,
             Err(CoreError::Invalid(_)) => continue,
-            Err(e) => return Err(e),
+            Err(e) => {
+                if !newly_added.is_empty() {
+                    let _ = store.delete(&newly_added);
+                }
+                return Err(e);
+            }
         };
+        if !existing_before.contains(&stored_name) {
+            newly_added.push(stored_name.clone());
+        }
         if stored_name != safe {
             renames.push((safe.to_string(), stored_name));
         }
         count += 1;
+        if processed == total
+            || processed.is_multiple_of(10)
+            || last_emit.elapsed() >= Duration::from_millis(50)
+        {
+            last_emit = Instant::now();
+            on_progress(ImportStage::CopyingMedia, processed, total);
+        }
+    }
+
+    if processed != total {
+        on_progress(ImportStage::CopyingMedia, total, total);
     }
 
     if !renames.is_empty() {

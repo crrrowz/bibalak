@@ -197,6 +197,7 @@ export function OnboardingModal() {
             type="button"
             variant="ghost"
             size="sm"
+            data-testid="onboarding-skip"
             disabled={isSubmitting}
             onClick={() => void handleSkip()}
           >

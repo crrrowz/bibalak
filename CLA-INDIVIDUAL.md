@@ -33,7 +33,7 @@ If any entity institutes patent litigation against You or any other entity (incl
 
 ## 4. Moral Rights
 
-To the fullest extent permitted by applicable law, You waive, and agree not to assert against Hassanein Hassan Alkahafji or its licensees, any moral rights (or similar rights of attribution or integrity) in Your Contributions to the extent necessary to exercise the licences granted in Section 2, including the right to modify, translate, relicense, or redistribute Your Contributions without separate prior approval.
+To the fullest extent permitted by applicable law, You waive, and agree not to assert against Hassanein Hassan Alkahafji or his licensees, any moral rights (or similar rights of attribution or integrity) in Your Contributions to the extent necessary to exercise the licences granted in Section 2, including the right to modify, translate, relicense, or redistribute Your Contributions without separate prior approval.
 
 ## 5. Representations and Employer Rights
 

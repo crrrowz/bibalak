@@ -28,6 +28,10 @@ import type {
   DeckSummary,
   DuplicateGroup,
   EquipmentSlot,
+  ExportEstimate,
+  ExportPackageRequest,
+  ExportScope,
+  ExportSummary,
   FieldOptions,
   FieldRemoveWarning,
   FilteredDeckConfig,
@@ -53,6 +57,7 @@ import type {
   NoteOverview,
   NoteRow,
   NotetypeDetail,
+  NotetypePreset,
   NotetypeSummary,
   PluginDeckDto,
   PluginInfo,
@@ -78,6 +83,7 @@ import type {
   TaskListDto,
   TaskListInput,
   TaskOrderItem,
+  TemplateLintHint,
   TextImportMapping,
   TextImportOptions,
   TextImportPreview,
@@ -124,7 +130,9 @@ export const ipc = {
     invoke<number[]>("deck_card_ids", { deckId, includeSubdecks }),
 
   // Import
-  importPackage: (path: string) => invoke<ImportSummary>("import_package", { path }),
+  importPackage: (path: string, importId?: string) =>
+    invoke<ImportSummary>("import_package", importId ? { path, importId } : { path }),
+  cancelImport: (importId: string) => invoke<boolean>("cancel_import", { importId }),
   previewTextImport: (path: string, options: TextImportOptions) =>
     invoke<TextImportPreview>("preview_text_import", { path, options }),
   importText: (path: string, mapping: TextImportMapping) =>
@@ -199,6 +207,15 @@ export const ipc = {
       sampleFields,
       qfmt: qfmt ?? null,
       afmt: afmt ?? null,
+    }),
+  saveNotetypePreset: (notetypeId: number, preset: NotetypePreset) =>
+    invoke<NotetypeDetail>("save_notetype_preset", { notetypeId, preset }),
+  lintNotetype: (notetypeId: number, qfmt?: string, afmt?: string, css?: string) =>
+    invoke<TemplateLintHint[]>("lint_notetype", {
+      notetypeId,
+      qfmt: qfmt ?? null,
+      afmt: afmt ?? null,
+      css: css ?? null,
     }),
 
   // Browser / editor
@@ -315,7 +332,11 @@ export const ipc = {
   undoStatus: () => invoke<UndoAction | null>("undo_status"),
 
   // Export
-  exportPackage: (path: string) => invoke<number>("export_package", { path }),
+  getExportEstimate: (scope: ExportScope, includeMedia: boolean) =>
+    invoke<ExportEstimate>("get_export_estimate", { scope, includeMedia }),
+  exportPackage: (request: ExportPackageRequest) =>
+    invoke<ExportSummary>("export_package", { request }),
+  cancelExport: (exportId: string) => invoke<boolean>("cancel_export", { exportId }),
 
   // Statistics
   getStats: (deckId: number | null, days: number | null) =>
@@ -527,28 +548,37 @@ function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> 
 }
 
 /**
- * Prompt for a save location and export the full collection as `.apkg`.
- * Returns the number of media files written, or `null` if user cancelled.
+ * Prompt for a save location for an `.apkg` export. Returns `null` if cancelled.
  */
-export async function pickAndExportPackage(): Promise<number | null> {
-  const selected = await platform.pickSavePath({
-    defaultPath: "collection.apkg",
+export async function pickExportDestination(
+  defaultFileName = "collection.apkg",
+): Promise<string | null> {
+  return platform.pickSavePath({
+    defaultPath: defaultFileName,
     filters: [{ name: t("dialog.ankiPackage"), extensions: ["apkg"] }],
   });
-  if (selected === null) return null;
-  return ipc.exportPackage(selected);
 }
 
 /**
  * Prompt for an .apkg/.colpkg and import it. Returns the summary, or `null` if
  * the user cancelled the file picker.
  */
-export async function pickAndImportPackage(): Promise<ImportSummary | null> {
+export async function pickAndImportPackage(importId?: string): Promise<ImportSummary | null> {
   const selected = await platform.pickPath({
     filters: [{ name: t("dialog.ankiPackage"), extensions: ["apkg", "colpkg"] }],
   });
   if (selected === null) return null;
-  return ipc.importPackage(selected);
+  return ipc.importPackage(selected, importId);
+}
+
+/** True when an IPC rejection represents cooperative user cancellation. */
+export function isCancelledError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "kind" in error &&
+    (error as IpcError).kind === "cancelled"
+  );
 }
 
 /** True when a backend is reachable (the Tauri webview; false in a plain browser via `dev:web`). */

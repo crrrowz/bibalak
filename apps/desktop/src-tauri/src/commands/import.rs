@@ -1,19 +1,33 @@
 //! Import commands. Parse a package with `bibalak-ankifmt`, then merge it into
 //! the open collection. Media is extracted through [`crate::MediaState`].
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use bibalak_core::ipc::{
-    ImportProgress, IpcError, TextImportMapping, TextImportOptions, TextImportPreview,
+    ImportProgress, ImportStage, IpcError, TextImportMapping, TextImportOptions, TextImportPreview,
     TextImportSummary,
 };
 use bibalak_core::{Collection, CoreError, ImportSummary};
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::{run_blocking, state_err};
+use super::{run_blocking, state_err, CancelRegistry};
 use crate::paths_guard::PickedPathsState;
 use crate::MediaState;
 
+/// Managed Tauri state tracking in-flight import cancellation flags.
+#[derive(Default)]
+pub struct ImportJobsState(pub(crate) CancelRegistry);
+
 #[tauri::command]
-pub async fn import_package(app: AppHandle, path: String) -> Result<ImportSummary, IpcError> {
+pub async fn import_package(
+    app: AppHandle,
+    path: String,
+    import_id: Option<String>,
+) -> Result<ImportSummary, IpcError> {
+    if let Some(ref id) = import_id {
+        super::validate_job_id(id)?;
+    }
     run_blocking(move || {
         let collection = app
             .try_state::<Collection>()
@@ -24,17 +38,58 @@ pub async fn import_package(app: AppHandle, path: String) -> Result<ImportSummar
         let picked = app
             .try_state::<PickedPathsState>()
             .ok_or_else(|| state_err("PickedPathsState"))?;
+        let jobs = app
+            .try_state::<ImportJobsState>()
+            .ok_or_else(|| state_err("ImportJobsState"))?;
+
+        let _reg = import_id
+            .as_deref()
+            .map(|id| jobs.0.register(id))
+            .transpose()?;
+        let fallback_cancel = Arc::new(AtomicBool::new(false));
+        let cancel = _reg.as_ref().map(|r| &r.flag).unwrap_or(&fallback_cancel);
+
         let checked = picked.verify_open_file(&path, &["apkg", "colpkg"])?;
-        let (model, media_imported) =
-            bibalak_ankifmt::read_package_with_media(&checked, Some(&*media.0))?;
+        let (model, media_imported) = bibalak_ankifmt::read_package_with_progress(
+            &checked,
+            Some(&*media.0),
+            cancel,
+            &mut |stage, done, total| {
+                let _ = app.emit(
+                    "bibalak://import-progress",
+                    ImportProgress { stage, done, total },
+                );
+            },
+        )?;
+
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CoreError::Cancelled.into());
+        }
+
         let mut on_progress = |done: u32, total: u32| {
-            let _ = app.emit("bibalak://import-progress", ImportProgress { done, total });
+            let _ = app.emit(
+                "bibalak://import-progress",
+                ImportProgress {
+                    stage: ImportStage::Merging,
+                    done,
+                    total,
+                },
+            );
         };
         let mut summary = collection.import_with_progress(&model, &mut on_progress)?;
         summary.media_imported = media_imported;
         Ok(summary)
     })
     .await
+}
+
+/// Request cancellation of an in-flight import job before the database merge starts.
+#[tauri::command]
+pub async fn cancel_import(app: AppHandle, import_id: String) -> Result<bool, IpcError> {
+    let jobs = app
+        .try_state::<ImportJobsState>()
+        .ok_or_else(|| state_err("ImportJobsState"))?;
+    jobs.0.cancel(&import_id)
 }
 
 #[tauri::command]

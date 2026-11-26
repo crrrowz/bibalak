@@ -14,6 +14,7 @@ use ts_rs::TS;
 use crate::error::{CoreError, CoreResult};
 pub use crate::events::CoreEventName;
 use crate::model::{Algorithm, Deck};
+use crate::notetype_preset::NotetypePreset;
 pub use crate::undo::UndoAction;
 
 /// Basic identity of the running application, surfaced on the home screen and
@@ -28,13 +29,100 @@ pub struct AppInfo {
     pub media_dir: String,
 }
 
+/// Stage of a running package import (`bibalak://import-progress`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum ImportStage {
+    ReadingPackage,
+    CopyingMedia,
+    Merging,
+}
+
 /// Live progress for a running import, emitted periodically on the
-/// `bibalak://import-progress` event while notes/cards are merged.
+/// `bibalak://import-progress` event across reading, media extraction, and merge.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ImportProgress {
+    pub stage: ImportStage,
     pub done: u32,
     pub total: u32,
+}
+
+/// Scope for an `.apkg` export.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+#[ts(export)]
+pub enum ExportScope {
+    Collection,
+    Deck {
+        #[ts(type = "number")]
+        deck_id: i64,
+        include_subdecks: bool,
+    },
+}
+
+/// Request payload for `export_package`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportPackageRequest {
+    pub export_id: String,
+    pub path: String,
+    pub scope: ExportScope,
+    pub include_media: bool,
+    pub include_scheduling: bool,
+}
+
+/// Stage of a running `.apkg` export (`bibalak://export-progress`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum ExportStage {
+    Preparing,
+    WritingDb,
+    PackingMedia,
+    Finalizing,
+}
+
+/// Live progress for a running export, emitted on `bibalak://export-progress`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportProgress {
+    pub export_id: String,
+    pub stage: ExportStage,
+    pub notes_done: u32,
+    pub notes_total: u32,
+    pub cards_done: u32,
+    pub cards_total: u32,
+    pub media_done: u32,
+    pub media_total: u32,
+    #[ts(type = "number")]
+    pub bytes_done: u64,
+    #[ts(type = "number")]
+    pub bytes_total: u64,
+}
+
+/// Pre-flight count and media byte estimate shown in `ExportDialog`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportEstimate {
+    pub notes: u32,
+    pub cards: u32,
+    pub media_files: u32,
+    #[ts(type = "number")]
+    pub media_bytes: u64,
+}
+
+/// Summary returned when `export_package` completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportSummary {
+    pub notes_exported: u32,
+    pub cards_exported: u32,
+    pub media_exported: u32,
+    pub media_skipped_missing: u32,
+    #[ts(type = "number")]
+    pub bytes_written: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -546,6 +634,10 @@ pub struct NotetypeDetail {
     /// 0-based field ordinal displayed in Browse and used for sorting (`"sortf"`).
     #[serde(default)]
     pub sort_field: i64,
+    /// Simple-mode preset configuration (persisted under `keepsakePreset` in `notetypes.config`,
+    /// or ephemerally detected for unmodified stock note types).
+    #[serde(default)]
+    pub preset: Option<NotetypePreset>,
 }
 
 /// Rendered question + answer HTML for the template preview pane.
@@ -1007,6 +1099,7 @@ pub enum IpcErrorKind {
     Scheduler,
     NotFound,
     Invalid,
+    Cancelled,
     Internal,
 }
 
@@ -1019,6 +1112,7 @@ impl From<CoreError> for IpcError {
             CoreError::Scheduler(_) => IpcErrorKind::Scheduler,
             CoreError::NotFound(_) => IpcErrorKind::NotFound,
             CoreError::Invalid(_) => IpcErrorKind::Invalid,
+            CoreError::Cancelled => IpcErrorKind::Cancelled,
             CoreError::FullSyncRequired { .. } | CoreError::ClockSkewDetected { .. } => {
                 IpcErrorKind::Storage
             }

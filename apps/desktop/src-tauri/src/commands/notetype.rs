@@ -4,6 +4,7 @@
 use bibalak_core::ipc::{
     FieldOptions, FieldRemoveWarning, IpcError, NotetypeDetail, RenderedPreview,
 };
+use bibalak_core::notetype_preset::{NotetypePreset, TemplateLintHint};
 use bibalak_render::{RenderRequest, Template};
 use tauri::AppHandle;
 
@@ -255,6 +256,37 @@ pub async fn preview_template(
             question: rendered.question,
             answer: rendered.answer,
         })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn save_notetype_preset(
+    app: AppHandle,
+    notetype_id: i64,
+    preset: NotetypePreset,
+) -> IpcResult<NotetypeDetail> {
+    with_collection(app, move |collection| {
+        Ok(collection.save_notetype_preset(notetype_id, preset)?)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn lint_notetype(
+    app: AppHandle,
+    notetype_id: i64,
+    qfmt: Option<String>,
+    afmt: Option<String>,
+    css: Option<String>,
+) -> IpcResult<Vec<TemplateLintHint>> {
+    with_collection(app, move |collection| {
+        Ok(collection.lint_notetype(
+            notetype_id,
+            qfmt.as_deref(),
+            afmt.as_deref(),
+            css.as_deref(),
+        )?)
     })
     .await
 }

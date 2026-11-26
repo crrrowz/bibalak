@@ -237,6 +237,7 @@ describe("BrowseScreen", () => {
               },
             ],
             templates: [{ ord: 0n, name: "Card 1", qfmt: "{{Front}}", afmt: "{{Back}}" }],
+            preset: null,
           }
         : {
             id: 11,
@@ -257,6 +258,7 @@ describe("BrowseScreen", () => {
               },
             ],
             templates: [{ ord: 0n, name: "Cloze", qfmt: "{{cloze:Text}}", afmt: "{{cloze:Text}}" }],
+            preset: null,
           },
     );
     vi.mocked(ipc.getNote).mockResolvedValue({

@@ -481,7 +481,10 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   return (
     <div className="relative flex h-full flex-col">
       {focusMode ? (
-        <div className="glass-panel relative z-20 flex h-9 shrink-0 items-center justify-between gap-3 border-b px-4">
+        <div
+          data-toast-anchor
+          className="glass-panel relative z-20 flex h-9 shrink-0 items-center justify-between gap-3 border-b px-4"
+        >
           <span className="truncate text-[13px] text-muted-foreground">{deckName}</span>
           <div className="flex items-center gap-3">
             {card && (
@@ -534,6 +537,7 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
       {card && (
         <div
           data-testid="study-progress-strip"
+          data-toast-anchor
           className="relative z-20 flex min-h-[30px] shrink-0 items-center gap-2 border-b border-border/60 bg-background/80 px-4 py-1 sm:px-6"
         >
           <SessionProgressBar

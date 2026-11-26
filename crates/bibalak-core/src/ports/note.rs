@@ -83,6 +83,42 @@ pub trait NoteStore: Send + Sync {
     /// Dump the full collection as a `CanonicalModel` for export.
     fn dump_collection(&self) -> CoreResult<CanonicalModel>;
 
+    /// Dump a scoped subset of the collection for export. When `deck_ids` is
+    /// `None`, exports all decks; when `include_revlog` is `false`, skips
+    /// querying review history.
+    fn dump_collection_scoped(
+        &self,
+        deck_ids: Option<&[i64]>,
+        include_revlog: bool,
+    ) -> CoreResult<CanonicalModel> {
+        let mut model = self.dump_collection()?;
+        if let Some(ids) = deck_ids {
+            let deck_set: std::collections::HashSet<i64> = ids.iter().copied().collect();
+            model.decks.retain(|d| deck_set.contains(&d.id));
+            model.cards.retain(|c| deck_set.contains(&c.deck_id));
+            let note_set: std::collections::HashSet<i64> =
+                model.cards.iter().map(|c| c.note_id).collect();
+            model.notes.retain(|n| note_set.contains(&n.id));
+            let nt_set: std::collections::HashSet<i64> =
+                model.notes.iter().map(|n| n.notetype_id).collect();
+            model.notetypes.retain(|nt| nt_set.contains(&nt.id));
+            model.fields.retain(|f| nt_set.contains(&f.notetype_id));
+            model.templates.retain(|t| nt_set.contains(&t.notetype_id));
+            let cfg_set: std::collections::HashSet<i64> =
+                model.decks.iter().map(|d| d.config_id).collect();
+            model.deck_configs.retain(|c| cfg_set.contains(&c.id));
+            if include_revlog {
+                let card_set: std::collections::HashSet<i64> =
+                    model.cards.iter().map(|c| c.id).collect();
+                model.revlog.retain(|r| card_set.contains(&r.card_id));
+            }
+        }
+        if !include_revlog {
+            model.revlog.clear();
+        }
+        Ok(model)
+    }
+
     /// Insert a new note and generate its cards (one per template for standard
     /// notetypes; one per cloze ordinal for cloze notetypes). Returns
     /// `(note_id, cards_added)`.

@@ -10,7 +10,7 @@
 
 ## 1. Context
 
-Bibalak adds Stage 1 local productivity tools — **task lists, tasks, Eisenhower matrix rules, habits, habit logs, and local calendar events** — to organize study alongside spaced repetition (the internal planning notes). Under the Phase C workflow (the internal planning notes), Steps `9` (`M1`), `10` (`M2`), `11` (`M3`), `12` (`CAL1`), and `13` (`R3`) are authored in Rust and TypeScript before the Build Window (`BW1`) compiles them. This ADR therefore specifies the exact SQLite `v10` migration, domain types, `Storage` port methods, `Collection` methods, Tauri IPC commands and TypeScript DTOs, sync and undo semantics, Postgres mapping, and failing-first test list.
+Bibalak adds Stage 1 local productivity tools — **task lists, tasks, Eisenhower matrix rules, habits, habit logs, and local calendar events** — to organize study alongside spaced repetition (the internal planning notes). Under the phased implementation plan, tasks, matrix rules, habits, local calendar events, and rewards are authored in Rust and TypeScript together. This ADR therefore specifies the exact SQLite `v10` migration, domain types, `Storage` port methods, `Collection` methods, Tauri IPC commands and TypeScript DTOs, sync and undo semantics, Postgres mapping, and failing-first test list.
 
 ### Owner Decisions Resolved Before Finalizing This Contract
 
@@ -1044,7 +1044,7 @@ Step `9` writes these tests **before** each implementation step (per Phase C/D r
 
 - One clean migration (`v10`) powers Steps `9`–`13` without further schema changes before Stage 2.
 - Every new table satisfies Stage 2 Postgres / account readiness (UUID PKs, `user_id`, UTC ms, `usn`, `deleted_at`, `json_valid()`) and joins ADR-014 delta sync with zero `schema_mod` full-sync triggers.
-- Exact Rust/TS/port/command signatures let Phase C agents write code across Steps `9`–`12` before Build Window 1 (`BW1`).
+- Exact Rust/TS/port/command signatures allow parallel implementation of tasks, matrix, habits, and calendar before integration.
 
 ### Negative / Trade-offs
 

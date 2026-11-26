@@ -1,15 +1,15 @@
 # ADR-030: Note Type Presets — Schema, Deterministic Compilation, and Anki Compatibility
 
-**Status:** Proposed — owner approved `NT0` questions with conditions (2026-11-25)  
+**Status:** Proposed — owner approved with conditions (2026-11-25)  
 **Date:** 2026-11-25  
-**Card:** `NT0` (implements in `NT1`–`NT4`)  
+**Scope:** Note types Simple mode and preset compiler  
 **Related:** Note Types Redesign Blueprint · [ADR-001](001-clean-architecture.md) · [ADR-004](004-sandboxed-card-frame.md) · [ADR-014](014-sync-journal.md) · `decisions.md`
 
 ---
 
 ## Context
 
-`BW2-5` and `BW2-6` established that Bibalak's current Note Types editor exposes raw Anki HTML (`qfmt` / `afmt`) and raw `.card` CSS to every user. The Note Types redesign introduces a default **Simple mode** (ready card layouts, slot-to-field mapping, and style presets) alongside an **Advanced mode** (raw HTML/CSS).
+Earlier reviews established that Bibalak's current Note Types editor exposes raw Anki HTML (`qfmt` / `afmt`) and raw `.card` CSS to every user. The Note Types redesign introduces a default **Simple mode** (ready card layouts, slot-to-field mapping, and style presets) alongside an **Advanced mode** (raw HTML/CSS).
 
 To preserve Bibalak's core promises, the preset representation must satisfy five constraints:
 
@@ -101,8 +101,8 @@ All preset logic lives in pure Rust (`crates/bibalak-core/src/notetype_preset.rs
 
 ### 6. Required Verification & Deferred Items (Owner Conditions)
 
-- **Anki `.apkg` compatibility tests (`NT1`):** Automated tests must verify that (a) an `.apkg` export carries zero `keepsakePreset` data in exported Anki model JSON and opens cleanly, and (b) an import → export `.apkg` round trip leaves unedited note types identical.
-- **AI template helper (`NT5`):** Sends only field names, `qfmt`/`afmt`, and CSS by default; optional 1-note plain-text sample requires a per-request opt-in tick each time. Deferred until `NT1`–`NT4` are merged and tried in `BW2`.
+- **Anki `.apkg` compatibility tests:** Automated tests must verify that (a) an `.apkg` export carries zero `keepsakePreset` data in exported Anki model JSON and opens cleanly, and (b) an import → export `.apkg` round trip leaves unedited note types identical.
+- **AI template helper:** Sends only field names, `qfmt`/`afmt`, and CSS by default; optional 1-note plain-text sample requires a per-request opt-in tick each time. Deferred until the Simple-mode editor is implemented and evaluated.
 - **Card scripts & animation libraries:** Bundled JS/animation libraries inside `CardFace` remain deferred to a separate future ADR extending `ADR-004` security.
 
 ---

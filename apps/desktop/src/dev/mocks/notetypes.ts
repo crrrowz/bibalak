@@ -64,6 +64,7 @@ export const mockNotetypeDetails: Record<number, NotetypeDetail> = {
       },
     ],
     css: ".card { font-family: sans-serif; text-align: center; }",
+    preset: null,
   },
   2: {
     id: 2,
@@ -89,6 +90,7 @@ export const mockNotetypeDetails: Record<number, NotetypeDetail> = {
       },
     ],
     css: ".card { font-family: sans-serif; text-align: center; }",
+    preset: null,
   },
   3: {
     id: 3,
@@ -108,6 +110,7 @@ export const mockNotetypeDetails: Record<number, NotetypeDetail> = {
       },
     ],
     css: ".card { font-family: sans-serif; text-align: center; } .cloze { font-weight: bold; color: blue; }",
+    preset: null,
   },
   4: {
     id: 4,
@@ -129,6 +132,7 @@ export const mockNotetypeDetails: Record<number, NotetypeDetail> = {
       },
     ],
     css: ".card { font-family: sans-serif; text-align: center; }",
+    preset: null,
   },
   5: {
     id: 5,
@@ -168,6 +172,7 @@ export const mockNotetypeDetails: Record<number, NotetypeDetail> = {
       },
     ],
     css: ".card { font-family: sans-serif; text-align: center; }",
+    preset: null,
   },
 };
 

@@ -296,7 +296,8 @@ fn fetch_cards_by_ids(tx: &Transaction<'_>, card_ids: &[i64]) -> CoreResult<Vec<
         .collect())
 }
 
-/// Return all card IDs belonging to `deck_ids`, ordered by `id`.
+/// Return all card IDs belonging to `deck_ids` (including cards currently in a
+/// filtered deck whose `original_deck_id` is in `deck_ids`), ordered by `id`.
 pub fn deck_card_ids(conn: &Connection, deck_ids: &[i64]) -> CoreResult<Vec<i64>> {
     if deck_ids.is_empty() {
         return Ok(vec![]);
@@ -306,6 +307,7 @@ pub fn deck_card_ids(conn: &Connection, deck_ids: &[i64]) -> CoreResult<Vec<i64>
         .prepare(
             "SELECT id FROM cards
              WHERE deck_id IN (SELECT value FROM json_each(?1))
+                OR (original_deck_id != 0 AND original_deck_id IN (SELECT value FROM json_each(?1)))
              ORDER BY id",
         )
         .map_err(err)?;
@@ -318,6 +320,9 @@ pub fn deck_card_ids(conn: &Connection, deck_ids: &[i64]) -> CoreResult<Vec<i64>
 }
 
 /// Reset selected cards back to `type = 0, queue = 0` after existing new cards.
+/// Cards currently in a filtered deck (`original_deck_id != 0`) are returned to
+/// their home deck first in the same transaction so resetting never leaves
+/// reset cards stranded in a filtered deck.
 pub fn forget_cards(
     conn: &mut Connection,
     card_ids: &[i64],
@@ -332,6 +337,23 @@ pub fn forget_cards(
     if snapshots.is_empty() {
         return Ok(vec![]);
     }
+
+    let snapshot_ids: Vec<i64> = snapshots.iter().map(|c| c.id).collect();
+    let ids_json = serde_json::to_string(&snapshot_ids).map_err(err)?;
+    tx.execute(
+        r#"UPDATE cards
+           SET deck_id          = original_deck_id,
+               due              = CASE WHEN type = 0 THEN original_due ELSE due END,
+               original_deck_id = 0,
+               original_due     = 0,
+               "mod"            = ?1,
+               usn              = -1
+           WHERE id IN (SELECT value FROM json_each(?2))
+             AND original_deck_id != 0"#,
+        params![now_ms, ids_json],
+    )
+    .map_err(err)?;
+
     let next_pos: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(due), 0) + 1 FROM cards WHERE queue = 0",
@@ -1201,5 +1223,174 @@ mod tests {
             bibalak_core::scheduling::CardPhase::Review
         );
         assert_eq!((restored.state.reps, restored.state.lapses), (9, 2));
+    }
+
+    #[test]
+    fn fgt1_deck_reset_returns_filtered_cards_home_and_undo_restores() {
+        use bibalak_core::ports::FixedClock;
+        use bibalak_core::Collection;
+        use std::sync::Arc;
+
+        let (s, note_id, card1) = setup();
+        let child = s.create_deck("Default::Sub", 100).unwrap();
+        let other = s.create_deck("Other", 100).unwrap();
+        {
+            let conn = s.lock();
+            conn.execute(
+                r#"INSERT INTO cards
+                   (id, note_id, deck_id, ord, "mod", usn, type, queue, due,
+                    interval, ease_factor, reps, lapses, remaining,
+                    original_due, original_deck_id, flags, fsrs_stability, fsrs_difficulty, fsrs_last_review)
+                   VALUES (961, ?1, 1, 0, 100, -1, 2, 2, 42, 14, 2400, 9, 2, 0, 0, 0, 0, 12.5, 4.2, 28),
+                          (962, ?1, ?2, 0, 100, -1, 2, 2, 50, 20, 2500, 6, 1, 0, 0, 0, 0, 15.0, 4.0, 29),
+                          (963, ?1, ?3, 0, 100, -1, 2, 2, 60, 10, 2500, 4, 0, 0, 0, 0, 0, 9.0, 4.5, 27)"#,
+                rusqlite::params![note_id, child.id, other.id],
+            )
+            .unwrap();
+        }
+        let fdeck = {
+            let conn = s.lock();
+            crate::filtered::create_filtered_deck(
+                &conn,
+                "Cram",
+                "is:review",
+                0,
+                100,
+                0,
+                1_700_000_000_100,
+            )
+            .unwrap()
+        };
+
+        let col = Collection::new(Box::new(s), Arc::new(FixedClock(1_700_000_000_200))).unwrap();
+
+        // deck_card_ids includes cards whose original_deck_id is in the deck set.
+        assert_eq!(col.deck_card_ids(1, false).unwrap(), vec![card1, 961]);
+        let with_sub = col.deck_card_ids(1, true).unwrap();
+        assert_eq!(with_sub, vec![card1, 961, 962]);
+        assert!(!with_sub.contains(&963));
+
+        // Resetting returns filtered cards to their home deck and resets scheduling.
+        col.forget_cards(&with_sub, true).unwrap();
+
+        let r961 = col
+            .storage()
+            .search_cards("", 30, 1_700_000_000_200, 50, 0, None, true)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.card_id == 961)
+            .unwrap();
+        assert_eq!(
+            (
+                r961.card_type,
+                r961.queue,
+                r961.interval,
+                r961.reps,
+                r961.lapses
+            ),
+            (0, 0, 0, 0, 0)
+        );
+
+        // Verify cards 961 and 962 returned to their home decks, while 963 stayed in Cram.
+        let sc961 = col.study_card(961).unwrap().unwrap();
+        assert_eq!(sc961.deck_id, 1);
+        assert_eq!(sc961.state.stability, None);
+        let sc962 = col.study_card(962).unwrap().unwrap();
+        assert_eq!(sc962.deck_id, child.id);
+        let sc963 = col.study_card(963).unwrap().unwrap();
+        assert_eq!(sc963.deck_id, fdeck.id);
+        assert_eq!(col.deck_card_ids(fdeck.id, false).unwrap(), vec![963]);
+
+        // Undo restores filtered-deck membership and scheduling state in one step.
+        col.undo().unwrap();
+        let u961 = col.study_card(961).unwrap().unwrap();
+        assert_eq!(u961.deck_id, fdeck.id);
+        assert_eq!(u961.due, 42);
+        assert_eq!(u961.state.reps, 9);
+        assert_eq!(u961.state.lapses, 2);
+        assert_eq!(u961.state.stability, Some(12.5));
+        let u962 = col.study_card(962).unwrap().unwrap();
+        assert_eq!(u962.deck_id, fdeck.id);
+        assert_eq!(u962.due, 50);
+        assert_eq!(
+            col.deck_card_ids(fdeck.id, false).unwrap(),
+            vec![961, 962, 963]
+        );
+    }
+
+    #[test]
+    fn fgt1_forget_cards_clears_original_deck_id_and_original_due() {
+        let (s, note_id, _) = setup();
+        let fdeck = {
+            let conn = s.lock();
+            conn.execute(
+                r#"INSERT INTO cards
+                   (id, note_id, deck_id, ord, "mod", usn, type, queue, due,
+                    interval, ease_factor, reps, lapses, remaining,
+                    original_due, original_deck_id, flags)
+                   VALUES (971, ?1, 1, 0, 100, -1, 2, 2, 33, 12, 2500, 5, 1, 0, 0, 0, 0)"#,
+                [note_id],
+            )
+            .unwrap();
+            let f = crate::filtered::create_filtered_deck(
+                &conn,
+                "Cram",
+                "is:review",
+                0,
+                100,
+                0,
+                1_700_000_000_100,
+            )
+            .unwrap();
+            // Also place a relearning card (type=3, queue=1) inside the filtered deck.
+            conn.execute(
+                r#"INSERT INTO cards
+                   (id, note_id, deck_id, ord, "mod", usn, type, queue, due,
+                    interval, ease_factor, reps, lapses, remaining,
+                    original_due, original_deck_id, flags)
+                   VALUES (972, ?1, ?2, 0, 100, -1, 3, 1, 1700000060000, 5, 2500, 3, 1, 1001, 12, 1, 0)"#,
+                rusqlite::params![note_id, f.id],
+            )
+            .unwrap();
+            f
+        };
+        let prev = s
+            .forget_cards(&[971, 972], true, 1_700_000_000_200)
+            .unwrap();
+        for id in [971, 972] {
+            let (deck_id, orig_deck_id, orig_due, ctype, queue): (i64, i64, i64, i64, i64) = s
+                .lock()
+                .query_row(
+                    "SELECT deck_id, original_deck_id, original_due, type, queue FROM cards WHERE id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                (deck_id, orig_deck_id, orig_due, ctype, queue),
+                (1, 0, 0, 0, 0)
+            );
+        }
+
+        s.restore_cards(&prev, 1_700_000_000_300).unwrap();
+        let (d971, od971, odue971): (i64, i64, i64) = s
+            .lock()
+            .query_row(
+                "SELECT deck_id, original_deck_id, original_due FROM cards WHERE id = 971",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((d971, od971, odue971), (fdeck.id, 1, 33));
+
+        let (d972, od972, odue972, t972, q972): (i64, i64, i64, i64, i64) = s
+            .lock()
+            .query_row(
+                "SELECT deck_id, original_deck_id, original_due, type, queue FROM cards WHERE id = 972",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!((d972, od972, odue972, t972, q972), (fdeck.id, 1, 12, 3, 1));
     }
 }

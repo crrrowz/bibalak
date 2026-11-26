@@ -15,7 +15,10 @@ interface ScreenHeaderProps {
 /** Slim sticky page header used at the top of each route. */
 export function ScreenHeader({ title, description, actions, breadcrumb }: ScreenHeaderProps) {
   return (
-    <div className="glass-panel sticky top-0 z-20 flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-2 sm:px-6">
+    <div
+      data-toast-anchor
+      className="glass-panel sticky top-0 z-20 flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-2 sm:px-6"
+    >
       <div className="flex min-w-0 flex-1 items-baseline gap-3">
         {breadcrumb ? (
           <nav

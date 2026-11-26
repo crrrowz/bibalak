@@ -224,8 +224,9 @@ start shows a warning. The download is safe to open if its checksum matches
 - **Windows:** SmartScreen says "Windows protected your PC" → **More info** →
   **Run anyway**.
 - **macOS:** "cannot be opened because the developer cannot be verified" →
-  right-click the app → **Open** → **Open**, or allow it in **System
-  Settings → Privacy & Security**.
+  try opening the app once, then allow it in **System Settings → Privacy &
+  Security → Open Anyway** (on macOS 14 and older, right-click the app →
+  **Open** → **Open**).
 - **macOS, "Bibalak is damaged and can't be opened":** macOS adds a
   quarantine flag to unsigned downloads. After moving the app to
   Applications, run once in Terminal:

@@ -38,6 +38,7 @@ export function DeckRow({
   onOptions,
   onCheckQuality,
   onResetProgress,
+  onExport,
   onDelete,
   onRebuild,
   onEmpty,
@@ -52,6 +53,7 @@ export function DeckRow({
   onOptions: () => void;
   onCheckQuality?: () => void;
   onResetProgress?: () => void;
+  onExport?: () => void;
   onDelete: () => void;
   onRebuild: () => void;
   onEmpty: () => void;
@@ -144,7 +146,7 @@ export function DeckRow({
           columnWidth="w-9"
         />
 
-        <div className="flex w-36 shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="flex w-36 shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           <Button
             variant="ghost"
             size="icon"
@@ -206,6 +208,7 @@ export function DeckRow({
             onOptions={onOptions}
             onCheckQuality={onCheckQuality}
             onResetProgress={onResetProgress}
+            onExport={onExport}
             onDelete={onDelete}
             onRebuild={onRebuild}
             onEmpty={onEmpty}

@@ -570,6 +570,18 @@ impl MediaStore for FsMediaStore {
         }
     }
 
+    fn open_reader(&self, filename: &str) -> CoreResult<Box<dyn io::Read + Send>> {
+        validate_media_filename(filename)?;
+        let path = self.root.join(filename);
+        match fs::File::open(&path) {
+            Ok(file) => Ok(Box::new(io::BufReader::new(file))),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                Err(CoreError::NotFound(format!("media '{filename}' not found")))
+            }
+            Err(e) => Err(storage_err(e)),
+        }
+    }
+
     fn list(&self) -> CoreResult<Vec<MediaEntry>> {
         let scanned = self.rescan_entries()?;
         let mut entries = Vec::with_capacity(scanned.len());
@@ -1529,5 +1541,39 @@ mod tests {
             .join(".trash")
             .join("really_unused.png")
             .is_file());
+    }
+
+    #[test]
+    fn list_sizes_and_open_reader_never_hash_existing_files() {
+        use std::io::Read;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("collection.media");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("cold_a.bin"), b"payload-a").unwrap();
+        std::fs::write(root.join("cold_b.bin"), b"payload-b").unwrap();
+
+        let store = FsMediaStore::new(root);
+        let hashes = Arc::new(AtomicUsize::new(0));
+        let hashes_cb = hashes.clone();
+        *store.on_hash_hook.lock().unwrap() = Some(Box::new(move || {
+            hashes_cb.fetch_add(1, Ordering::Relaxed);
+        }));
+
+        let sizes = store.list_sizes().unwrap();
+        assert_eq!(
+            sizes,
+            vec![("cold_a.bin".into(), 9), ("cold_b.bin".into(), 9)]
+        );
+        let mut buf = Vec::new();
+        store
+            .open_reader("cold_a.bin")
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+        assert_eq!(buf, b"payload-a");
+        assert_eq!(hashes.load(Ordering::Relaxed), 0);
     }
 }

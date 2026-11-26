@@ -20,6 +20,7 @@ mod decks;
 mod game;
 mod game_depth;
 mod import_export;
+pub use import_export::{collect_export_media_refs, strip_export_scheduling, PreparedExport};
 mod maintenance;
 mod media;
 mod motivation;

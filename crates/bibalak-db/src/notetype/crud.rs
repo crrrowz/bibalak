@@ -2,6 +2,10 @@ use bibalak_core::error::{CoreError, CoreResult};
 use bibalak_core::ipc::{
     parse_field_options, parse_notetype_sort_field, FieldSummary, NotetypeDetail, TemplateSummary,
 };
+use bibalak_core::notetype_preset::{
+    detect_stock_preset, parse_keepsake_preset, set_keepsake_preset_in_config, CompiledNotetype,
+    NotetypePreset,
+};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use super::{bump_schema_mod, err};
@@ -70,6 +74,9 @@ pub fn get_notetype_detail(
         .collect::<rusqlite::Result<_>>()
         .map_err(err)?;
 
+    let preset = parse_keepsake_preset(&config_json)
+        .or_else(|| detect_stock_preset(kind, &fields, &templates, &css, &config_json));
+
     Ok(Some(NotetypeDetail {
         id,
         name,
@@ -78,7 +85,92 @@ pub fn get_notetype_detail(
         templates,
         css,
         sort_field,
+        preset,
     }))
+}
+
+/// Persist `keepsakePreset` in `notetypes.config` and, when `compiled` is
+/// `Some` (Simple mode), atomically update `kind`, `css`, and `templates`
+/// (adding/removing card templates and bumping `schema_mod` only when template
+/// count changes).
+pub fn save_notetype_preset(
+    tx: &Transaction<'_>,
+    notetype_id: i64,
+    preset: &NotetypePreset,
+    compiled: Option<&CompiledNotetype>,
+    now_ms: i64,
+) -> CoreResult<()> {
+    let config_json: String = tx
+        .query_row(
+            "SELECT config FROM notetypes WHERE id = ?1",
+            [notetype_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?
+        .ok_or_else(|| CoreError::NotFound(format!("notetype {notetype_id}")))?;
+
+    let mut updated_cfg = set_keepsake_preset_in_config(&config_json, Some(preset))?;
+
+    if let Some(compiled) = compiled {
+        let mut map = match serde_json::from_str::<serde_json::Value>(&updated_cfg) {
+            Ok(serde_json::Value::Object(m)) => m,
+            _ => serde_json::Map::new(),
+        };
+        map.insert(
+            "css".to_string(),
+            serde_json::Value::String(compiled.css.clone()),
+        );
+        updated_cfg = serde_json::Value::Object(map).to_string();
+
+        tx.execute(
+            r#"UPDATE notetypes SET kind = ?1, config = ?2, "mod" = ?3, usn = -1 WHERE id = ?4"#,
+            params![compiled.kind, updated_cfg, now_ms, notetype_id],
+        )
+        .map_err(err)?;
+
+        let existing_count: usize = tx
+            .query_row(
+                "SELECT COUNT(*) FROM templates WHERE notetype_id = ?1",
+                [notetype_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(err)? as usize;
+
+        let target_len = compiled.templates.len();
+        for (idx, tmpl) in compiled.templates.iter().enumerate() {
+            if idx < existing_count {
+                tx.execute(
+                    "UPDATE templates SET name = ?1, qfmt = ?2, afmt = ?3 \
+                     WHERE notetype_id = ?4 AND ord = ?5",
+                    params![tmpl.name, tmpl.qfmt, tmpl.afmt, notetype_id, idx as i64],
+                )
+                .map_err(err)?;
+            } else {
+                super::templates::add_template(
+                    tx,
+                    notetype_id,
+                    &tmpl.name,
+                    &tmpl.qfmt,
+                    &tmpl.afmt,
+                    now_ms,
+                )?;
+            }
+        }
+        if existing_count > target_len {
+            for ord in (target_len..existing_count).rev() {
+                super::templates::remove_template(tx, notetype_id, ord as i64, now_ms)?;
+            }
+        }
+    } else {
+        tx.execute(
+            r#"UPDATE notetypes SET config = ?1, "mod" = ?2, usn = -1 WHERE id = ?3"#,
+            params![updated_cfg, now_ms, notetype_id],
+        )
+        .map_err(err)?;
+    }
+
+    Ok(())
 }
 
 /// Save a notetype's custom card CSS, preserving other keys in `config`.
@@ -381,5 +473,78 @@ mod tests {
         let orig_after = col.get_notetype_detail(orig_id).unwrap().unwrap();
         assert_eq!(orig_after.css, ".card { color: teal; }");
         assert_eq!(orig_after.fields[0].name, "Front");
+    }
+
+    #[test]
+    fn get_detail_detects_stock_preset_without_mutating_templates_or_css() {
+        use bibalak_core::notetype_preset::{EditorMode, LayoutId, KEEPSAKE_PRESET_CONFIG_KEY};
+
+        let s = SqliteStorage::open_in_memory().unwrap();
+        s.ensure_collection(1_000).unwrap();
+        let stock_id = s.add_stock_notetype(0, 1_000).unwrap();
+
+        let detail = s.get_notetype_detail(stock_id).unwrap().unwrap();
+        let detected = detail.preset.expect("stock Basic should detect as Simple");
+        assert_eq!(detected.layout, LayoutId::Basic);
+        assert_eq!(detected.mode, EditorMode::Simple);
+
+        // Opening must never write keepsakePreset or rewrite templates/css
+        let cfg: String = s
+            .lock()
+            .query_row(
+                "SELECT config FROM notetypes WHERE id = ?1",
+                [stock_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!cfg.contains(KEEPSAKE_PRESET_CONFIG_KEY));
+
+        // Customising CSS forces Advanced mode (preset == None)
+        s.save_notetype_css(stock_id, ".card { color: red; }", 2_000)
+            .unwrap();
+        let after_css = s.get_notetype_detail(stock_id).unwrap().unwrap();
+        assert!(after_css.preset.is_none());
+    }
+
+    #[test]
+    fn save_notetype_preset_persists_and_syncs_reverse_cards() {
+        use bibalak_core::notetype_preset::{EditorMode, LayoutId, NotetypePreset, StyleAlign};
+        use bibalak_core::{Collection, SystemClock};
+        use std::sync::Arc;
+
+        let s = SqliteStorage::open_in_memory().unwrap();
+        s.ensure_collection(1_000).unwrap();
+        let nt_id = s.create_notetype("Lang", 0, 1_000).unwrap();
+        s.rename_field(nt_id, 0, "Word", 1_100).unwrap();
+        s.rename_field(nt_id, 1, "Meaning", 1_100).unwrap();
+        s.add_note_with_cards(nt_id, 1, &["كتاب".into(), "book".into()], &[], 1_200)
+            .unwrap();
+
+        let col = Collection::new(Box::new(s), Arc::new(SystemClock)).unwrap();
+        let mut preset = NotetypePreset::for_layout(LayoutId::LanguageCard);
+        assert_eq!(preset.style.align, StyleAlign::Auto);
+        let d1 = col.save_notetype_preset(nt_id, preset.clone()).unwrap();
+        assert_eq!(d1.templates.len(), 1);
+        assert!(d1.preset.as_ref().unwrap().compiled_digest.is_some());
+
+        // Turn reverse ON -> Card 2 created for existing note
+        preset.options.include_reverse = true;
+        let d2 = col.save_notetype_preset(nt_id, preset.clone()).unwrap();
+        assert_eq!(d2.templates.len(), 2);
+        assert_eq!(col.check_template_remove(nt_id, 1).unwrap(), 1);
+
+        // Turn reverse OFF -> Card 2 deleted
+        preset.options.include_reverse = false;
+        let d3 = col.save_notetype_preset(nt_id, preset.clone()).unwrap();
+        assert_eq!(d3.templates.len(), 1);
+
+        // Switch to Advanced -> templates & css preserved
+        let prev_qfmt = d3.templates[0].qfmt.clone();
+        let prev_css = d3.css.clone();
+        preset.mode = EditorMode::Advanced;
+        let d4 = col.save_notetype_preset(nt_id, preset).unwrap();
+        assert_eq!(d4.preset.as_ref().unwrap().mode, EditorMode::Advanced);
+        assert_eq!(d4.templates[0].qfmt, prev_qfmt);
+        assert_eq!(d4.css, prev_css);
     }
 }

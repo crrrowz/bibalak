@@ -406,47 +406,55 @@ describe("SettingsScreen (Q2)", () => {
     expect(enRadio).toHaveFocus();
   });
 
-  it("5. export handles busy disabled state, success, cancel, and rejection in aria-live", async () => {
+  it("5. export opens ExportDialog for collection scope, runs export, and handles cancel and error", async () => {
     sessionStorage.setItem("keepsake-settings-category", "data");
     setupDefaultTauriIpc();
     const user = userEvent.setup();
 
-    let resolveExport!: (count: number) => void;
-    const exportSpy = vi.spyOn(ipcModule.ipc, "exportPackage").mockImplementation(
-      () =>
-        new Promise<number>((resolve) => {
-          resolveExport = resolve;
-        }),
-    );
+    vi.spyOn(ipcModule.ipc, "getExportEstimate").mockResolvedValue({
+      notes: 5,
+      cards: 10,
+      media_files: 3,
+      media_bytes: 1024,
+    });
+    const exportSpy = vi.spyOn(ipcModule.ipc, "exportPackage").mockResolvedValue({
+      notes_exported: 5,
+      cards_exported: 10,
+      media_exported: 3,
+      media_skipped_missing: 0,
+      bytes_written: 2048,
+    });
     pickSavePathMock.mockResolvedValueOnce("C:/exports/collection.apkg");
 
     renderScreen();
 
-    const exportBtn = screen.getByRole("button", { name: "Export .apkg" });
-    await user.click(exportBtn);
-
-    const busyBtn = await screen.findByRole("button", { name: "Exporting…" });
-    expect(busyBtn).toBeDisabled();
-
-    resolveExport(3);
-    expect(await screen.findByText("Exported.")).toHaveAttribute("aria-live", "polite");
-    expect(exportSpy).toHaveBeenCalledWith("C:/exports/collection.apkg");
-
-    // Cancel returns to idle without calling exportPackage again
-    pickSavePathMock.mockResolvedValueOnce(null);
     await user.click(screen.getByRole("button", { name: "Export .apkg" }));
+    expect(await screen.findByRole("heading", { name: "Export collection" })).toBeInTheDocument();
+    expect(await screen.findByText(/10 cards/)).toBeInTheDocument();
+
+    // Cancel inside configure closes dialog without calling exportPackage
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => {
-      expect(screen.queryByText("Exported.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Export collection" })).not.toBeInTheDocument();
     });
-    expect(exportSpy).toHaveBeenCalledTimes(1);
+    expect(exportSpy).not.toHaveBeenCalled();
 
-    // Rejection displays error in aria-live region
-    pickSavePathMock.mockResolvedValueOnce("C:/exports/collection.apkg");
-    exportSpy.mockRejectedValueOnce({ message: "Disk full" });
+    // Reopen and confirm export
     await user.click(screen.getByRole("button", { name: "Export .apkg" }));
+    await user.click(await screen.findByRole("button", { name: "Export…" }));
+    expect(await screen.findByText("Export complete")).toBeInTheDocument();
+    expect(exportSpy).toHaveBeenCalledTimes(1);
+    expect(exportSpy.mock.calls[0][0].scope).toEqual({ kind: "collection" });
+    await user.click(screen.getByRole("button", { name: "Done" }));
 
-    const errEl = await screen.findByText("Disk full");
-    expect(errEl).toHaveAttribute("aria-live", "polite");
+    // Rejection displays error in role="alert"
+    pickSavePathMock.mockResolvedValueOnce("C:/exports/collection.apkg");
+    exportSpy.mockRejectedValueOnce({ kind: "storage", message: "Disk full" });
+    await user.click(screen.getByRole("button", { name: "Export .apkg" }));
+    await user.click(await screen.findByRole("button", { name: "Export…" }));
+
+    const errEl = await screen.findByRole("alert");
+    expect(errEl).toHaveTextContent("Disk full");
   });
 
   it("6. backup renders list from listBackups and creates a new backup with formatted size", async () => {

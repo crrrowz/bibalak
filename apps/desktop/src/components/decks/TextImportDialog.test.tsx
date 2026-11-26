@@ -59,6 +59,7 @@ describe("TextImportDialog (E4)", () => {
         },
       ],
       templates: [{ ord: 0n, name: "Card 1", qfmt: "{{Front}}", afmt: "{{Back}}" }],
+      preset: null,
     });
     vi.spyOn(ipc, "previewTextImport").mockResolvedValue({
       detected_format: "csv",

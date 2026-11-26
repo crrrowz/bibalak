@@ -161,6 +161,8 @@ pub fn run() {
             // every command needs `Collection` state to exist before it can run.
             let dir = data_dir::data_dir(app)?;
             app.manage(paths_guard::PickedPathsState::new(dir.clone()));
+            app.manage(commands::export::ExportJobsState::default());
+            app.manage(commands::import::ImportJobsState::default());
             app.manage(quick_add::QuickAddState::load(dir.clone()));
             app.manage(commands::ai::AIState::new(
                 dir.clone(),
@@ -419,6 +421,7 @@ pub fn run() {
             commands::deck::set_collection_prefs,
             commands::deck::set_local_offset,
             commands::import::import_package,
+            commands::import::cancel_import,
             commands::import::preview_text_import,
             commands::import::import_text,
             commands::study::get_next_card,
@@ -437,7 +440,9 @@ pub fn run() {
             commands::browse::add_note,
             commands::browse::add_notes_batch,
             commands::browse::check_duplicate,
+            commands::export::get_export_estimate,
             commands::export::export_package,
+            commands::export::cancel_export,
             commands::stats::get_stats,
             commands::notetype::get_notetype,
             commands::notetype::create_notetype,
@@ -459,6 +464,8 @@ pub fn run() {
             commands::notetype::remove_template,
             commands::notetype::save_template,
             commands::notetype::preview_template,
+            commands::notetype::save_notetype_preset,
+            commands::notetype::lint_notetype,
             commands::cards::suspend_cards,
             commands::cards::unsuspend_cards,
             commands::cards::bury_cards,
@@ -613,7 +620,10 @@ mod tests {
             "delete_backup",
             "restore_backup",
             "export_package",
+            "get_export_estimate",
+            "cancel_export",
             "import_package",
+            "cancel_import",
             "install_plugin",
             "delete_notes",
             "delete_deck",
@@ -622,6 +632,8 @@ mod tests {
             "ai_run_action",
             "pick_open_path",
             "pick_save_path",
+            "save_notetype_preset",
+            "lint_notetype",
         ] {
             assert!(
                 auth.resolve_access(denied, "quick-add", "quick-add", &Origin::Local)

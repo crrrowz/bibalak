@@ -1,7 +1,12 @@
 use crate::error::{CoreError, CoreResult};
 use crate::events::{DomainEvent, EventSink};
-use crate::ipc::{FieldOptions, FieldRemoveWarning, NotetypeDetail, NotetypeSummary};
+use crate::ipc::{
+    FieldOptions, FieldRemoveWarning, NotetypeDetail, NotetypeSummary, TemplateSummary,
+};
 use crate::model::Notetype;
+use crate::notetype_preset::{
+    compile_preset, lint_templates, EditorMode, NotetypePreset, TemplateLintHint,
+};
 use crate::Collection;
 
 fn unique_notetype_name(existing: &[Notetype], base_name: &str) -> String {
@@ -218,5 +223,79 @@ impl Collection {
             .save_template(notetype_id, ord, name, qfmt, afmt, self.clock.now_ms())?;
         self.events.emit(DomainEvent::SchemaChanged);
         Ok(())
+    }
+
+    /// Save a note type's preset configuration. In `Simple` mode, compiles the
+    /// preset against the current fields and updates `kind`, `templates`, and
+    /// `css` in the same transaction. In `Advanced` mode, persists only
+    /// `keepsakePreset` without touching existing templates or CSS.
+    pub fn save_notetype_preset(
+        &self,
+        notetype_id: i64,
+        mut preset: NotetypePreset,
+    ) -> CoreResult<NotetypeDetail> {
+        let detail = self
+            .storage
+            .get_notetype_detail(notetype_id)?
+            .ok_or_else(|| CoreError::NotFound(format!("notetype {notetype_id}")))?;
+        let compiled = if preset.mode == EditorMode::Simple {
+            let out = compile_preset(&preset, &detail.fields)?;
+            preset.compiled_digest = Some(out.compiled_digest.clone());
+            Some(out)
+        } else {
+            None
+        };
+        self.storage.save_notetype_preset(
+            notetype_id,
+            &preset,
+            compiled.as_ref(),
+            self.clock.now_ms(),
+        )?;
+        self.events.emit(DomainEvent::SchemaChanged);
+        self.storage
+            .get_notetype_detail(notetype_id)?
+            .ok_or_else(|| CoreError::NotFound(format!("notetype {notetype_id}")))
+    }
+
+    /// Lint a note type's templates and CSS without network calls or DB writes.
+    /// When `qfmt`/`afmt` are `Some`, lints the draft template against the note
+    /// type's fields; otherwise lints all saved templates.
+    pub fn lint_notetype(
+        &self,
+        notetype_id: i64,
+        qfmt: Option<&str>,
+        afmt: Option<&str>,
+        css: Option<&str>,
+    ) -> CoreResult<Vec<TemplateLintHint>> {
+        let detail = self
+            .storage
+            .get_notetype_detail(notetype_id)?
+            .ok_or_else(|| CoreError::NotFound(format!("notetype {notetype_id}")))?;
+        let effective_css = css.unwrap_or(&detail.css);
+        let draft_templates;
+        let templates = if qfmt.is_some() || afmt.is_some() {
+            let base = detail.templates.first();
+            draft_templates = vec![TemplateSummary {
+                ord: base.map(|t| t.ord).unwrap_or(0),
+                name: base
+                    .map(|t| t.name.clone())
+                    .unwrap_or_else(|| "Card 1".into()),
+                qfmt: qfmt
+                    .map(str::to_string)
+                    .unwrap_or_else(|| base.map(|t| t.qfmt.clone()).unwrap_or_default()),
+                afmt: afmt
+                    .map(str::to_string)
+                    .unwrap_or_else(|| base.map(|t| t.afmt.clone()).unwrap_or_default()),
+            }];
+            draft_templates.as_slice()
+        } else {
+            detail.templates.as_slice()
+        };
+        Ok(lint_templates(
+            detail.kind,
+            &detail.fields,
+            templates,
+            effective_css,
+        ))
     }
 }

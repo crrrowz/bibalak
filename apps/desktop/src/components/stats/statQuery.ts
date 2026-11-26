@@ -8,7 +8,7 @@
 const STABILITY_EDGES = [1, 7, 21, 90, 180, 365];
 
 function escapeQuotes(str: string): string {
-  return str.replace(/"/g, '\\"');
+  return str.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function withDeck(query: string, deckName: string | null): string {

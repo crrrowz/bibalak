@@ -143,6 +143,7 @@ describe("16j shared toolbar in Browse NoteEditorPanel & QuickAddScreen", () => 
         options: { direction: "auto", font: "", size: 0, description: "" },
       })),
       templates: [],
+      preset: null,
     });
     vi.spyOn(ipc, "checkDuplicate").mockResolvedValue(null);
 

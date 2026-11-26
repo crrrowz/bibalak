@@ -101,6 +101,7 @@ describe("QuickAddScreen (E10)", () => {
         },
       ],
       templates: [],
+      preset: null,
     });
     vi.spyOn(ipc, "checkDuplicate").mockResolvedValue(null);
     vi.spyOn(ipc, "rememberQuickAddTarget").mockResolvedValue({
@@ -206,6 +207,7 @@ describe("QuickAddScreen (E10)", () => {
         },
       ],
       templates: [{ ord: 0n, name: "Card 1", qfmt: "{{Word}}", afmt: "{{Meaning}}" }],
+      preset: null,
     });
 
     const user = userEvent.setup();

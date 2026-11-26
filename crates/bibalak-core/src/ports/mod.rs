@@ -148,6 +148,12 @@ pub trait MediaStore: Send + Sync {
     /// Read raw bytes of `filename` (rejecting path traversal / absolute paths).
     fn read(&self, filename: &str) -> CoreResult<Vec<u8>>;
 
+    /// Open a streaming reader for `filename` without buffering the whole file
+    /// in memory. Defaults to wrapping [`Self::read`] in a cursor for test fakes.
+    fn open_reader(&self, filename: &str) -> CoreResult<Box<dyn std::io::Read + Send>> {
+        Ok(Box::new(std::io::Cursor::new(self.read(filename)?)))
+    }
+
     /// List all stored media entries sorted by filename.
     fn list(&self) -> CoreResult<Vec<MediaEntry>>;
 

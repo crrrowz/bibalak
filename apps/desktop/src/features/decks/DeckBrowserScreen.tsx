@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { platform } from "@/lib/platform";
@@ -22,12 +22,14 @@ import { DeleteDeckDialog } from "@/components/decks/DeleteDeckDialog";
 import { FilteredDeckDialog } from "@/components/decks/FilteredDeckDialog";
 import { ResetDeckProgressDialog } from "@/components/decks/ResetDeckProgressDialog";
 import { TextImportDialog } from "@/components/decks/TextImportDialog";
+import { ExportDialog } from "@/components/importExport/ExportDialog";
+import { ImportProgressDialog } from "@/components/importExport/ImportProgressDialog";
 import { TodaySummary } from "@/components/decks/TodaySummary";
 import { ComebackCard } from "@/features/motivation/ComebackCard";
 import { TodayCard } from "@/features/motivation/TodayCard";
 import { ProgressPanel } from "@/features/progress/ProgressPanel";
 import { YesterdaySummaryCard } from "@/features/progress/YesterdaySummaryCard";
-import { errorMessage, ipc, isTauri, pickAndImportPackage } from "@/lib/ipc";
+import { errorMessage, ipc, isCancelledError, isTauri } from "@/lib/ipc";
 import { queryKeys } from "@/lib/queryKeys";
 import { invalidateTodayCounts } from "@/lib/queryRefresh";
 import { listItem, staggerList } from "@/lib/motion";
@@ -37,6 +39,17 @@ import { cn } from "@/lib/utils";
 import { t, tn, textDirection } from "@/lib/i18n";
 import { formatUndoAction } from "@/lib/undo";
 import type { LocaleKey } from "@/locales/en";
+
+function isNothingNewImport(summary: ImportSummary): boolean {
+  return (
+    summary.decks_added === 0 &&
+    summary.notetypes_added === 0 &&
+    summary.notes_added === 0 &&
+    summary.notes_updated === 0 &&
+    summary.cards_added === 0 &&
+    summary.revlog_added === 0
+  );
+}
 
 const LAYOUT_OPTIONS: { value: HomeLayout; icon: typeof List; label: LocaleKey }[] = [
   { value: "list", icon: List, label: "decks.layout.list" },
@@ -115,7 +128,12 @@ export function DeckBrowserScreen() {
   const [showFilteredDialog, setShowFilteredDialog] = useState(false);
   const [showTextImport, setShowTextImport] = useState(false);
   const [rebuildTarget, setRebuildTarget] = useState<FilteredDeckConfig | null>(null);
+  const [exportDeck, setExportDeck] = useState<DeckSummary | null>(null);
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importCancelling, setImportCancelling] = useState(false);
+  const [importCancelled, setImportCancelled] = useState(false);
+  const activeImportIdRef = useRef<string | null>(null);
 
   // CommandPalette's "New deck" lands here with `?create=true`; open the form
   // once, then clear the search param so it doesn't reopen on back/refresh.
@@ -132,9 +150,21 @@ export function DeckBrowserScreen() {
   }, [tauri]);
 
   const importMut = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       setImportProgress(null);
-      return pickAndImportPackage();
+      setImportCancelled(false);
+      setImportCancelling(false);
+      const selected = await platform.pickPath({
+        filters: [{ name: t("dialog.ankiPackage"), extensions: ["apkg", "colpkg"] }],
+      });
+      if (selected === null) return null;
+      const importId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `imp-${Date.now()}`;
+      activeImportIdRef.current = importId;
+      setImportDialogOpen(true);
+      return ipc.importPackage(selected, importId);
     },
     onSuccess: (summary) => {
       if (summary) {
@@ -142,7 +172,17 @@ export function DeckBrowserScreen() {
         void invalidateDecks();
       }
     },
-    onSettled: () => setImportProgress(null),
+    onError: (err) => {
+      if (isCancelledError(err)) {
+        setImportCancelled(true);
+      }
+    },
+    onSettled: () => {
+      activeImportIdRef.current = null;
+      setImportDialogOpen(false);
+      setImportCancelling(false);
+      setImportProgress(null);
+    },
   });
 
   const deleteMut = useMutation({
@@ -292,7 +332,12 @@ export function DeckBrowserScreen() {
             >
               <Filter /> {t("decks.filtered")}
             </Button>
-            <Button size="sm" onClick={() => setCreating((value) => !value)} disabled={!tauri}>
+            <Button
+              size="sm"
+              data-testid="new-deck-button"
+              onClick={() => setCreating((value) => !value)}
+              disabled={!tauri}
+            >
               <Plus /> {t("decks.newDeck")}
             </Button>
             <LayoutSwitcher value={homeLayout} onChange={setHomeLayout} />
@@ -311,9 +356,14 @@ export function DeckBrowserScreen() {
         {tauri && style !== "game" && <ProgressPanel variant="compact" />}
         {tauri && <YesterdaySummaryCard />}
 
-        {importMut.isError ? (
+        {importMut.isError && !importCancelled ? (
           <p className="px-4 py-2 text-sm text-destructive sm:px-6 lg:px-8">
             {t("decks.importFailed", { error: errorMessage(importMut.error) })}
+          </p>
+        ) : null}
+        {importCancelled ? (
+          <p className="border-b border-border bg-secondary/40 px-4 py-2 text-sm text-muted-foreground sm:px-6 lg:px-8">
+            {t("import.cancelled")}
           </p>
         ) : null}
         {deleteMut.isError ? (
@@ -339,17 +389,23 @@ export function DeckBrowserScreen() {
 
         {lastImport ? (
           <p className="border-b border-border bg-secondary/40 px-4 py-2 text-sm text-muted-foreground sm:px-6 lg:px-8">
-            {t("decks.importSummary.result", {
-              parts: [
-                tn("decks.importSummary.notes", lastImport.notes_added),
-                tn("decks.importSummary.cards", lastImport.cards_added),
-                tn("decks.importSummary.decks", lastImport.decks_added),
-                tn("decks.importSummary.media", lastImport.media_imported),
-              ].join(textDirection() === "rtl" ? "، " : ", "),
-            })}
-            {lastImport.notes_updated > 0
-              ? ` · ${tn("decks.importSummary.updated", lastImport.notes_updated)}`
-              : ""}
+            {isNothingNewImport(lastImport) ? (
+              t("decks.importNothingNew")
+            ) : (
+              <>
+                {t("decks.importSummary.result", {
+                  parts: [
+                    tn("decks.importSummary.notes", lastImport.notes_added),
+                    tn("decks.importSummary.cards", lastImport.cards_added),
+                    tn("decks.importSummary.decks", lastImport.decks_added),
+                    tn("decks.importSummary.media", lastImport.media_imported),
+                  ].join(textDirection() === "rtl" ? "، " : ", "),
+                })}
+                {lastImport.notes_updated > 0
+                  ? ` · ${tn("decks.importSummary.updated", lastImport.notes_updated)}`
+                  : ""}
+              </>
+            )}
           </p>
         ) : null}
 
@@ -428,6 +484,7 @@ export function DeckBrowserScreen() {
                             void navigate({ to: "/assistant/quality", search: { deckId: deck.id } })
                     }
                     onResetProgress={deck.is_filtered ? undefined : () => setResetTarget(deck)}
+                    onExport={deck.is_filtered ? undefined : () => setExportDeck(deck)}
                     onDelete={() => setPendingDelete(deck)}
                     onRebuild={() => void openRebuild(deck)}
                     onEmpty={() => emptyMut.mutate(deck.id)}
@@ -473,6 +530,7 @@ export function DeckBrowserScreen() {
                               })
                       }
                       onResetProgress={deck.is_filtered ? undefined : () => setResetTarget(deck)}
+                      onExport={deck.is_filtered ? undefined : () => setExportDeck(deck)}
                       onDelete={() => setPendingDelete(deck)}
                       onRebuild={() => void openRebuild(deck)}
                       onEmpty={() => emptyMut.mutate(deck.id)}
@@ -540,6 +598,26 @@ export function DeckBrowserScreen() {
         open={showTextImport}
         onClose={() => setShowTextImport(false)}
         onImported={() => void invalidateDecks()}
+      />
+
+      <ExportDialog
+        open={Boolean(exportDeck)}
+        scope={exportDeck ? { kind: "deck", deck_id: exportDeck.id, include_subdecks: true } : null}
+        deckName={exportDeck?.name}
+        hasChildren={exportDeck ? hasChildren(exportDeck) : false}
+        onClose={() => setExportDeck(null)}
+      />
+
+      <ImportProgressDialog
+        open={importDialogOpen}
+        progress={importProgress}
+        cancelling={importCancelling}
+        onCancel={() => {
+          const id = activeImportIdRef.current;
+          if (!id || importCancelling) return;
+          setImportCancelling(true);
+          void ipc.cancelImport(id);
+        }}
       />
     </div>
   );

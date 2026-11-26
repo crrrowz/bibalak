@@ -65,6 +65,7 @@ export function DeckGridCard({
   onOptions,
   onCheckQuality,
   onResetProgress,
+  onExport,
   onDelete,
   onRebuild,
   onEmpty,
@@ -76,6 +77,7 @@ export function DeckGridCard({
   onOptions: () => void;
   onCheckQuality?: () => void;
   onResetProgress?: () => void;
+  onExport?: () => void;
   onDelete: () => void;
   onRebuild: () => void;
   onEmpty: () => void;
@@ -120,7 +122,7 @@ export function DeckGridCard({
             <span className="truncate text-sm font-medium">{deckLabel(deck.name)}</span>
           )}
         </div>
-        <div className="opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           <DeckActionsMenu
             deck={deck}
             onStudy={onStudy}
@@ -129,6 +131,7 @@ export function DeckGridCard({
             onOptions={onOptions}
             onCheckQuality={onCheckQuality}
             onResetProgress={onResetProgress}
+            onExport={onExport}
             onDelete={onDelete}
             onRebuild={onRebuild}
             onEmpty={onEmpty}

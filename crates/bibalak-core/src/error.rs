@@ -31,6 +31,9 @@ pub enum CoreError {
     #[error("invalid input: {0}")]
     Invalid(String),
 
+    #[error("cancelled")]
+    Cancelled,
+
     #[error("collection was saved by a newer Bibalak (schema v{found}, supported v{supported})")]
     SchemaTooNew { found: i64, supported: i64 },
 

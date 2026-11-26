@@ -16,7 +16,7 @@
 Installers are **not code-signed yet**:
 
 - **Windows (SmartScreen):** Click **More info** → **Run anyway**.
-- **macOS (Gatekeeper):** Right-click `Bibalak.app` → **Open** → **Open** (or allow in **System Settings → Privacy & Security**).
+- **macOS (Gatekeeper):** Try opening `Bibalak.app` once, then allow it in **System Settings → Privacy & Security → Open Anyway** (on macOS 14 and older, right-click `Bibalak.app` → **Open** → **Open**).
 
 ### Verify checksums (`SHA256SUMS`)
 

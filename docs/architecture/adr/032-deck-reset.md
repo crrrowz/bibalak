@@ -1,6 +1,6 @@
-# ADR-032: Deck progress reset and `deck_card_ids` IPC (STUDY1 / BW2-23)
+# ADR-032: Deck progress reset and `deck_card_ids` IPC
 
-**Status:** Accepted (merged with STUDY1, 2026-11-26)
+**Status:** Accepted (2026-11-26)
 **Date:** 2026-11-26
 
 ## Context
@@ -21,6 +21,4 @@ Card reset logic already exists in `Collection::forget_cards(card_ids, reset_cou
 - Zero schema migration (`user_version` stays v15) and zero duplication of scheduling/forget rules.
 - Exact subtree scoping by `deck_id` (not string prefix matching), safe for deck names containing spaces, quotes, or shared prefixes.
 - Filtered decks are excluded when resetting a parent deck with `include_subdecks = true`, and filtered decks do not expose `Reset progress…` in the deck menu.
-- Known gap (follow-up FGT1): cards of this deck that sit in a filtered deck
-  right now (`original_deck_id` = this deck) are not reset, and
-  `forget_cards` does not send such cards home first as Anki does.
+- Closed in a follow-up: `deck_card_ids` also matches `original_deck_id` in the deck set, and `forget_cards` returns any filtered-deck card to its home deck (`deck_id = original_deck_id`, `original_deck_id = 0`, `original_due = 0`) in the same transaction before resetting it, with one undo step restoring filtered-deck membership and scheduling state.

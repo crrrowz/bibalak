@@ -598,6 +598,14 @@ impl NoteStore for SqliteStorage {
         export::dump_collection(&self.lock())
     }
 
+    fn dump_collection_scoped(
+        &self,
+        deck_ids: Option<&[i64]>,
+        include_revlog: bool,
+    ) -> CoreResult<CanonicalModel> {
+        export::dump_collection_scoped(&self.lock(), deck_ids, include_revlog)
+    }
+
     fn add_note_with_cards(
         &self,
         notetype_id: i64,
@@ -734,6 +742,20 @@ impl NotetypeStore for SqliteStorage {
 
     fn save_notetype_css(&self, notetype_id: i64, css: &str, now_ms: i64) -> CoreResult<()> {
         notetype::save_notetype_css(&self.lock(), notetype_id, css, now_ms)
+    }
+
+    fn save_notetype_preset(
+        &self,
+        notetype_id: i64,
+        preset: &bibalak_core::notetype_preset::NotetypePreset,
+        compiled: Option<&bibalak_core::notetype_preset::CompiledNotetype>,
+        now_ms: i64,
+    ) -> CoreResult<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction().map_err(storage_err)?;
+        notetype::save_notetype_preset(&tx, notetype_id, preset, compiled, now_ms)?;
+        tx.commit().map_err(storage_err)?;
+        Ok(())
     }
 
     fn add_field(&self, notetype_id: i64, name: &str, now_ms: i64) -> CoreResult<()> {

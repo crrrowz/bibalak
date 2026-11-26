@@ -72,7 +72,9 @@ Get the latest version from the
 > [!NOTE]
 > Bibalak is not yet signed with an operating-system certificate, so the first
 > launch shows a warning. On **Windows**, choose **More info → Run anyway**. On
-> **macOS**, right-click the app and choose **Open**. The
+> **macOS**, try opening the app once, then allow it in **System Settings →
+> Privacy & Security → Open Anyway** (on macOS 14 and older, you can
+> right-click the app and choose **Open**). The
 > [install guide](docs/guides/install.md#unsigned-builds) covers every case.
 
 **Coming from Anki?** In Anki choose **File → Export**, save a `.colpkg` (whole

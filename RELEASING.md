@@ -17,7 +17,7 @@ This guide describes how Bibalak releases are prepared and built across **Window
    ```
    This updates:
    - `Cargo.toml` (`[workspace.package].version`)
-   - every workspace `package.json` except `packages/plugin-sdk`, which keeps its own plugin API version
+   - every workspace `package.json` (`package.json`, `apps/desktop/package.json`, `packages/ipc-types/package.json`, `packages/ui-tokens/package.json`, `apps/desktop/test-e2e/package.json`; skips `packages/plugin-sdk`, which keeps its own plugin API version; in `1.0.0` the internal packages `ipc-types`, `ui-tokens`, and `test-e2e` remained at `0.1.0`)
    - `apps/desktop/src-tauri/tauri.conf.json`
    - `CHANGELOG.md` (moves `## [Unreleased]` items into `## [<version>] - YYYY-MM-DD`)
 4. Review the diff and commit:

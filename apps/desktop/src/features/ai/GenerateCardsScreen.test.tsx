@@ -110,6 +110,7 @@ describe("GenerateCardsScreen (AI1)", () => {
       fields: [],
       templates: [],
       css: "",
+      preset: null,
     });
     const listNtSpy = vi.spyOn(ipc, "listNotetypes");
     listNtSpy.mockResolvedValueOnce([

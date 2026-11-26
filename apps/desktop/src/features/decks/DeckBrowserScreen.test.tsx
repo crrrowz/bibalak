@@ -7,14 +7,25 @@ import * as ipc from "@/lib/ipc";
 import { setLocale } from "@/lib/i18n";
 import { useStyle } from "@/stores/style";
 
+const { platformListeners } = vi.hoisted(() => ({
+  platformListeners: new Map<string, (payload: unknown) => void>(),
+}));
+
 vi.mock("@/lib/platform", () => {
   const pickPath = vi.fn();
+  const pickSavePath = vi.fn();
   return {
     platform: {
       isAvailable: () => true,
       invoke: vi.fn(),
-      listen: vi.fn(() => () => {}),
+      listen: vi.fn((event: string, handler: (payload: unknown) => void) => {
+        platformListeners.set(event, handler);
+        return () => {
+          platformListeners.delete(event);
+        };
+      }),
       pickPath,
+      pickSavePath,
     },
   };
 });
@@ -631,5 +642,131 @@ describe("DeckBrowserScreen Undo & Empty failures", () => {
       expect(deckCardIdsSpy).toHaveBeenCalledWith(1, false);
       expect(forgetSpy).toHaveBeenCalledWith([101, 102], true);
     });
+  });
+
+  it("EXP1: shows Export deck in menu for normal decks and hides it for filtered decks", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
+      {
+        id: 1,
+        name: "Biology",
+        parent_id: null,
+        new_count: 2,
+        learning_count: 0,
+        review_count: 3,
+        is_filtered: false,
+        collapsed: false,
+      },
+      {
+        id: 2,
+        name: "Cram",
+        parent_id: null,
+        new_count: 5,
+        learning_count: 0,
+        review_count: 0,
+        is_filtered: true,
+        collapsed: false,
+      },
+    ]);
+    vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue(null);
+    vi.spyOn(ipc.ipc, "getExportEstimate").mockResolvedValue({
+      notes: 10,
+      cards: 20,
+      media_files: 2,
+      media_bytes: 1024,
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DeckBrowserScreen />
+      </QueryClientProvider>,
+    );
+
+    const cramMore = await screen.findByRole("button", { name: /More actions for Cram$/i });
+    await user.click(cramMore);
+    expect(screen.queryByRole("menuitem", { name: /Export deck/i })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    const bioMore = await screen.findByRole("button", { name: /More actions for Biology$/i });
+    await user.click(bioMore);
+    const exportItem = await screen.findByRole("menuitem", { name: /Export deck/i });
+    await user.click(exportItem);
+
+    expect(await screen.findByRole("heading", { name: "Export Biology" })).toBeInTheDocument();
+  });
+
+  it("BW2-25: shows staged ImportProgressDialog, supports cancel, and shows nothing-new message", async () => {
+    vi.restoreAllMocks();
+    const { platform } = await import("@/lib/platform");
+    const { act } = await import("@testing-library/react");
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
+    vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue(null);
+
+    let rejectImport!: (err: unknown) => void;
+    const importSpy = vi.spyOn(ipc.ipc, "importPackage").mockImplementation(
+      () =>
+        new Promise((_, rej) => {
+          rejectImport = rej;
+        }),
+    );
+    const cancelImportSpy = vi.spyOn(ipc.ipc, "cancelImport").mockResolvedValue(true);
+    vi.mocked(platform.pickPath).mockResolvedValueOnce("/path/to/large.apkg");
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DeckBrowserScreen />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: /^Import$/ }));
+    await waitFor(() => expect(importSpy).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("heading", { name: "Importing package" })).toBeInTheDocument();
+
+    const emit = platformListeners.get("bibalak://import-progress");
+    expect(emit).toBeDefined();
+
+    act(() => {
+      emit!({ stage: "reading-package", done: 0, total: 0 });
+    });
+    expect(await screen.findByText("Reading package…")).toBeInTheDocument();
+
+    act(() => {
+      emit!({ stage: "copying-media", done: 2, total: 5 });
+    });
+    expect(await screen.findByText("Copying media 2 of 5…")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(cancelImportSpy).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      rejectImport({ kind: "cancelled", message: "cancelled" });
+    });
+    expect(
+      await screen.findByText("Import cancelled. Your collection was not changed."),
+    ).toBeInTheDocument();
+
+    // Re-import that adds nothing shows "Already in your collection — nothing new"
+    vi.mocked(platform.pickPath).mockResolvedValueOnce("/path/to/same.apkg");
+    importSpy.mockResolvedValueOnce({
+      decks_added: 0,
+      notetypes_added: 0,
+      notes_added: 0,
+      notes_updated: 0,
+      cards_added: 0,
+      revlog_added: 0,
+      media_imported: 2,
+    });
+    await user.click(screen.getByRole("button", { name: /^Import$/ }));
+    expect(await screen.findByText("Already in your collection — nothing new")).toBeInTheDocument();
   });
 });

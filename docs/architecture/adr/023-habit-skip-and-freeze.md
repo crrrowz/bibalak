@@ -2,7 +2,7 @@
 
 **Status:** Accepted 2026-11-24 (owner)  
 **Date:** 2026-11-23  
-**Card:** `13p` (`PLNs` — Plan screens redesign spec)  
+**Scope:** Plan screens redesign ()  
 **Related:** ADR-014, ADR-018, ADR-019, ADR-022
 
 ---
@@ -14,7 +14,7 @@ In schema `v10` ([ADR-018](018-productivity-data-model.md)), `habit_logs` tracks
 The project defines two non-penalizing protection states on a habit day:
 
 1. **Skip (`skipped`):** A neutral day state available in **every** presentation style (`Default`, `Scholar`, `Game`) for planned rest, illness, travel, or clinical rotation emergencies. A skipped day preserves the streak without incrementing it and earns no XP or gold.
-2. **Freeze (`frozen`):** Earned streak protection available **only in Game style** (when `14a` / `R2` introduces the Game shop and reward inventory). It preserves the streak across an otherwise missed scheduled day without incrementing it and earns no XP or gold.
+2. **Freeze (`frozen`):** Earned streak protection available **only in Game style** (when the Game shop and reward inventory are introduced). It preserves the streak across an otherwise missed scheduled day without incrementing it and earns no XP or gold.
 
 Adding a day-state column requires a schema migration (`v10 -> v11`) and updates to streak, ring, stats, sync, and Anki-linked auto-habit rules.
 
@@ -27,7 +27,7 @@ Adding a day-state column requires a schema migration (`v10 -> v11`) and updates
 Append `MIGRATIONS[10]` in `crates/bibalak-db/src/schema.rs` (never modifying shipped `MIGRATIONS[0..=9]`):
 
 ```sql
--- v10 -> v11 (ADR-023, PLN0): habit skip and Game-only freeze states.
+-- v10 -> v11 (ADR-023): habit skip and Game-only freeze states.
 ALTER TABLE habit_logs
     ADD COLUMN status TEXT NOT NULL DEFAULT 'logged'
     CHECK (status IN ('logged', 'skipped', 'frozen'));
@@ -58,10 +58,10 @@ pub enum HabitLogStatus {
 - `HabitLogInput`: adds `#[serde(default)] pub status: HabitLogStatus`. Existing UI callers that omit or pass `"logged"` behave identically to `v10`.
 - `HabitDayRingDto`: keeps `scheduled_count`, `completed_count`, `completion_ratio`, and adds `pub excused_count: u32` (`Skipped` + `Frozen` active-scheduled habits on that day) so the 7-day ring and tooltips distinguish an excused day from an unscheduled rest day.
 
-### 2.3 Cycle 1 vs. Cycle 2 Guard on `Frozen`
+### 2.3 Phase 1 vs. Phase 2 Guard on `Frozen`
 
-- **Cycle 1 (`PLN0` / `PLN3`):** Users may set `status = Logged` or `status = Skipped`. Calling `log_habit` with `HabitLogStatus::Frozen` returns `CoreError::Invalid("freeze status requires Game streak-freeze inventory")` until Cycle 2 (`14a` / `R2`–`R4`) adds the freeze-token inventory, earning rules, and Game-only UI toggle.
-- **Read path (`HabitLogDto`, `compute_habit_streak`, `compute_habit_day_rings`):** Already handles all three variants (`Logged`, `Skipped`, `Frozen`) uniformly so `R2` only needs to plug in token consumption.
+- **Phase 1 (skip support):** Users may set `status = Logged` or `status = Skipped`. Calling `log_habit` with `HabitLogStatus::Frozen` returns `CoreError::Invalid("freeze status requires Game streak-freeze inventory")` until Game freeze-token inventory, earning rules, and the Game-only UI toggle are added.
+- **Read path (`HabitLogDto`, `compute_habit_streak`, `compute_habit_day_rings`):** Already handles all three variants (`Logged`, `Skipped`, `Frozen`) uniformly so the Game style only needs to plug in token consumption.
 
 ### 2.4 Streak, Ring, Stats, Reward, and Auto-Habit Semantics
 
@@ -104,11 +104,11 @@ In `sync_deck_linked_habits_for_day` (`crates/bibalak-core/src/collection/produc
 
 ### Positive
 
-- One lightweight `ALTER TABLE` (`v10 -> v11`) handles both all-style neutral skips (`PLN3`) and future Game-only freezes (`14a` / `R2`).
+- One lightweight `ALTER TABLE` (`v10 -> v11`) handles both all-style neutral skips and future Game-only freezes.
 - Zero reward inflation, zero streak inflation, and zero penalty — preserving `ADR-019 §4.1`.
 - Existing `UndoLog` snapshot mechanics (`restore_habit_log_snapshot`) and `ADR-014` sync work unchanged once `status` is included in `HabitLog`.
 
 ### Negative / Trade-offs
 
-- Requires a schema bump (`v10 -> v11`) and one Rust compile batch (`BW1b`) before `PLN3` can persist `Skipped` days.
-- `Frozen` status validation rejects writes until Cycle 2 defines freeze-token storage and consumption rules.
+- Requires a schema bump (`v10 -> v11`) before `Skipped` days can be persisted.
+- `Frozen` status validation rejects writes until Phase 2 defines freeze-token storage and consumption rules.

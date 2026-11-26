@@ -313,6 +313,7 @@ describe("NotificationToastHost (16h)", () => {
 
     const screenHeader = document.createElement("div");
     screenHeader.className = "glass-panel sticky top-0 z-20";
+    screenHeader.setAttribute("data-toast-anchor", "");
     screenHeader.getBoundingClientRect = () =>
       ({
         left: 0,
@@ -328,6 +329,7 @@ describe("NotificationToastHost (16h)", () => {
 
     const progressStrip = document.createElement("div");
     progressStrip.setAttribute("data-testid", "study-progress-strip");
+    progressStrip.setAttribute("data-toast-anchor", "");
     progressStrip.getBoundingClientRect = () =>
       ({
         left: 0,
@@ -385,6 +387,76 @@ describe("NotificationToastHost (16h)", () => {
       expect(screen.getAllByTestId("notification-popup-card")).toHaveLength(3);
     } finally {
       document.documentElement.dir = "ltr";
+    }
+  });
+
+  it("TST1: anchors only on [data-toast-anchor] and ignores class-only elements", () => {
+    const main = document.createElement("main");
+    main.id = "main-content";
+    main.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        right: 1200,
+        top: 90,
+        bottom: 800,
+        width: 1200,
+        height: 710,
+        x: 0,
+        y: 90,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    const anchoredToolbar = document.createElement("div");
+    anchoredToolbar.setAttribute("data-toast-anchor", "");
+    anchoredToolbar.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        right: 1200,
+        top: 90,
+        bottom: 140,
+        width: 1200,
+        height: 50,
+        x: 0,
+        y: 90,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    const classOnlyEl = document.createElement("div");
+    classOnlyEl.className = "glass-panel sticky top-0 z-20";
+    classOnlyEl.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        right: 1200,
+        top: 90,
+        bottom: 220,
+        width: 1200,
+        height: 130,
+        x: 0,
+        y: 90,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    main.appendChild(anchoredToolbar);
+    main.appendChild(classOnlyEl);
+    document.body.appendChild(main);
+
+    try {
+      renderToastHost();
+
+      act(() => {
+        pushNotification({
+          kind: "achievement",
+          title: "Anchor check",
+          body: "Anchored via data-toast-anchor",
+        });
+      });
+
+      const host = screen.getByTestId("notification-toast-host");
+      const topPx = parseFloat(host.style.top);
+      // Must sit below anchoredToolbar (140 + 12 = 152) and ignore classOnlyEl (bottom 220).
+      expect(topPx).toBe(152);
+    } finally {
+      main.remove();
     }
   });
 });

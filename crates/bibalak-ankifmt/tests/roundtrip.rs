@@ -749,3 +749,113 @@ fn apkg_export_excludes_all_productivity_tables() {
         assert_eq!(count, 0, ".apkg must not contain {table}");
     }
 }
+
+#[test]
+fn apkg_export_excludes_keepsake_preset_from_models() {
+    use std::io::Read;
+
+    use bibalak_core::notetype_preset::{LayoutId, NotetypePreset, KEEPSAKE_PRESET_CONFIG_KEY};
+    use bibalak_core::{Collection, SystemClock};
+    use std::sync::Arc;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.ensure_collection(1_700_000_000_000).unwrap();
+    let nt_id = storage
+        .create_notetype("PresetVocab", 0, 1_700_000_000_000)
+        .unwrap();
+    storage
+        .rename_field(nt_id, 0, "Word", 1_700_000_000_100)
+        .unwrap();
+    storage
+        .rename_field(nt_id, 1, "Meaning", 1_700_000_000_100)
+        .unwrap();
+    storage
+        .add_note_with_cards(
+            nt_id,
+            1,
+            &["سلام".into(), "peace".into()],
+            &[],
+            1_700_000_000_200,
+        )
+        .unwrap();
+
+    let col = Collection::new(Box::new(storage), Arc::new(SystemClock)).unwrap();
+    let preset = NotetypePreset::for_layout(LayoutId::LanguageCard);
+    let detail = col.save_notetype_preset(nt_id, preset).unwrap();
+    assert!(detail.preset.is_some());
+
+    let model = col.dump_collection().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let apkg = dir.path().join("preset-export.apkg");
+    bibalak_ankifmt::write_apkg(&model, &apkg, None).unwrap();
+
+    let file = std::fs::File::open(&apkg).unwrap();
+    let mut zip = zip::ZipArchive::new(file).unwrap();
+    let mut sqlite_entry = zip.by_name("collection.anki2").unwrap();
+    let mut bytes = Vec::new();
+    sqlite_entry.read_to_end(&mut bytes).unwrap();
+    let db_path = dir.path().join("extracted.anki2");
+    std::fs::write(&db_path, bytes).unwrap();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let models_json: String = conn
+        .query_row("SELECT models FROM col LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+    assert!(
+        !models_json.contains(KEEPSAKE_PRESET_CONFIG_KEY),
+        "exported Anki models JSON must not contain keepsakePreset: {models_json}"
+    );
+    let models: serde_json::Value = serde_json::from_str(&models_json).unwrap();
+    for entry in models.as_object().unwrap().values() {
+        assert!(entry.get(KEEPSAKE_PRESET_CONFIG_KEY).is_none());
+    }
+}
+
+#[test]
+fn apkg_import_export_round_trip_is_lossless() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_apkg = dir.path().join("source.apkg");
+    testkit::write_sample_v11_apkg(&src_apkg).unwrap();
+
+    let (imported_model, _) = read_package(&src_apkg, None).unwrap();
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.import(&imported_model, 1_700_000_000_000).unwrap();
+
+    // Opening every note type in the editor must never mutate templates or CSS
+    for nt in storage.list_notetypes().unwrap() {
+        let _ = storage.get_notetype_detail(nt.id).unwrap();
+    }
+
+    let exported_model = storage.dump_collection().unwrap();
+    let out_apkg = dir.path().join("roundtrip.apkg");
+    bibalak_ankifmt::write_apkg(&exported_model, &out_apkg, None).unwrap();
+
+    let (reimported_model, _) = read_package(&out_apkg, None).unwrap();
+    assert_eq!(
+        reimported_model.notetypes.len(),
+        imported_model.notetypes.len()
+    );
+    for (orig_nt, rt_nt) in imported_model
+        .notetypes
+        .iter()
+        .zip(reimported_model.notetypes.iter())
+    {
+        assert_eq!(rt_nt.name, orig_nt.name);
+        assert_eq!(rt_nt.kind, orig_nt.kind);
+        let orig_tmpls: Vec<_> = imported_model
+            .templates
+            .iter()
+            .filter(|t| t.notetype_id == orig_nt.id)
+            .map(|t| (&t.name, &t.qfmt, &t.afmt))
+            .collect();
+        let rt_tmpls: Vec<_> = reimported_model
+            .templates
+            .iter()
+            .filter(|t| t.notetype_id == rt_nt.id)
+            .map(|t| (&t.name, &t.qfmt, &t.afmt))
+            .collect();
+        assert_eq!(rt_tmpls, orig_tmpls);
+    }
+    assert_eq!(reimported_model.notes.len(), imported_model.notes.len());
+    assert_eq!(reimported_model.cards.len(), imported_model.cards.len());
+}

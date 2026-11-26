@@ -37,12 +37,18 @@ export function CreateDeckForm({ onClose }: { onClose: () => void }) {
       >
         <input
           autoFocus
+          data-testid="create-deck-input"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={t("decks.create.placeholder")}
           className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
-        <Button type="submit" size="sm" disabled={!name.trim() || createMut.isPending}>
+        <Button
+          type="submit"
+          size="sm"
+          data-testid="create-deck-submit"
+          disabled={!name.trim() || createMut.isPending}
+        >
           {t("common.create")}
         </Button>
         <Button

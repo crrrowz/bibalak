@@ -2,7 +2,7 @@
 
 **Status:** Accepted 2026-11-24 (owner)  
 **Date:** 2026-11-24  
-**Card:** `14a` (`R2s` — Game style spec; implements in `14` / `R2`, `BW2`)  
+**Scope:** Game style inventory, shop, custom rewards, and freeze tokens  
 **Related:** ADR-014, ADR-018, ADR-019, ADR-023
 
 ---
@@ -13,9 +13,9 @@ Bibalak's single progress engine ([ADR-019](019-progress-engine.md)) records ear
 
 - Nothing spends gold (`progress_ledger` enforces `CHECK (gold_cents >= 0)`).
 - `habit_logs.status` ([ADR-023](023-habit-skip-and-freeze.md), `v11`) already supports `'frozen'`, but `Collection::log_habit` rejects `HabitLogStatus::Frozen` until freeze-token storage and consumption exist.
-- The opt-in **Game** style (`14` / `R2`) needs persistent storage for:
+- The opt-in **Game** style needs persistent storage for:
   1. Free avatar appearance choices (`body_tone`, `hair_style`, `hair_color`, `starter_outfit`, `starter_accessory`, `backdrop`).
-  2. Owned cosmetic inventory items (and future `15a` / `R4` unlocks such as pets, mounts, paths, and badges).
+  2. Owned cosmetic inventory items (and unlockable items such as pets, mounts, paths, and badges).
   3. Per-slot equipped items (`avatar_equipped`).
   4. Gold spending (`gold_spend_ledger`) for shop cosmetics, streak freeze tokens, and user-defined custom rewards.
   5. User-defined custom rewards (`custom_rewards`).
@@ -32,7 +32,7 @@ Following the account-ready rules (Postgres-ready local SQLite), **ADR-014** (sy
 Append one migration (`MIGRATIONS[11]`, schema `v12`) in `crates/bibalak-db/src/schema.rs` without altering `MIGRATIONS[0..=10]`:
 
 ```sql
--- v11 -> v12 (ADR-025, R2): Game avatar, equipment, inventory, spending ledger,
+-- v11 -> v12 (ADR-025): Game avatar, equipment, inventory, spending ledger,
 -- custom rewards, and streak freeze token ledger.
 
 CREATE TABLE avatar_profile (
@@ -130,14 +130,14 @@ CREATE INDEX idx_freeze_token_ledger_active
     ON freeze_token_ledger(user_id, deleted_at);
 ```
 
-### 2.2 What `15a` (`ADR-026`) Uses Here
+### 2.2 Boundary with Game Unlocks and Pets (`ADR-026`)
 
-Changed in review (the internal archive) so the two ADRs share one source of truth:
+Kept aligned so the two ADRs share one source of truth:
 
 - Pets and mounts live only in `ADR-026`'s `game_pets` (active pet and mounted flag included). This table therefore has no `'pet'` / `'mount'` inventory kinds or equipment slots, and no `'path_emblem'` / `'achievement_badge'` kinds (achievements live in `game_achievements`).
-- Cosmetics that `15a` unlocks (`frame_copper_ring`, `backdrop_study_hearth`, `frame_path_<path_id>`) are ordinary `inventory_items` rows: `kind = 'cosmetic'`, `source = 'unlock'`. The `'frame'` slot is reserved for them; `R2` does not write it.
-- `gold_spend_ledger.kind = 'path_change'` is reserved for `15a`'s path switch. `R2` writes only `'cosmetic' | 'freeze_token' | 'custom_reward'`.
-- `R2a` exposes two helpers for `R4-1`, each running inside the caller's transaction: `grant_unlocked_cosmetic(item_key)` and `spend_gold(kind, ref_key, idempotency_key, amount_cents)`.
+- Cosmetics unlocked by milestones or achievements (`frame_copper_ring`, `backdrop_study_hearth`, `frame_path_<path_id>`) are ordinary `inventory_items` rows: `kind = 'cosmetic'`, `source = 'unlock'`. The `'frame'` slot is reserved for them; the shop does not write it.
+- `gold_spend_ledger.kind = 'path_change'` is reserved for switching cosmetic paths (`ADR-026`). The shop writes only `'cosmetic' | 'freeze_token' | 'custom_reward'`.
+- The Game inventory module exposes two helpers for unlocks and path switches, each running inside the caller's transaction: `grant_unlocked_cosmetic(item_key)` and `spend_gold(kind, ref_key, idempotency_key, amount_cents)`.
 
 ### 2.3 Computing Balances from the Ledgers (No Cached Totals)
 
@@ -225,7 +225,7 @@ All singleton or key-addressed rows use deterministic RFC 4122 v5 UUIDs derived 
 - Keyed by `id` (with unique secondary index `(user_id, ...)`).
 - Last-writer-wins on `updated_at`.
 - **Tie-break on `updated_at` equal:**
-  - For `gold_spend_ledger` and `freeze_token_ledger`: `deleted_at IS NOT NULL` (revoke/refund) wins over active grant/spend, matching `progress_ledger` ([ADR-019 §2.6](019-progress-engine.md#26-sync-integration-d14-adr-014)).
+  - For `gold_spend_ledger` and `freeze_token_ledger`: `deleted_at IS NOT NULL` (revoke/refund) wins over active grant/spend, matching `progress_ledger` ([ADR-019 §2.6](019-progress-engine.md#26-sync-integration-adr-014)).
   - For `avatar_profile`, `inventory_items`, `avatar_equipped`, `custom_rewards`: standard `ADR-018 §2.9` tie-break (`deleted_at.is_some()` wins, then canonical serialized value comparison).
 - Excluded from `.apkg` / `.colpkg` export and import.
 
@@ -258,10 +258,10 @@ Every v12 table maps 1:1 to PostgreSQL (in the Stage 2 `game` or `progress` sche
 
 - **Zero cached totals:** Available gold and freeze tokens are computed cleanly from immutable/soft-revocable ledger rows, eliminating drift.
 - **Sync-safe by construction:** Per-slot equipment, deterministic UUIDv5 keys, and additive token/spend ledgers merge cleanly across devices under `ADR-014`.
-- **15a-ready:** `inventory_items`, `avatar_equipped`, and `gold_spend_ledger` already reserve kinds and slots for pets, mounts, cosmetic paths, and achievements (`ADR-026`).
+- **Unlock-ready:** `inventory_items`, `avatar_equipped`, and `gold_spend_ledger` already reserve kinds and slots for pets, mounts, cosmetic paths, and achievements (`ADR-026`).
 - **ADR-019 compliant:** No negative XP, no penalties, no negative gold balances (`saturating_sub`), and full undo refund for habit streak freezes.
 
 ### Negative / Trade-offs
 
-- Six new tables in `v11 -> v12` require updating `SyncDelta`, `Storage` port, `FakeStorage`, `SqliteStorage`, and `H2` (`DB1`) sync write-path tests during `BW2`.
+- Six new tables in `v11 -> v12` require updating `SyncDelta`, `Storage` port, `FakeStorage`, `SqliteStorage`, and sync write-path tests.
 - `ProgressSummaryDto.gold_cents` transitions from "lifetime earned gold" to "available gold" (`earned - spent`); lifetime earned totals remain queryable via `progress_history` and `progress_by_deck`.
