@@ -6,9 +6,9 @@ the people who build and use it, through the channels below.
 | You want to…                             | Go to                                                                                             |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Learn how a feature works                | The [user guide](../docs/guides/user-guide.md) and the [install guide](../docs/guides/install.md) |
-| Ask a question or share a study workflow | [Discussions](https://github.com/crrrowz/bibalak/discussions)                                                      |
-| Report a bug you can reproduce           | [Issues](https://github.com/crrrowz/bibalak/issues) — search first, then use the bug template                      |
-| Suggest a feature                        | [Issues](https://github.com/crrrowz/bibalak/issues) with the feature template                                      |
+| Ask a question or share a study workflow | [Discussions](https://github.com/crrrowz/bibalak/discussions)                                     |
+| Report a bug you can reproduce           | [Issues](https://github.com/crrrowz/bibalak/issues) — search first, then use the bug template     |
+| Suggest a feature                        | [Issues](https://github.com/crrrowz/bibalak/issues) with the feature template                     |
 | Report a security problem                | **Never in public.** Follow [`SECURITY.md`](../SECURITY.md)                                       |
 
 ## Before you open an issue
