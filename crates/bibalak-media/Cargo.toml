@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 bibalak-core.workspace = true
-sha1 = "0.10"
+sha1 = "0.11"
 
 [dev-dependencies]
 bibalak-db.workspace = true
