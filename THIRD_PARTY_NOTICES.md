@@ -2996,9 +2996,9 @@ THE SOFTWARE.
 | `num-rational` | `0.4.2` | `MIT OR Apache-2.0` |
 | `num-traits` | `0.2.19` | `MIT OR Apache-2.0` |
 | `num` | `0.4.3` | `MIT OR Apache-2.0` |
-| `regex-automata` | `0.4.14` | `MIT OR Apache-2.0` |
-| `regex-syntax` | `0.8.11` | `MIT OR Apache-2.0` |
-| `regex` | `1.12.4` | `MIT OR Apache-2.0` |
+| `regex-automata` | `0.4.19` | `MIT OR Apache-2.0` |
+| `regex-syntax` | `0.8.12` | `MIT OR Apache-2.0` |
+| `regex` | `1.13.2` | `MIT OR Apache-2.0` |
 
 ````text
 Copyright (c) 2014 The Rust Project Developers
@@ -4157,6 +4157,44 @@ THE SOFTWARE.
 
 | Crate | Version | License |
 | --- | --- | --- |
+| `sha2` | `0.11.2` | `MIT OR Apache-2.0` |
+
+````text
+Copyright (c) 2016-2026 The RustCrypto Project Developers
+Copyright (c) 2016 Artyom Pavlov
+Copyright (c) 2009-2013 Mozilla Foundation
+Copyright (c) 2006-2009 Graydon Hoare
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+````
+
+#### MIT License (`MIT`)
+
+| Crate | Version | License |
+| --- | --- | --- |
 | `digest` | `0.10.7` | `MIT OR Apache-2.0` |
 | `hmac` | `0.12.1` | `MIT OR Apache-2.0` |
 
@@ -4593,6 +4631,42 @@ DEALINGS IN THE SOFTWARE.
 
 | Crate | Version | License |
 | --- | --- | --- |
+| `digest` | `0.11.3` | `MIT OR Apache-2.0` |
+
+````text
+Copyright (c) 2017-2025 RustCrypto Developers
+Copyright (c) 2017 Artyom Pavlov
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+````
+
+#### MIT License (`MIT`)
+
+| Crate | Version | License |
+| --- | --- | --- |
 | `aes` | `0.8.4` | `MIT OR Apache-2.0` |
 
 ````text
@@ -4866,6 +4940,41 @@ THE SOFTWARE.
 ````text
 Copyright (c) 2018-2024 The rust-random Project Developers
 Copyright (c) 2014 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+````
+
+#### MIT License (`MIT`)
+
+| Crate | Version | License |
+| --- | --- | --- |
+| `block-buffer` | `0.12.1` | `MIT OR Apache-2.0` |
+
+````text
+Copyright (c) 2018-2025 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -5419,6 +5528,7 @@ DEALINGS IN THE SOFTWARE.
 
 | Crate | Version | License |
 | --- | --- | --- |
+| `const-oid` | `0.10.3` | `Apache-2.0 OR MIT` |
 | `cpufeatures` | `0.3.1` | `MIT OR Apache-2.0` |
 
 ````text
@@ -5458,6 +5568,41 @@ DEALINGS IN THE SOFTWARE.
 
 ````text
 Copyright (c) 2021 RustCrypto Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+````
+
+#### MIT License (`MIT`)
+
+| Crate | Version | License |
+| --- | --- | --- |
+| `crypto-common` | `0.2.2` | `MIT OR Apache-2.0` |
+
+````text
+Copyright (c) 2021-2026 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -5547,6 +5692,41 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+````
+
+#### MIT License (`MIT`)
+
+| Crate | Version | License |
+| --- | --- | --- |
+| `hybrid-array` | `0.4.15` | `MIT OR Apache-2.0` |
+
+````text
+Copyright (c) 2022-2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 
 ````
 
@@ -6273,12 +6453,12 @@ SOFTWARE.
 
 | Crate | Version | License |
 | --- | --- | --- |
-| `tauri-codegen` | `2.7.4` | `Apache-2.0 OR MIT` |
-| `tauri-macros` | `2.7.4` | `Apache-2.0 OR MIT` |
-| `tauri-runtime-wry` | `2.12.3` | `Apache-2.0 OR MIT` |
-| `tauri-runtime` | `2.12.2` | `Apache-2.0 OR MIT` |
-| `tauri-utils` | `2.10.2` | `Apache-2.0 OR MIT` |
-| `tauri` | `2.12.5` | `Apache-2.0 OR MIT` |
+| `tauri-codegen` | `2.7.6` | `Apache-2.0 OR MIT` |
+| `tauri-macros` | `2.7.6` | `Apache-2.0 OR MIT` |
+| `tauri-runtime-wry` | `2.12.5` | `Apache-2.0 OR MIT` |
+| `tauri-runtime` | `2.12.4` | `Apache-2.0 OR MIT` |
+| `tauri-utils` | `2.10.4` | `Apache-2.0 OR MIT` |
+| `tauri` | `2.12.7` | `Apache-2.0 OR MIT` |
 
 ````text
 MIT License
@@ -6704,6 +6884,37 @@ SOFTWARE.
 
 | Crate | Version | License |
 | --- | --- | --- |
+| `rfd` | `0.17.2` | `MIT` |
+
+````text
+MIT License
+
+Copyright (c) 2020 Bilal Elmoussaoui
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+````
+
+#### MIT License (`MIT`)
+
+| Crate | Version | License |
+| --- | --- | --- |
 | `embed_plist` | `1.2.2` | `MIT OR Apache-2.0` |
 
 ````text
@@ -6953,7 +7164,7 @@ SOFTWARE.
 
 | Crate | Version | License |
 | --- | --- | --- |
-| `rfd` | `0.16.0` | `MIT` |
+| `rfd` | `0.17.2` | `MIT` |
 
 ````text
 MIT License
@@ -7246,11 +7457,11 @@ SOFTWARE.
 | `rsqlite-vfs` | `0.2.0` | `MIT` |
 | `rustls-platform-verifier-android` | `0.2.0` | `MIT OR Apache-2.0` |
 | `siphasher` | `1.0.3` | `MIT OR Apache-2.0` |
-| `tauri-plugin-dialog` | `2.7.1` | `Apache-2.0 OR MIT` |
-| `tauri-plugin-fs` | `2.5.1` | `Apache-2.0 OR MIT` |
+| `tauri-plugin-dialog` | `2.8.4` | `Apache-2.0 OR MIT` |
+| `tauri-plugin-fs` | `2.7.1` | `Apache-2.0 OR MIT` |
 | `tauri-plugin-global-shortcut` | `2.4.1` | `Apache-2.0 OR MIT` |
 | `tauri-plugin-notification` | `2.8.1` | `Apache-2.0 OR MIT` |
-| `tauri-plugin-opener` | `2.5.4` | `Apache-2.0 OR MIT` |
+| `tauri-plugin-opener` | `2.7.3` | `Apache-2.0 OR MIT` |
 | `tauri-plugin-process` | `2.4.0` | `Apache-2.0 OR MIT` |
 | `tauri-plugin-updater` | `2.14.1` | `Apache-2.0 OR MIT` |
 | `tauri-winrt-notification` | `0.8.1` | `MIT OR Apache-2.0` |
@@ -7261,22 +7472,15 @@ SOFTWARE.
 | `webview2-com` | `0.39.1` | `MIT` |
 | `winapi-i686-pc-windows-gnu` | `0.4.0` | `MIT OR Apache-2.0` |
 | `winapi-x86_64-pc-windows-gnu` | `0.4.0` | `MIT OR Apache-2.0` |
-| `windows-collections` | `0.2.0` | `MIT OR Apache-2.0` |
 | `windows-collections` | `0.3.2` | `MIT OR Apache-2.0` |
-| `windows-core` | `0.61.2` | `MIT OR Apache-2.0` |
 | `windows-core` | `0.62.2` | `MIT OR Apache-2.0` |
-| `windows-future` | `0.2.1` | `MIT OR Apache-2.0` |
 | `windows-future` | `0.3.2` | `MIT OR Apache-2.0` |
 | `windows-implement` | `0.60.2` | `MIT OR Apache-2.0` |
 | `windows-interface` | `0.59.3` | `MIT OR Apache-2.0` |
-| `windows-link` | `0.1.3` | `MIT OR Apache-2.0` |
 | `windows-link` | `0.2.1` | `MIT OR Apache-2.0` |
-| `windows-numerics` | `0.2.0` | `MIT OR Apache-2.0` |
 | `windows-numerics` | `0.3.1` | `MIT OR Apache-2.0` |
 | `windows-registry` | `0.6.1` | `MIT OR Apache-2.0` |
-| `windows-result` | `0.3.4` | `MIT OR Apache-2.0` |
 | `windows-result` | `0.4.1` | `MIT OR Apache-2.0` |
-| `windows-strings` | `0.4.2` | `MIT OR Apache-2.0` |
 | `windows-strings` | `0.5.1` | `MIT OR Apache-2.0` |
 | `windows-sys` | `0.45.0` | `MIT OR Apache-2.0` |
 | `windows-sys` | `0.52.0` | `MIT OR Apache-2.0` |
@@ -7286,10 +7490,8 @@ SOFTWARE.
 | `windows-targets` | `0.42.2` | `MIT OR Apache-2.0` |
 | `windows-targets` | `0.52.6` | `MIT OR Apache-2.0` |
 | `windows-targets` | `0.53.5` | `MIT OR Apache-2.0` |
-| `windows-threading` | `0.1.0` | `MIT OR Apache-2.0` |
 | `windows-threading` | `0.2.1` | `MIT OR Apache-2.0` |
 | `windows-version` | `0.1.7` | `MIT OR Apache-2.0` |
-| `windows` | `0.61.3` | `MIT OR Apache-2.0` |
 | `windows` | `0.62.2` | `MIT OR Apache-2.0` |
 | `windows_aarch64_gnullvm` | `0.42.2` | `MIT OR Apache-2.0` |
 | `windows_aarch64_gnullvm` | `0.52.6` | `MIT OR Apache-2.0` |
@@ -7599,7 +7801,7 @@ DEALINGS IN THE SOFTWARE.
 | Crate | Version | License |
 | --- | --- | --- |
 | `adler2` | `2.0.1` | `0BSD OR MIT OR Apache-2.0` |
-| `anyhow` | `1.0.102` | `MIT OR Apache-2.0` |
+| `anyhow` | `1.0.105` | `MIT OR Apache-2.0` |
 | `async-channel` | `2.5.0` | `Apache-2.0 OR MIT` |
 | `async-executor` | `1.14.0` | `Apache-2.0 OR MIT` |
 | `async-io` | `2.6.0` | `Apache-2.0 OR MIT` |
@@ -7621,7 +7823,7 @@ DEALINGS IN THE SOFTWARE.
 | `erased-serde` | `0.4.10` | `MIT OR Apache-2.0` |
 | `event-listener-strategy` | `0.5.4` | `Apache-2.0 OR MIT` |
 | `event-listener` | `5.4.1` | `Apache-2.0 OR MIT` |
-| `fastrand` | `2.4.1` | `Apache-2.0 OR MIT` |
+| `fastrand` | `2.5.0` | `Apache-2.0 OR MIT` |
 | `futures-lite` | `2.6.1` | `Apache-2.0 OR MIT` |
 | `hermit-abi` | `0.5.2` | `MIT OR Apache-2.0` |
 | `itoa` | `1.0.18` | `MIT OR Apache-2.0` |
@@ -7644,11 +7846,11 @@ DEALINGS IN THE SOFTWARE.
 | `rustversion` | `1.0.22` | `MIT OR Apache-2.0` |
 | `semver` | `1.0.28` | `MIT OR Apache-2.0` |
 | `serde-untagged` | `0.1.9` | `MIT OR Apache-2.0` |
-| `serde` | `1.0.228` | `MIT OR Apache-2.0` |
-| `serde_core` | `1.0.228` | `MIT OR Apache-2.0` |
-| `serde_derive` | `1.0.228` | `MIT OR Apache-2.0` |
+| `serde` | `1.0.229` | `MIT OR Apache-2.0` |
+| `serde_core` | `1.0.229` | `MIT OR Apache-2.0` |
+| `serde_derive` | `1.0.229` | `MIT OR Apache-2.0` |
 | `serde_derive_internals` | `0.29.1` | `MIT OR Apache-2.0` |
-| `serde_json` | `1.0.150` | `MIT OR Apache-2.0` |
+| `serde_json` | `1.0.154` | `MIT OR Apache-2.0` |
 | `serde_repr` | `0.1.20` | `MIT OR Apache-2.0` |
 | `servo_arc` | `0.4.3` | `MIT OR Apache-2.0` |
 | `servo_arc` | `0.5.0` | `MIT OR Apache-2.0` |
@@ -7913,7 +8115,7 @@ SOFTWARE.
 | Crate | Version | License |
 | --- | --- | --- |
 | `tracing-core` | `0.1.36` | `MIT` |
-| `zip` | `9.5.1` | `MIT` |
+| `zip` | `9.8.1` | `MIT` |
 
 ````text
 The MIT License (MIT)
