@@ -1,0 +1,270 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare-release:
+    name: Prepare draft release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - name: Compose release body from CHANGELOG.md and template
+        id: body
+        run: |
+          node - <<'EOF'
+          const fs = require("node:fs");
+          const tag = process.env.GITHUB_REF_NAME || "";
+          const version = tag.replace(/^v/, "");
+          const changelog = fs.readFileSync("CHANGELOG.md", "utf8").replace(/\r\n/g, "\n").split("\n");
+          const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const start = changelog.findIndex((l) => new RegExp(`^## \\[${escaped}\\]`).test(l));
+          let notes = "";
+          if (start !== -1) {
+            let end = changelog.length;
+            for (let i = start + 1; i < changelog.length; i++) {
+              if (/^## \[/.test(changelog[i])) { end = i; break; }
+            }
+            notes = changelog.slice(start + 1, end).join("\n").trim();
+          }
+          if (!notes) {
+            notes = `See [CHANGELOG.md](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/blob/main/CHANGELOG.md) for details.`;
+          }
+          const tplPath = ".github/release-notes-template.md";
+          const template = fs.existsSync(tplPath)
+            ? fs.readFileSync(tplPath, "utf8").replaceAll("<version>", version)
+            : "";
+          fs.writeFileSync("release-body.md", `${notes}\n\n${template}`.trim() + "\n", "utf8");
+          EOF
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          PRERELEASE_FLAG=""
+          if [[ "$TAG" == *-* ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "Bibalak $TAG" --notes-file release-body.md --draft $PRERELEASE_FLAG
+          else
+            gh release create "$TAG" --title "Bibalak $TAG" --notes-file release-body.md --draft $PRERELEASE_FLAG
+          fi
+
+  build:
+    name: Build — ${{ matrix.label }}
+    needs: [prepare-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x86_64
+            platform: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - label: macos-aarch64
+            platform: macos-latest
+            target: aarch64-apple-darwin
+          - label: macos-x86_64
+            platform: macos-latest
+            target: x86_64-apple-darwin
+          - label: windows-x86_64
+            platform: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system deps
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+
+      - run: pnpm install --frozen-lockfile
+      - run: cargo test -p bibalak-core # regenerate ts-rs bindings
+
+      - name: Generate updater site overlay
+        env:
+          DOWNLOAD_SITE: ${{ vars.DOWNLOAD_SITE }}
+        run: node scripts/release/site-config.mjs
+
+      - name: Select Tauri bundle flags (optional signing)
+        id: tauri-opts
+        shell: bash
+        env:
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          ARGS="--target ${{ matrix.target }} --config src-tauri/tauri.site.conf.json"
+          INCLUDE_UPDATER="false"
+          if [ "$HAS_UPDATER_KEY" = "true" ]; then
+            ARGS="$ARGS --config src-tauri/tauri.release.conf.json"
+            INCLUDE_UPDATER="true"
+          fi
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+          echo "include_updater=$INCLUDE_UPDATER" >> "$GITHUB_OUTPUT"
+
+      - name: Build Tauri bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_DOWNLOAD_SITE: ${{ vars.DOWNLOAD_SITE }}
+          # Updater signing is enabled only when TAURI_SIGNING_PRIVATE_KEY is configured,
+          # so public forks can build releases cleanly without maintainer secrets.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          args: ${{ steps.tauri-opts.outputs.args }}
+          tagName: ${{ github.ref_name }}
+          releaseName: "Bibalak ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          includeUpdaterJson: ${{ steps.tauri-opts.outputs.include_updater == 'true' }}
+
+      # Portable copy: the same exe with a portable.txt marker, data kept in a
+      # "data" folder beside it (docs/guides/install.md). Added to the draft release.
+      - name: Portable ZIP (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $zip = ./scripts/package-portable.ps1 -Version $version -OutDir $env:RUNNER_TEMP
+          gh release upload "${{ github.ref_name }}" "$zip" --clobber
+
+  finalize-checksums:
+    name: Generate SHA256SUMS
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets and compute SHA256SUMS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p release-assets
+          gh release download "${{ github.ref_name }}" --dir release-assets
+          rm -f release-assets/SHA256SUMS
+          (cd release-assets && sha256sum * > SHA256SUMS)
+          gh release upload "${{ github.ref_name }}" release-assets/SHA256SUMS --clobber
+
+  publish:
+    name: Publish release
+    # Every build finished and SHA256SUMS is attached: take the release out of
+    # draft so it shows on the Releases page. Set the repository variable
+    # RELEASE_KEEP_DRAFT=true to review drafts by hand instead.
+    needs: [finalize-checksums]
+    if: vars.RELEASE_KEEP_DRAFT != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ "$TAG" == *-* ]]; then
+            gh release edit "$TAG" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --draft=false --latest
+          fi
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Same ignores as ci.yml: quick-xml quadratic-time/unbounded-alloc
+          # advisories, pulled in transitively via tauri-utils -> plist
+          # (macOS bundling only, never parses untrusted input at runtime).
+          ignore: RUSTSEC-2026-0194,RUSTSEC-2026-0195
+      - run: pnpm install --frozen-lockfile
+      - name: npm audit
+        run: pnpm audit --audit-level=high
+
+  stage-site:
+    name: Stage website download bundle
+    needs: [finalize-checksums]
+    if: vars.DOWNLOAD_SITE != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - name: Run release script tests
+        run: node --test scripts/release/release-scripts.test.mjs
+      - name: Download draft release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p site-upload
+          gh release download "${{ github.ref_name }}" --dir site-upload
+      - name: Rewrite latest.json URLs for DOWNLOAD_SITE
+        env:
+          DOWNLOAD_SITE: ${{ vars.DOWNLOAD_SITE }}
+        run: |
+          if [ -f site-upload/latest.json ]; then
+            node scripts/release/rewrite-manifest.mjs \
+              --site "$DOWNLOAD_SITE" \
+              --in site-upload/latest.json \
+              --out site-upload/latest.json
+          fi
+      - name: Stage site-upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-upload
+          path: site-upload/
+      - name: Upload site-upload/ to download host
+        # Disabled until hosting is chosen and secrets are configured.
+        # Replace this placeholder command and remove `if: false` when going live.
+        if: false
+        run: |
+          echo "Upload site-upload/* to ${{ vars.DOWNLOAD_SITE }}/download/"
+          exit 1

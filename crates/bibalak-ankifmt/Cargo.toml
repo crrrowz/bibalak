@@ -1,0 +1,24 @@
+[package]
+name = "bibalak-ankifmt"
+description = "Anki .apkg/.colpkg import & export. Detects schema v11/v18, maps to/from the canonical model."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+bibalak-core.workspace = true
+serde_json.workspace = true
+zip = { version = "9", default-features = false, features = ["deflate"] }
+zstd = "0.13"
+csv = "1"
+pulldown-cmark = "0.13"
+tempfile = "3"
+# Reads the SQLite collection embedded in the package.
+rusqlite = { version = "0.42", features = ["bundled"] }
+
+[dev-dependencies]
+# Integration tests exercise the full reader -> storage import pipeline.
+bibalak-db.workspace = true
+bibalak-media.workspace = true

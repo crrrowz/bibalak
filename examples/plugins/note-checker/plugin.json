@@ -1,0 +1,10 @@
+{
+  "id": "bibalak-note-checker",
+  "name": "Note Checker",
+  "version": "1.0.0",
+  "entry": "index.js",
+  "description": "Finds notes with an empty field or a missing media reference and lists them in a panel.",
+  "author": "Bibalak",
+  "apiVersion": "0.2.0",
+  "permissions": ["read:notes", "ui:panel"]
+}

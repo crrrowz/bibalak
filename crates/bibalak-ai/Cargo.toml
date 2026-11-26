@@ -1,0 +1,17 @@
+[package]
+name = "bibalak-ai"
+description = "AI provider adapter (OpenAI-compatible HTTP + local Ollama via ureq 3, OS credential storage via keyring 3)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+bibalak-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+ureq = { version = "3", features = ["json"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }

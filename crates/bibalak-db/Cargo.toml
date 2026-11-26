@@ -1,0 +1,27 @@
+[package]
+name = "bibalak-db"
+description = "SQLite storage adapter for Bibalak: canonical schema, migrations, queries. Implements core's Storage port."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+bibalak-core.workspace = true
+bibalak-scheduler.workspace = true
+bibalak-render.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Bundled SQLite: compiled from source via cc (MSVC/clang). No system SQLite needed.
+rusqlite = { version = "0.42", features = ["bundled", "backup"] }
+regex = "1"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+# Anki-compatible note checksum (ADR-007).
+sha1 = "0.10"
+fastrand = "2"
+
+[dev-dependencies]
+# Used by examples/perf.rs (search-index rebuild timing).
+bibalak-search.workspace = true
+bibalak-core = { workspace = true, features = ["testkit"] }

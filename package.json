@@ -1,0 +1,39 @@
+{
+  "name": "bibalak-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.5.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @bibalak/desktop tauri dev",
+    "dev:web": "pnpm --filter @bibalak/desktop dev",
+    "build": "pnpm --filter @bibalak/desktop build",
+    "build:app": "pnpm --filter @bibalak/desktop tauri build",
+    "bindings": "cargo test -p bibalak-core",
+    "test": "pnpm test:ts && pnpm test:rust",
+    "test:ts": "pnpm --filter @bibalak/desktop test",
+    "test:rust": "cargo test --workspace",
+    "lint": "pnpm lint:ts && pnpm lint:rust",
+    "lint:ts": "eslint .",
+    "lint:rust": "cargo clippy --workspace --all-targets -- -D warnings",
+    "fmt": "prettier --write . && cargo fmt",
+    "fmt:check": "prettier --check . && cargo fmt --check",
+    "check": "node -e \"const {execFileSync}=require('child_process');const win=process.platform==='win32';try{execFileSync(win?'powershell':'sh',win?['-ExecutionPolicy','Bypass','-File','scripts/check.ps1']:['scripts/check.sh'],{stdio:'inherit'})}catch(e){process.exit(e.status||1)}\"",
+    "check:no-rust": "node -e \"const {execFileSync}=require('child_process');const win=process.platform==='win32';try{execFileSync(win?'powershell':'sh',win?['-ExecutionPolicy','Bypass','-File','scripts/check.ps1','-NoRust']:['scripts/check.sh','--no-rust'],{stdio:'inherit'})}catch(e){process.exit(e.status||1)}\""
+  },
+  "comment": "Build-script allowlist and dependency overrides live in pnpm-workspace.yaml; pnpm 11 no longer reads them from here.",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4",
+    "typescript-eslint": "^8.61.1"
+  },
+  "license": "AGPL-3.0-or-later"
+}

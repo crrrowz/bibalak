@@ -1,0 +1,16 @@
+[package]
+name = "bibalak-media"
+description = "Media store: checksums, dedup, unused-media cleanup. Implements core's MediaStore port."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+bibalak-core.workspace = true
+sha1 = "0.10"
+
+[dev-dependencies]
+bibalak-db.workspace = true
+tempfile = "3"

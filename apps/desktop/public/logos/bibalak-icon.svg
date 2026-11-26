@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <title>Bibalak</title>
+  <rect x="48" y="48" width="928" height="928" rx="232" fill="#BF5A30"/>
+  <rect x="240" y="242" width="420" height="540" rx="64" fill="#F2C7AC" transform="rotate(-9 450 512)"/>
+  <rect x="308" y="262" width="420" height="540" rx="64" fill="#FFF8F1"/>
+  <path d="M592 262h84v188l-42-34-42 34z" fill="#BF5A30"/>
+  <rect x="376" y="520" width="284" height="36" rx="18" fill="#EBCDB9"/>
+  <rect x="376" y="596" width="204" height="36" rx="18" fill="#EBCDB9"/>
+</svg>

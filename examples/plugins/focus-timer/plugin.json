@@ -1,0 +1,10 @@
+{
+  "id": "bibalak-focus-timer",
+  "name": "Focus Timer",
+  "version": "1.0.0",
+  "entry": "index.js",
+  "description": "Pomodoro study timer that counts the cards answered in each focus session.",
+  "author": "Bibalak",
+  "apiVersion": "0.2.0",
+  "permissions": ["events:listen", "ui:panel"]
+}

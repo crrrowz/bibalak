@@ -1,0 +1,451 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Semantic theme tokens. Light is the default; `.dark` on <html> flips them.
+   Values are HSL triplets so Tailwind can wrap them with hsl(var(--token)). */
+@layer base {
+  :root {
+    /* Bibalak "Study Lamp" palette: warm paper neutrals, one terracotta signal. */
+    --background: 36 33% 97%;
+    --foreground: 24 16% 13%;
+    --card: 40 50% 99.5%;
+    --card-foreground: 24 16% 13%;
+    --popover: 40 50% 99.5%;
+    --popover-foreground: 24 16% 13%;
+    --primary: 17 62% 45%;
+    --primary-foreground: 36 100% 99%;
+    --secondary: 34 26% 92%;
+    --secondary-foreground: 24 16% 18%;
+    --muted: 34 26% 92%;
+    --muted-foreground: 26 9% 40%;
+    --accent: 34 30% 90%;
+    --accent-foreground: 24 16% 18%;
+    --destructive: 352 64% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 33 22% 87%;
+    --input: 33 20% 84%;
+    --ring: 17 62% 45%;
+    --radius: 0.875rem;
+
+    /* Review-state semantic colors — fixed across light/dark, never reassigned.
+       White labels sit on these fills, so each keeps >= 4.5:1 against white. */
+    --again: 352 64% 46%;
+    --hard: 30 88% 34%;
+    --good: 152 56% 29%;
+    --easy: 208 70% 40%;
+
+    --sidebar: 36 30% 94.5%;
+    --sidebar-foreground: 24 12% 28%;
+    --sidebar-accent: 34 28% 89%;
+
+    /* Glass surfaces — translucent chrome over scrolled content. */
+    --glass-chrome-bg: 36 33% 97% / 0.74;
+    --glass-panel-bg: 40 50% 99.5% / 0.84;
+    --glass-border: 33 22% 87% / 0.6;
+
+    /* Chart categorical series, fixed order — never cycled or reassigned by filters. */
+    --chart-1: 208 62% 45%; /* blue */
+    --chart-2: 170 58% 33%; /* teal */
+    --chart-3: 38 90% 42%; /* honey */
+    --chart-4: 112 42% 33%; /* olive green */
+    --chart-5: 285 30% 44%; /* plum */
+    --chart-6: 352 62% 50%; /* crimson */
+    /* Sequential (magnitude) ramp, single warm hue light->dark, 5 steps. */
+    --seq-1: 24 80% 88%;
+    --seq-2: 21 72% 74%;
+    --seq-3: 19 64% 60%;
+    --seq-4: 17 62% 47%;
+    --seq-5: 16 64% 33%;
+  }
+
+  .dark {
+    --background: 24 12% 8%;
+    --foreground: 36 22% 90%;
+    --card: 24 11% 11%;
+    --card-foreground: 36 22% 90%;
+    --popover: 24 11% 11%;
+    --popover-foreground: 36 22% 90%;
+    --primary: 19 72% 63%;
+    --primary-foreground: 20 30% 9%;
+    --secondary: 24 9% 17%;
+    --secondary-foreground: 36 22% 90%;
+    --muted: 24 9% 17%;
+    --muted-foreground: 30 10% 65%;
+    --accent: 24 10% 19%;
+    --accent-foreground: 36 22% 90%;
+    --destructive: 352 58% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 24 9% 18%;
+    --input: 24 9% 21%;
+    --ring: 19 72% 63%;
+
+    --sidebar: 24 13% 6.5%;
+    --sidebar-foreground: 30 12% 72%;
+    --sidebar-accent: 24 10% 15%;
+
+    --glass-chrome-bg: 24 12% 8% / 0.72;
+    --glass-panel-bg: 24 11% 11% / 0.84;
+    --glass-border: 24 9% 18% / 0.6;
+
+    --chart-1: 208 70% 64%;
+    --chart-2: 170 50% 46%;
+    --chart-3: 38 85% 55%;
+    --chart-4: 112 38% 52%;
+    --chart-5: 285 40% 70%;
+    --chart-6: 352 70% 66%;
+    --seq-1: 20 30% 20%;
+    --seq-2: 19 45% 32%;
+    --seq-3: 19 58% 45%;
+    --seq-4: 19 70% 58%;
+    --seq-5: 22 85% 74%;
+  }
+
+  [data-style="scholar"] {
+    /* Scholar "Classic Library" palette: paper, ink navy, burgundy accent, rule lines. */
+    --background: 41 47% 93%;
+    --foreground: 216 30% 18%;
+    --card: 42 56% 96.5%;
+    --card-foreground: 216 30% 18%;
+    --popover: 42 56% 96.5%;
+    --popover-foreground: 216 30% 18%;
+    --primary: 215 52% 28%;
+    --primary-foreground: 42 56% 97%;
+    --secondary: 39 30% 88%;
+    --secondary-foreground: 216 30% 18%;
+    --muted: 39 30% 88%;
+    --muted-foreground: 216 18% 36%;
+    --accent: 39 28% 86%;
+    --accent-foreground: 216 30% 18%;
+    --scholar-accent: 351 45% 33%;
+    --scholar-accent-foreground: 42 56% 97%;
+    --border: 38 28% 81%;
+    --input: 38 25% 78%;
+    --radius: 0.5rem;
+
+    --sidebar: 40 40% 90.5%;
+    --sidebar-foreground: 216 24% 25%;
+    --sidebar-accent: 39 30% 85%;
+
+    --glass-chrome-bg: 41 47% 93% / 0.78;
+    --glass-panel-bg: 42 56% 96.5% / 0.88;
+    --glass-border: 38 28% 81% / 0.65;
+
+    --seq-1: 215 55% 88%;
+    --seq-2: 215 52% 74%;
+    --seq-3: 215 50% 58%;
+    --seq-4: 215 52% 40%;
+    --seq-5: 215 54% 26%;
+
+    --font-heading: "Literata Variable", "Amiri", Georgia, ui-serif, serif;
+  }
+
+  [data-style="scholar"].dark {
+    --background: 220 23% 10%;
+    --foreground: 40 28% 88%;
+    --card: 222 26% 15%;
+    --card-foreground: 40 28% 88%;
+    --popover: 222 26% 15%;
+    --popover-foreground: 40 28% 88%;
+    --primary: 215 53% 71%;
+    --primary-foreground: 220 26% 10%;
+    --secondary: 222 22% 20%;
+    --secondary-foreground: 40 28% 88%;
+    --muted: 222 22% 20%;
+    --muted-foreground: 38 14% 66%;
+    --accent: 222 22% 22%;
+    --accent-foreground: 40 28% 88%;
+    --scholar-accent: 349 44% 73%;
+    --scholar-accent-foreground: 220 26% 10%;
+    --border: 222 20% 23%;
+    --input: 222 20% 26%;
+
+    --sidebar: 220 25% 8%;
+    --sidebar-foreground: 38 16% 72%;
+    --sidebar-accent: 222 22% 17%;
+
+    --glass-chrome-bg: 220 23% 10% / 0.78;
+    --glass-panel-bg: 222 26% 15% / 0.88;
+    --glass-border: 222 20% 23% / 0.65;
+
+    --seq-1: 216 32% 20%;
+    --seq-2: 216 40% 32%;
+    --seq-3: 215 46% 46%;
+    --seq-4: 215 50% 60%;
+    --seq-5: 215 58% 74%;
+  }
+
+  [data-style="game"] {
+    /* Game "Guild Hall" palette: indigo-slate surfaces, royal violet primary, semantic gold/xp/freeze. */
+    --background: 245 30% 96%;
+    --foreground: 240 28% 15%;
+    --card: 245 45% 99%;
+    --card-foreground: 240 28% 15%;
+    --popover: 245 45% 99%;
+    --popover-foreground: 240 28% 15%;
+    --primary: 262 66% 47%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 245 24% 90%;
+    --secondary-foreground: 240 26% 18%;
+    --muted: 245 24% 90%;
+    --muted-foreground: 242 15% 38%;
+    --accent: 245 26% 88%;
+    --accent-foreground: 240 26% 18%;
+    --border: 245 22% 83%;
+    --input: 245 20% 80%;
+    --radius: 0.625rem;
+
+    --sidebar: 245 28% 93%;
+    --sidebar-foreground: 242 22% 24%;
+    --sidebar-accent: 245 26% 87%;
+
+    --glass-chrome-bg: 245 30% 96% / 0.8;
+    --glass-panel-bg: 245 45% 99% / 0.9;
+    --glass-border: 245 22% 83% / 0.7;
+
+    --game-gold: 36 90% 30%;
+    --game-gold-foreground: 0 0% 100%;
+    --game-xp: 158 64% 30%;
+    --game-freeze: 198 80% 31%;
+    --game-freeze-foreground: 0 0% 100%;
+
+    --seq-1: 262 60% 88%;
+    --seq-2: 262 62% 75%;
+    --seq-3: 262 64% 62%;
+    --seq-4: 262 66% 47%;
+    --seq-5: 262 68% 34%;
+
+    --font-heading:
+      "Handjet Variable", "Figtree Variable", "IBM Plex Sans Arabic", ui-sans-serif, sans-serif;
+  }
+
+  [data-style="game"].dark {
+    --background: 244 26% 10%;
+    --foreground: 240 20% 92%;
+    --card: 244 24% 14%;
+    --card-foreground: 240 20% 92%;
+    --popover: 244 24% 14%;
+    --popover-foreground: 240 20% 92%;
+    --primary: 262 80% 74%;
+    --primary-foreground: 244 30% 10%;
+    --secondary: 244 20% 20%;
+    --secondary-foreground: 240 20% 92%;
+    --muted: 244 20% 20%;
+    --muted-foreground: 242 14% 68%;
+    --accent: 244 20% 22%;
+    --accent-foreground: 240 20% 92%;
+    --border: 244 18% 24%;
+    --input: 244 18% 27%;
+
+    --sidebar: 244 28% 8%;
+    --sidebar-foreground: 240 16% 74%;
+    --sidebar-accent: 244 20% 17%;
+
+    --glass-chrome-bg: 244 26% 10% / 0.8;
+    --glass-panel-bg: 244 24% 14% / 0.9;
+    --glass-border: 244 18% 24% / 0.7;
+
+    --game-gold: 43 92% 58%;
+    --game-gold-foreground: 244 30% 10%;
+    --game-xp: 158 70% 56%;
+    --game-freeze: 196 80% 62%;
+    --game-freeze-foreground: 244 30% 10%;
+
+    --seq-1: 262 32% 22%;
+    --seq-2: 262 42% 34%;
+    --seq-3: 262 56% 48%;
+    --seq-4: 262 68% 62%;
+    --seq-5: 262 80% 74%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
+  }
+
+  body
+    :where(*):not(
+      input,
+      textarea,
+      [contenteditable="true"],
+      [contenteditable=""],
+      .keepsake-prose,
+      .keepsake-prose *
+    ) {
+    user-select: none;
+  }
+
+  :root {
+    color-scheme: light;
+  }
+
+  .dark {
+    color-scheme: dark;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply tracking-tight;
+  }
+
+  [data-style="scholar"] h1,
+  [data-style="scholar"] h2,
+  [data-style="scholar"] h3,
+  [data-style="scholar"] .screen-title {
+    font-family: var(--font-heading);
+  }
+
+  [data-style="game"] h1,
+  [data-style="game"] h2,
+  [data-style="game"] h3,
+  [data-style="game"] .screen-title,
+  [data-style="game"] .game-hud-level {
+    font-family: var(--font-heading);
+  }
+
+  [data-style="scholar"] section > h2,
+  [data-style="scholar"] .scholar-heading-rule {
+    padding-bottom: 0.375rem;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  /* Honour reduced-motion: disable non-essential animations. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+/* Card content itself renders inside CardFace's shadow root (see
+   src/styles/card-base.css + per-notetype CSS) — .keepsake-card here is just
+   the light-DOM host panel (border/padding/background). */
+@layer components {
+  .keepsake-flip {
+    perspective: 1200px;
+  }
+
+  /* Browser default focus ring (often stark white/black) on any focusable
+     element that doesn't set its own focus-visible ring. */
+  button:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  /* Match native <select> dropdown menus to active light/dark theme tokens. */
+  select option,
+  select optgroup {
+    background-color: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
+  }
+
+  /* TipTap field editor content. */
+  .keepsake-prose p {
+    @apply my-1;
+  }
+  .keepsake-prose:focus {
+    @apply outline-none;
+  }
+
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Thin, theme-aware scrollbar for compact sidebars and dense lists. */
+  .thin-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .thin-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .thin-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .thin-scrollbar::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 9999px;
+  }
+  .thin-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.55);
+  }
+
+  .game-pixel-art {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    transform: translateZ(0);
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  /* Chrome surfaces (titlebar, sidebar, sticky screen headers): translucent
+     over scrolled content. Falls back to a solid surface where backdrop-filter
+     isn't supported. */
+  .glass-chrome {
+    background-color: hsl(var(--glass-chrome-bg));
+    border-color: hsl(var(--glass-border));
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    backdrop-filter: blur(16px) saturate(1.4);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass-chrome {
+      background-color: hsl(var(--background));
+    }
+  }
+
+  /* Floating panels: command palette, dialogs, popovers, study HUD. */
+  .glass-panel {
+    background-color: hsl(var(--glass-panel-bg));
+    border-color: hsl(var(--glass-border));
+    -webkit-backdrop-filter: blur(24px) saturate(1.5);
+    backdrop-filter: blur(24px) saturate(1.5);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass-panel {
+      background-color: hsl(var(--popover));
+    }
+  }
+}
+
+/* Recharts bars/sectors (and the wrapper/surface that hosts them) get a
+   browser default focus ring on click since they're focusable SVG/div
+   elements; we show our own subtle Tooltip cursor instead (see
+   chartTheme.tooltipCursor), so drop the outline everywhere in the chart.
+   Kept outside @layer: these class names are injected by recharts at
+   runtime and never appear as literal strings in our source, so Tailwind's
+   content-based tree-shaking silently strips them if placed inside a
+   @layer block. */
+.recharts-responsive-container :focus,
+.recharts-responsive-container:focus,
+.recharts-wrapper:focus,
+.recharts-wrapper :focus,
+.recharts-surface:focus,
+.recharts-surface :focus {
+  outline: none;
+}

@@ -1,0 +1,59 @@
+# License configuration for cargo-about (backlog step 3 / C2).
+
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+accepted = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "0BSD",
+  "Unlicense",
+  "CC0-1.0",
+  "BSL-1.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "MPL-2.0",
+  "OFL-1.1",
+  "CDLA-Permissive-2.0",
+  "BlueOak-1.0.0",
+]
+
+[private]
+ignore = true
+
+# First-party workspace crates are proprietary; allow them here and omit them from generated notices.
+[bibalak-core]
+accepted = ["AGPL-3.0-or-later"]
+
+[bibalak-db]
+accepted = ["AGPL-3.0-or-later"]
+
+[bibalak-scheduler]
+accepted = ["AGPL-3.0-or-later"]
+
+[bibalak-ankifmt]
+accepted = ["AGPL-3.0-or-later"]
+
+[bibalak-search]
+accepted = ["AGPL-3.0-or-later"]
+
+[bibalak-media]
+accepted = ["AGPL-3.0-or-later"]
+
+[bibalak-render]
+accepted = ["AGPL-3.0-or-later"]
+
+[bibalak-plugin]
+accepted = ["AGPL-3.0-or-later"]
+
+[bibalak-ai]
+accepted = ["AGPL-3.0-or-later"]
+
+[desktop]
+accepted = ["AGPL-3.0-or-later"]

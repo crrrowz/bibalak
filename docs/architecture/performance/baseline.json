@@ -1,0 +1,17 @@
+{
+  "db_mb": 70.7,
+  "notes": 100000,
+  "results_ms": {
+    "deck_list_with_counts_ms": 20.9,
+    "import_ms": 1931.3,
+    "next_card_top_deck_ms": 7.5,
+    "open_ms": 1.9,
+    "search_index_rebuild_ms": 919.9,
+    "search_tag_due_ms": 4.8,
+    "search_text_ms": 1.8,
+    "stats_all_365d_ms": 75.1,
+    "stats_deck_30d_ms": 64.3
+  },
+  "revlog_rows": 150543,
+  "runs": 5
+}

@@ -1,0 +1,10 @@
+{
+  "id": "bibalak-leech-helper",
+  "name": "Leech Helper",
+  "version": "1.0.0",
+  "entry": "index.js",
+  "description": "Lists leech notes and opens them in Browse with one click.",
+  "author": "Bibalak",
+  "apiVersion": "0.2.0",
+  "permissions": ["read:notes", "ui:command", "ui:panel"]
+}

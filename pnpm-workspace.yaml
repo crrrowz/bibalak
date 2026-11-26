@@ -1,0 +1,25 @@
+packages:
+  - "apps/*"
+  - "apps/desktop/test-e2e"
+  - "packages/*"
+allowBuilds:
+  edgedriver: false
+  esbuild: true
+  geckodriver: false
+overrides:
+  serialize-javascript@<7.0.3: ">=7.0.3"
+  # Security: lift transitive dev-tooling deps past published advisories
+  # (same major only). See `pnpm audit`.
+  brace-expansion@>=5.0.0 <5.0.7: ^5.0.7
+  browserslist@<4.28.7: ^4.28.7
+  basic-ftp@<6.2.1: ^6.2.1
+  source-map-js@<1.2.2: ^1.2.2
+  zod@>=4.0.0 <4.6.6: ^4.6.6
+auditConfig:
+  ignoreGhsas:
+    # extract-zip <=2.0.1 symlink path traversal; no patched release exists.
+    # Only reached via @wdio -> @puppeteer/browsers in the E2E harness, which
+    # unpacks browser-driver archives from their official CDNs; never shipped
+    # in the app. Drop once a fixed extract-zip (or @puppeteer/browsers) lands.
+    - GHSA-jmr9-qjv8-65gv
+    - GHSA-7pqw-9j4j-h8q3

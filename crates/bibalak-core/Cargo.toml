@@ -1,0 +1,19 @@
+[package]
+name = "bibalak-core"
+description = "Domain model, ports, events and application layer for Bibalak. No UI, no IO frameworks."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+testkit = []
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha1 = "0.10"
+thiserror.workspace = true
+ts-rs.workspace = true
+unicode-normalization = "0.1"

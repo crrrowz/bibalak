@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bibalak-core",
+    "crates/bibalak-db",
+    "crates/bibalak-scheduler",
+    "crates/bibalak-ankifmt",
+    "crates/bibalak-search",
+    "crates/bibalak-media",
+    "crates/bibalak-render",
+    "crates/bibalak-plugin",
+    "crates/bibalak-ai",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+authors = ["Bibalak contributors"]
+repository = "https://github.com/crrrowz/bibalak"
+rust-version = "1.89"
+
+# Shared dependency versions. Crates opt in with `<dep>.workspace = true`.
+# Heavy/feature-specific deps (rusqlite, zip, fsrs, …) are added to the
+# individual crate that owns that concern, in the milestone that introduces it.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+ts-rs = "10"
+
+# Internal crates
+bibalak-core = { path = "crates/bibalak-core" }
+bibalak-db = { path = "crates/bibalak-db" }
+bibalak-scheduler = { path = "crates/bibalak-scheduler" }
+bibalak-ankifmt = { path = "crates/bibalak-ankifmt" }
+bibalak-search = { path = "crates/bibalak-search" }
+bibalak-media = { path = "crates/bibalak-media" }
+bibalak-render = { path = "crates/bibalak-render" }
+bibalak-plugin = { path = "crates/bibalak-plugin" }
+bibalak-ai = { path = "crates/bibalak-ai" }
+
+[profile.dev]
+# Faster incremental rebuilds while keeping debuggability.
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
