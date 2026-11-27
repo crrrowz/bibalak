@@ -974,16 +974,19 @@ mod tests {
         let p = game_profile_id(NIL_USER_ID);
         let u = game_unlock_id(NIL_USER_ID, "unlock:reviews:1");
         let pet = game_pet_id(NIL_USER_ID, "owl", "classic");
-        let cred = game_pet_credit_id(NIL_USER_ID, &pet, "ledger-1");
+        let pet_credit = game_pet_credit_id(NIL_USER_ID, &pet, "ledger-1");
         let ach = game_achievement_id(NIL_USER_ID, "ach:first_review");
-        for id in [&p, &u, &pet, &cred, &ach] {
-            assert!(crate::productivity::is_valid_uuid(id), "bad uuid: {id}");
+        for id in [&p, &u, &pet, &pet_credit, &ach] {
+            assert!(
+                crate::productivity::is_valid_uuid(id),
+                "id is not a valid uuid"
+            );
             assert_eq!(&id[14..15], "5");
         }
         assert_ne!(p, u);
         assert_ne!(u, pet);
-        assert_ne!(pet, cred);
-        assert_ne!(cred, ach);
+        assert_ne!(pet, pet_credit);
+        assert_ne!(pet_credit, ach);
     }
 
     #[test]

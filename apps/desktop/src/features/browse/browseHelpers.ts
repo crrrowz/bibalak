@@ -1,6 +1,7 @@
 import { formatDate, t, tn } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales/en";
 import type { CardRow } from "@bibalak/ipc-types";
+import { decodeEntities, stripTags } from "@/lib/htmlText";
 
 export type SortKey = string;
 
@@ -27,20 +28,8 @@ export const FLAG_COLORS: Record<number, string> = {
 
 /** Strips HTML tags, cloze markers, and common HTML entities for table sorting/preview. */
 export function plain(html: string): string {
-  let text = html.replace(/<[^>]*>/g, "");
-  text = text.replace(/\{\{c\d+::(.*?)(?:::.*?)?\}\}/g, "$1");
-  text = text
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-  return text.trim();
+  const text = stripTags(html).replace(/\{\{c\d+::(.*?)(?:::.*?)?\}\}/g, "$1");
+  return decodeEntities(text).trim();
 }
 
 export function isEditingTarget(target: EventTarget | null): boolean {

@@ -1,4 +1,5 @@
 import type { NoteDetail, NoteOverview } from "@bibalak/ipc-types";
+import { htmlToText } from "@/lib/htmlText";
 
 const RAW_NOTES: Array<{
   id: number;
@@ -390,14 +391,7 @@ export const noteMocks = {
     return null;
   },
   check_duplicate: (args?: { notetypeId: number; firstField: string }) => {
-    const plain = (args?.firstField ?? "")
-      .replace(/<br\s*\/?>/gi, " ")
-      .replace(/<[^>]*>/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
+    const plain = htmlToText(args?.firstField ?? "", " ")
       .replace(/\s+/g, " ")
       .trim()
       .toLowerCase();

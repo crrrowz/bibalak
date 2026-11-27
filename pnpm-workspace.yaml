@@ -7,7 +7,7 @@ allowBuilds:
   esbuild: true
   geckodriver: false
 overrides:
-  serialize-javascript@<7.0.3: ">=7.0.3"
+  serialize-javascript@<7.1.3: ">=7.1.3"
   # Security: lift transitive dev-tooling deps past published advisories.
   # See `pnpm audit`.
   brace-expansion@>=5.0.0 <5.0.7: ^5.0.7
@@ -18,6 +18,7 @@ overrides:
   postcss-selector-parser@<6.1.5: ^6.1.5
   glob@>=9.0.0 <14.0.2: ^14.0.2
   minimatch@>=7.0.0 <11.0.1: ^11.0.1
+  esbuild@>=0.27.3 <0.28.1: ^0.28.1
 auditConfig:
   ignoreGhsas:
     # extract-zip <=2.0.1 symlink path traversal; no patched release exists.

@@ -10280,7 +10280,7 @@ the following restrictions:
 | `class-variance-authority` | `0.7.1` | `Apache-2.0` |
 | `clsx` | `2.1.1` | `MIT` |
 | `cmdk` | `1.1.1` | `MIT` |
-| `commander` | `8.3.0` | `MIT` |
+| `commander` | `15.1.0` | `MIT` |
 | `cookie-es` | `3.1.1` | `MIT` |
 | `csstype` | `3.2.3` | `MIT` |
 | `d3-array` | `3.2.4` | `ISC` |
@@ -10304,7 +10304,7 @@ the following restrictions:
 | `immer` | `10.2.0, 11.1.8` | `MIT` |
 | `internmap` | `2.0.3` | `ISC` |
 | `isbot` | `5.1.43` | `Unlicense` |
-| `katex` | `0.17.0` | `MIT` |
+| `katex` | `0.19.1` | `MIT` |
 | `linkifyjs` | `4.4.0` | `MIT` |
 | `lucide-react` | `1.20.0` | `ISC` |
 | `motion-dom` | `12.40.0` | `MIT` |
@@ -11050,7 +11050,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-##### MIT — `commander@8.3.0`
+##### MIT — `commander@15.1.0`
 
 ````text
 (The MIT License)
@@ -11343,7 +11343,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-##### MIT — `katex@0.17.0`
+##### MIT — `katex@0.19.1`
 
 ````text
 The MIT License (MIT)

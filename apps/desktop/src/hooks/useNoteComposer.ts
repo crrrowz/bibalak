@@ -3,12 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ipc } from "@/lib/ipc";
 import { t, tn } from "@/lib/i18n";
 import { queryKeys } from "@/lib/queryKeys";
+import { htmlToText } from "@/lib/htmlText";
 
 function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .trim();
+  return htmlToText(html);
 }
 
 export interface UseNoteComposerOptions {
