@@ -1,4 +1,5 @@
 import type { GeneratedCardDraft, GeneratedNoteKind, NotetypeSummary } from "@bibalak/ipc-types";
+import { deckSearchToken } from "@/features/browse/browseHelpers";
 
 export const MAX_GENERATE_CHARS = 50_000;
 export const MIN_GENERATE_COUNT = 5;
@@ -32,8 +33,8 @@ export function matchingNotetypesForKind(
 
 /** Build the Browse search query linking to newly added generated notes. */
 export function buildGeneratedBrowseQuery(deckName: string, tagged: boolean): string {
-  const escapedDeck = deckName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  return tagged ? `tag:ai-generated deck:"${escapedDeck}"` : `deck:"${escapedDeck}"`;
+  const deck = deckSearchToken(deckName);
+  return tagged ? `tag:ai-generated ${deck}` : deck;
 }
 
 export interface EditableDraft {

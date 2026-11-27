@@ -5,43 +5,30 @@ import { formatDate, t } from "@/lib/i18n";
 import { errorMessage, ipc } from "@/lib/ipc";
 import { platform } from "@/lib/platform";
 import { queryKeys } from "@/lib/queryKeys";
-import { updateManifestUrl } from "@/lib/releases";
+import { releasePageUrl, updateManifestUrl } from "@/lib/releases";
 import { Spinner } from "./SettingsSpinner";
+import { useUpdateCheck } from "./updateCheck";
 
 export function UpdateSection() {
-  const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [downloadPercent, setDownloadPercent] = useState<number | null>(null);
-  const [result, setResult] = useState<
-    | { kind: "up-to-date" }
-    | { kind: "available"; version: string; notes?: string }
-    | { kind: "error"; message: string }
-    | null
-  >(null);
+  const checking = useUpdateCheck((s) => s.checking);
+  const result = useUpdateCheck((s) => s.result);
+  const autoCheck = useUpdateCheck((s) => s.autoCheck);
+  const setAutoCheck = useUpdateCheck((s) => s.setAutoCheck);
+  const checkForUpdate = useUpdateCheck((s) => s.check);
+  const setResult = useUpdateCheck((s) => s.setResult);
 
   const appInfoQuery = useQuery({ queryKey: queryKeys.appInfo, queryFn: ipc.appInfo });
+  // A portable copy never installs updates itself (ADR-006): it links to the release page.
+  const portableQuery = useQuery({
+    queryKey: queryKeys.isPortable,
+    queryFn: () => platform.updater.isPortable(),
+    staleTime: Infinity,
+  });
+  const portable = portableQuery.data === true;
 
   const manifestUrl = updateManifestUrl();
-
-  async function checkForUpdate() {
-    if (!manifestUrl) return;
-    setChecking(true);
-    setResult(null);
-    try {
-      const update = await platform.updater.check();
-      if (update === "not-available") {
-        setResult({ kind: "error", message: t("settings.updates.notAvailable") });
-      } else if (update === null) {
-        setResult({ kind: "up-to-date" });
-      } else {
-        setResult({ kind: "available", version: update.version, notes: update.notes });
-      }
-    } catch (e) {
-      setResult({ kind: "error", message: errorMessage(e) });
-    } finally {
-      setChecking(false);
-    }
-  }
 
   async function installAndRestart() {
     setInstalling(true);
@@ -60,6 +47,14 @@ export function UpdateSection() {
     } finally {
       setInstalling(false);
       setDownloadPercent(null);
+    }
+  }
+
+  async function openReleasePage(version: string) {
+    try {
+      await platform.updater.openReleasePage(releasePageUrl(version));
+    } catch (e) {
+      setResult({ kind: "error", message: errorMessage(e) });
     }
   }
 
@@ -82,15 +77,26 @@ export function UpdateSection() {
         </p>
       </div>
       {manifestUrl ? (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={checking || installing}
-          onClick={checkForUpdate}
-        >
-          {checking && <Spinner />}
-          {checking ? t("settings.updates.checking") : t("settings.updates.check")}
-        </Button>
+        <>
+          <label className="flex items-center gap-2.5 text-sm">
+            <input
+              type="checkbox"
+              checked={autoCheck}
+              onChange={(e) => setAutoCheck(e.target.checked)}
+              className="size-4 rounded border border-input accent-primary"
+            />
+            <span>{t("settings.updates.autoCheck")}</span>
+          </label>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={checking || installing}
+            onClick={() => void checkForUpdate()}
+          >
+            {checking && <Spinner />}
+            {checking ? t("settings.updates.checking") : t("settings.updates.check")}
+          </Button>
+        </>
       ) : (
         <p className="text-sm text-muted-foreground">{t("settings.updates.noSite")}</p>
       )}
@@ -102,21 +108,36 @@ export function UpdateSection() {
       {result?.kind === "available" && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2 text-sm">
           <p className="font-medium">
-            {t("settings.updates.availableBefore")}{" "}
+            {portable
+              ? t("settings.updates.portableAvailableBefore")
+              : t("settings.updates.availableBefore")}{" "}
             <span className="font-mono">{result.version}</span>{" "}
-            {t("settings.updates.availableAfter")}
+            {portable
+              ? t("settings.updates.portableAvailableAfter")
+              : t("settings.updates.availableAfter")}
           </p>
-          {result.notes && <p className="text-xs text-muted-foreground">{result.notes}</p>}
+          {result.notes && (
+            <p className="text-xs text-muted-foreground whitespace-pre-line">{result.notes}</p>
+          )}
           <div className="flex items-center gap-3">
-            <Button size="sm" disabled={installing} onClick={installAndRestart}>
-              {installing && <Spinner />}
-              {installing
-                ? downloadPercent !== null
-                  ? t("settings.updates.downloading", { percent: downloadPercent })
-                  : t("settings.updates.installing")
-                : t("settings.updates.install")}
-            </Button>
+            {portable ? (
+              <Button size="sm" onClick={() => void openReleasePage(result.version)}>
+                {t("settings.updates.openReleasePage")}
+              </Button>
+            ) : (
+              <Button size="sm" disabled={installing} onClick={installAndRestart}>
+                {installing && <Spinner />}
+                {installing
+                  ? downloadPercent !== null
+                    ? t("settings.updates.downloading", { percent: downloadPercent })
+                    : t("settings.updates.installing")
+                  : t("settings.updates.install")}
+              </Button>
+            )}
           </div>
+          {portable && (
+            <p className="text-xs text-muted-foreground">{t("settings.updates.portableHint")}</p>
+          )}
         </div>
       )}
       {result?.kind === "error" && (

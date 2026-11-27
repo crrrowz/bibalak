@@ -16,6 +16,7 @@ import {
   requestPermission as tauriRequestNotificationPermission,
   sendNotification as tauriSendNotification,
 } from "@tauri-apps/plugin-notification";
+import { openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
 import { relaunch as tauriRelaunch } from "@tauri-apps/plugin-process";
 import { check as tauriCheckUpdate, type Update } from "@tauri-apps/plugin-updater";
 import type {
@@ -133,6 +134,22 @@ const updaterApi: UpdaterApi = {
       throw new Error("Relaunch is not available in this environment.");
     }
     await tauriRelaunch();
+  },
+
+  async isPortable() {
+    if (!desktopPlatform.isAvailable() || isPreviewRuntime()) return false;
+    return Boolean(await tauriInvoke<boolean>("is_portable", undefined));
+  },
+
+  async openReleasePage(url) {
+    if (new URL(url).protocol !== "https:") {
+      throw new Error("Only https release pages can be opened.");
+    }
+    if (desktopPlatform.isAvailable()) {
+      await tauriOpenUrl(url);
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
   },
 };
 

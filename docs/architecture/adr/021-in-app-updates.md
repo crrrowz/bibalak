@@ -46,3 +46,49 @@ The project's decisions establish that:
 - Switching on live updates at launch requires setting `DOWNLOAD_SITE` in GitHub repository variables, adding hosting secrets, and enabling the upload step in `.github/workflows/release.yml` — zero application code changes.
 - `tauriCsp.test.ts` enforces the tighter `connect-src` allowlist without GitHub domains.
 - `THIRD_PARTY_NOTICES.md` is regenerated (`node scripts/licenses/generate-notices.mjs --write`) to cover the two Tauri plugins and their transitive crates.
+
+## Update source: GitHub Releases until the website exists (2026-11-26, UPD1)
+
+changes item 2 above: updates no longer wait for a
+download website.
+
+- **Source rule (one place per layer):** `DOWNLOAD_SITE` set →
+  `<site>/download/latest.json` (unchanged). Unset →
+  `https://github.com/crrrowz/bibalak/releases/latest/download/latest.json`
+  (`latest` = newest published, non-draft, non-prerelease release). A build
+  without updater signing (forks, no `TAURI_SIGNING_PRIVATE_KEY`) → no
+  endpoint, and Settings → Updates says updates are not available in this
+  build. The repository URL is one constant,
+  `apps/desktop/src/lib/updateSource.json`, read by `lib/releases.ts`
+  (`VITE_UPDATER_SIGNED` tells the UI the build is signed) and by
+  `scripts/release/site-config.mjs` (`UPDATER_SIGNED`, overlay
+  `plugins.updater.endpoints`).
+- **Manifest:** tauri-action v1 (`uploadUpdaterJson`,
+  `updaterJsonPreferNsis: true`) uploads `latest.json` with
+  installer-specific keys (`windows-x86_64-nsis`, `windows-x86_64-msi`,
+  `linux-x86_64-appimage`, `linux-x86_64-deb`, `linux-x86_64-rpm`,
+  `darwin-<arch>-app`) plus the plain `<os>-<arch>` fallback.
+  `tauri-plugin-updater` 2.14 picks the key of the installer the copy was
+  installed with (bundle type patched into the binary), so an MSI install
+  updates with the MSI and an NSIS install with the setup.exe; `.deb` and
+  `.rpm` installs update through `dpkg` / `rpm` (the system asks for an
+  admin password). `finalize-checksums` then points every URL at
+  `<repo>/releases/download/<tag>/<asset>` (tauri-action writes rate-limited
+  API asset URLs) and fills `notes` from the release body.
+- **Portable copy** (`portable.txt`, ADR-006): never self-installs (the
+  installer would write a normal install and strand `./data/`). Settings shows
+  "A new version is out" and a button that opens the release page
+  (`platform.updater.isPortable()` → Rust `is_portable`,
+  `platform.updater.openReleasePage()`).
+- **Check on start:** at most once a day, only while the "check on start"
+  setting is on (default on, `localStorage` `keepsake-update-auto-check`;
+  last check in `keepsake-update-last-check`). A found update shows a toast
+  that opens Settings → Updates; a failed start-up check stays silent.
+  Nothing downloads or installs before the user clicks "Update and restart".
+- **Release rules that keep updates working:** the release must be
+  published (not a draft) and must never be marked as a pre-release when it
+  is meant for everyone; a pre-release is never `latest`. A signed build
+  that ends without `latest.json` fails the release job.
+- v1.0.0 has no endpoint: its users update to 1.1.0 by hand once.
+- When the website exists, setting `DOWNLOAD_SITE` moves the source there
+  again with no code change.

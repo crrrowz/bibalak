@@ -32,6 +32,14 @@ export interface UpdaterApi {
   check(): Promise<AvailableUpdate | null | "not-available">;
   downloadAndInstall(onProgress?: (progress: UpdateDownloadProgress) => void): Promise<void>;
   relaunch(): Promise<void>;
+  /**
+   * True for a portable copy (`portable.txt` next to the executable, ADR-006).
+   * A portable copy never installs updates itself: the installer would write a
+   * normal install and leave the portable data behind.
+   */
+  isPortable(): Promise<boolean>;
+  /** Open an https release/download page in the system browser. */
+  openReleasePage(url: string): Promise<void>;
 }
 
 export interface WindowControls {

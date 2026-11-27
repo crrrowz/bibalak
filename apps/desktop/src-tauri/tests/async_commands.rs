@@ -10,6 +10,8 @@ use std::path::Path;
 const SYNC_ALLOWLIST: &[&str] = &[
     "get_startup_error",
     "app_info",
+    // Reads the portable flag cached once per process by `data_dir` (no IO here).
+    "is_portable",
     "ai_split_text",
     "hide_quick_add",
     "get_quick_add_config",

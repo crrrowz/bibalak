@@ -152,11 +152,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: cargo test -p bibalak-core # regenerate ts-rs bindings
 
-      - name: Generate updater site overlay
-        env:
-          DOWNLOAD_SITE: ${{ vars.DOWNLOAD_SITE }}
-        run: node scripts/release/site-config.mjs
-
       - name: Select Tauri bundle flags (optional signing)
         id: tauri-opts
         shell: bash
@@ -172,11 +167,20 @@ jobs:
           echo "args=$ARGS" >> "$GITHUB_OUTPUT"
           echo "include_updater=$INCLUDE_UPDATER" >> "$GITHUB_OUTPUT"
 
+      # Update source (ADR-021): DOWNLOAD_SITE when set, else GitHub Releases
+      # of the public repository; no endpoint at all in a build without signing.
+      - name: Generate updater site overlay
+        env:
+          DOWNLOAD_SITE: ${{ vars.DOWNLOAD_SITE }}
+          UPDATER_SIGNED: ${{ steps.tauri-opts.outputs.include_updater }}
+        run: node scripts/release/site-config.mjs
+
       - name: Build Tauri bundle
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_DOWNLOAD_SITE: ${{ vars.DOWNLOAD_SITE }}
+          VITE_UPDATER_SIGNED: ${{ steps.tauri-opts.outputs.include_updater }}
           # Updater signing is enabled only when TAURI_SIGNING_PRIVATE_KEY is configured,
           # so public forks can build releases cleanly without maintainer secrets.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -188,7 +192,12 @@ jobs:
           releaseName: "Bibalak ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
-          includeUpdaterJson: ${{ steps.tauri-opts.outputs.include_updater == 'true' }}
+          # tauri-action v1 inputs (action.yml at the pinned SHA). latest.json gets
+          # installer-specific keys (windows-x86_64-msi / -nsis, linux-x86_64-appimage /
+          # -deb / -rpm, darwin-*-app), so each install updates with its own installer;
+          # the plain windows-x86_64 fallback uses the NSIS setup.exe.
+          uploadUpdaterJson: ${{ steps.tauri-opts.outputs.include_updater == 'true' }}
+          updaterJsonPreferNsis: true
 
       # Portable copy: the same exe with a portable.txt marker, data kept in a
       # "data" folder beside it (docs/guides/install.md). Added to the draft release.
@@ -212,6 +221,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
       - name: Drop unsigned updater artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -228,6 +241,34 @@ jobs:
               esac
             done
           fi
+      # The app reads <repo>/releases/latest/download/latest.json (ADR-021).
+      # tauri-action writes API asset URLs there (rate limited for anonymous
+      # clients); point them at the plain release download URLs and add the
+      # CHANGELOG notes shown in Settings → Updates.
+      - name: Point latest.json at the release downloads
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ "$HAS_UPDATER_KEY" != "true" ]; then exit 0; fi
+          if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx latest.json; then
+            echo "::error::Signed build but no latest.json on release $TAG; in-app updates would break."
+            exit 1
+          fi
+          mkdir -p updater-json
+          gh release download "$TAG" --pattern latest.json --dir updater-json --clobber
+          gh release view "$TAG" --json assets > updater-json/assets.json
+          gh release view "$TAG" --json body --jq .body > updater-json/body.md
+          node scripts/release/rewrite-manifest.mjs \
+            --github-tag "$TAG" \
+            --repository "${{ github.server_url }}/${{ github.repository }}" \
+            --assets updater-json/assets.json \
+            --release-body updater-json/body.md \
+            --in updater-json/latest.json \
+            --out updater-json/latest.json
+          gh release upload "$TAG" updater-json/latest.json --clobber
       - name: Download release assets and compute SHA256SUMS
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

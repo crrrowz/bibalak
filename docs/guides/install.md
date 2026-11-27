@@ -197,7 +197,8 @@ Mac is not needed for the macOS build.
 
 - **Setup (`-setup.exe`):** double-click, follow the steps. Installs for the
   current user, adds a Start-menu entry and an uninstaller. If WebView2 is
-  missing, the installer fetches it.
+  missing, the installer fetches it. This is the normal choice for Windows; the
+  `.msi` file shows the generic Windows Installer icon in Explorer by design.
 - **MSI:** `msiexec /i Bibalak_<ver>_x64_en-US.msi` (add `/qn` for a silent
   install).
 - **Portable:** extract the ZIP anywhere you can write (Desktop, USB stick —
@@ -255,12 +256,25 @@ Uninstalling does not delete this folder.
 
 ## Updates
 
-Download the new version from the
-[Releases](https://github.com/crrrowz/bibalak/releases/latest) page and install it over the
-old one (setup or MSI) — your data is kept. For a portable copy, replace
-`Bibalak.exe` and keep the `data` folder. The in-app **Settings → Updates**
-check stays off until automatic updates are switched on; it says so instead of
-failing.
+From version 1.1.0 Bibalak updates itself from the
+[Releases](https://github.com/crrrowz/bibalak/releases/latest) page. It checks
+when it starts (at most once a day; turn this off in **Settings → Updates**)
+and you can check by hand there. Nothing is downloaded until you click
+**Update and restart**. Each update is checked against Bibalak's signing key
+before it is installed. Your data is always kept.
+
+| Installed with              | How it updates                                                                                                                                       |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows `-setup.exe` (NSIS) | Downloads the new `-setup.exe`, installs it and restarts.                                                                                            |
+| Windows `.msi`              | Downloads the new `.msi`, installs it and restarts (stays an MSI install).                                                                           |
+| Windows portable ZIP        | Never updates itself. Settings shows the new version and opens the release page: download the new ZIP and replace the files, keep the `data` folder. |
+| macOS `.dmg`                | Downloads the new app, replaces `Bibalak.app` and restarts.                                                                                          |
+| Linux `.AppImage`           | Replaces the AppImage file and restarts.                                                                                                             |
+| Linux `.deb` / `.rpm`       | Downloads the new package and installs it with `dpkg` / `rpm`; the system asks for your password.                                                    |
+
+Version 1.0.0 cannot update itself: install 1.1.0 by hand once, over the old
+one. Builds made without the signing key (for example from a fork) cannot
+update themselves either; **Settings → Updates** says so.
 
 ## Troubleshooting
 

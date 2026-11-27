@@ -147,15 +147,26 @@ fn parse_token(token: &str, today: i32, now_ms: i64) -> Option<Cond> {
         return None;
     }
 
-    // deck:name or deck:name*
+    // deck:name — Anki rule (SUB1 F4): the deck and all its subdecks, ASCII
+    // case-insensitive, `*`/`_` wildcards (`\*`/`\_` literal), and also cards
+    // whose home deck (original_deck_id) matches while they sit in a filtered deck.
     if let Some(rest) = token.strip_prefix("deck:") {
-        let name = dequote(rest);
-        if name.ends_with('*') {
-            let prefix = name.trim_end_matches('*');
-            let pattern = format!("{prefix}%");
-            return Some(Cond::pos("d.name LIKE ?", vec![Param::Text(pattern)]));
+        let name = strip_outer_quotes(rest);
+        if name.is_empty() {
+            return None;
         }
-        return Some(Cond::pos("d.name = ?", vec![Param::Text(name)]));
+        let pattern = anki_text_to_like_pattern(name, false);
+        let children = format!("{pattern}::%");
+        let decks = "SELECT id FROM decks WHERE name LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\'";
+        return Some(Cond::pos(
+            format!("(c.deck_id IN ({decks}) OR c.original_deck_id IN ({decks}))"),
+            vec![
+                Param::Text(pattern.clone()),
+                Param::Text(children.clone()),
+                Param::Text(pattern),
+                Param::Text(children),
+            ],
+        ));
     }
 
     // tag:name (supports Anki hierarchical tags: `tag:lang` matches `lang` and `lang::*`)

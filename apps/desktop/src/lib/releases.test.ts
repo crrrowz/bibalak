@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { DOWNLOAD_SITE, parseDownloadSite, releasePageUrl, updateManifestUrl } from "./releases";
+import updateSource from "./updateSource.json";
+import {
+  DOWNLOAD_SITE,
+  GITHUB_LATEST_JSON,
+  GITHUB_REPOSITORY_URL,
+  UPDATER_SIGNED,
+  parseDownloadSite,
+  releasePageUrl,
+  updateManifestUrl,
+} from "./releases";
 
 describe("releases", () => {
-  it("has no update URL until the download site exists", () => {
+  it("has no update URL in an unsigned build (tests, dev, forks without the key)", () => {
     expect(DOWNLOAD_SITE).toBeNull();
+    expect(UPDATER_SIGNED).toBe(false);
     expect(updateManifestUrl()).toBeNull();
-    expect(releasePageUrl("1.0.1")).toBeNull();
+  });
+
+  it("builds the GitHub source from the one shared repository constant", () => {
+    expect(GITHUB_REPOSITORY_URL).toBe(updateSource.repository);
+    expect(GITHUB_REPOSITORY_URL).toBe("https://github.com/crrrowz/bibalak");
+    expect(GITHUB_LATEST_JSON).toBe(
+      "https://github.com/crrrowz/bibalak/releases/latest/download/latest.json",
+    );
   });
 
   it("parses valid https origins and rejects empty, non-https, or path-bearing URLs", () => {
@@ -22,13 +39,26 @@ describe("releases", () => {
     expect(parseDownloadSite("  https://example.test/  ")).toBe("https://example.test");
   });
 
-  it("builds URLs on the download site", () => {
+  it("picks the update source: site when set, GitHub Releases when unset, none unsigned", () => {
     const site = "https://example.test";
-    expect(updateManifestUrl(site)).toBe("https://example.test/download/latest.json");
-    expect(releasePageUrl("1.0.1", site)).toBe("https://example.test/download?version=1.0.1");
+    expect(updateManifestUrl(site, true)).toBe("https://example.test/download/latest.json");
+    expect(updateManifestUrl(null, true)).toBe(GITHUB_LATEST_JSON);
+    expect(updateManifestUrl(null, false)).toBeNull();
+    expect(updateManifestUrl(site, false)).toBeNull();
   });
 
-  it("never points at the private GitHub repository", () => {
-    expect(String(updateManifestUrl("https://example.test"))).not.toContain("github.com");
+  it("links to the release page on the site or on GitHub Releases", () => {
+    expect(releasePageUrl("1.0.1", "https://example.test")).toBe(
+      "https://example.test/download?version=1.0.1",
+    );
+    expect(releasePageUrl("1.1.0", null)).toBe(
+      "https://github.com/crrrowz/bibalak/releases/tag/v1.1.0",
+    );
+  });
+
+  it("points only at the public GitHub repository", () => {
+    const publicRepo = "https://github.com/crrrowz/bibalak/";
+    expect(String(updateManifestUrl(null, true)).startsWith(publicRepo)).toBe(true);
+    expect(releasePageUrl("1.1.0", null).startsWith(publicRepo)).toBe(true);
   });
 });

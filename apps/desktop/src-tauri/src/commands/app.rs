@@ -93,6 +93,14 @@ pub fn app_info(app: AppHandle) -> AppInfo {
     }
 }
 
+/// True for a portable copy (`portable.txt` next to the executable, ADR-006).
+/// The UI then never self-installs updates and links to the release page
+/// instead: the installer would write a normal install and strand `./data/`.
+#[tauri::command]
+pub fn is_portable() -> bool {
+    crate::data_dir::portable_data_dir().is_some()
+}
+
 /// Show a native open-file or open-folder dialog and register the picked path
 /// in [`PickedPathsState`] so subsequent import/media/plugin commands accept it.
 #[tauri::command]

@@ -78,17 +78,19 @@ pub fn create_filtered_deck(
     };
     let cfg_json = serde_json::to_string(&cfg).map_err(err)?;
     let id = now_ms;
+    // `Parent::Cram` sits under Parent (created if missing), like a normal deck.
+    let parent_id = crate::storage::ensure_deck_parents(conn, name, now_ms)?;
     conn.execute(
         r#"INSERT INTO decks (id, name, parent_id, config_id, "mod", usn, is_filtered, common, filtered)
-           VALUES (?1, ?2, NULL, 1, ?3, -1, 1, '{}', ?4)"#,
-        params![id, name, now_ms, cfg_json],
+           VALUES (?1, ?2, ?3, 1, ?4, -1, 1, '{}', ?5)"#,
+        params![id, name, parent_id, now_ms, cfg_json],
     )
     .map_err(err)?;
     gather_cards(conn, id, search_query, limit, today, now_ms)?;
     Ok(Deck {
         id,
         name: name.to_string(),
-        parent_id: None,
+        parent_id,
         config_id: 1,
         mod_ms: now_ms,
         usn: -1,

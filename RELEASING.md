@@ -35,7 +35,7 @@ Only the project owner pushes release tags and publishes GitHub Releases:
    git push origin v<version>
    ```
 2. GitHub Actions (`.github/workflows/release.yml`) runs automatically on `v*` tags:
-   - **Windows (`x86_64`):** NSIS installer (`-setup.exe`), MSI (`.msi`), and portable ZIP (`_x64_portable.zip`).
+   - **Windows (`x86_64`):** NSIS installer (`-setup.exe`), MSI (`.msi`), and portable ZIP (`_x64_portable.zip`). `Bibalak_<version>_x64-setup.exe` is the normal choice on Windows; `.msi` files show the generic Windows Installer icon in Explorer by design.
    - **macOS (`aarch64` & `x86_64`):** `.dmg` disk images.
    - **Linux (`x86_64`):** `.AppImage`, `.deb` and `.rpm`.
    - **Checksums:** Generates `SHA256SUMS` covering all release artifacts.
@@ -43,6 +43,20 @@ Only the project owner pushes release tags and publishes GitHub Releases:
    - **Publish:** Once every platform has uploaded its files and `SHA256SUMS` is attached, the `publish` job takes the release out of draft. A tag with a suffix (`v1.2.0-1`) becomes a pre-release; a plain tag becomes the **Latest** release.
 3. Optional signing secrets (`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) are only used when present in repository secrets; forks and unsigned builds skip updater signing cleanly without failing.
 4. To review a release by hand before it goes out, set the repository variable `RELEASE_KEEP_DRAFT` to `true`; the release then stays a draft until you click **Publish release**.
+
+## Keeping in-app updates working
+
+Installed copies of Bibalak (1.1.0 and later) check
+`https://github.com/crrrowz/bibalak/releases/latest/download/latest.json`.
+`latest` is the newest **published, non-draft, non-prerelease** release, so:
+
+1. The release must be signed: both signing secrets must be set, or the build has no `latest.json` and no `.sig` files. A signed build that ends without `latest.json` fails the workflow on purpose.
+2. **Publish the draft.** Until it is published, no copy sees the update. With `RELEASE_KEEP_DRAFT=true`, click **Publish release** yourself and keep **Set as the latest release** ticked.
+3. **Never mark a release for everyone as a pre-release**, and never mark a pre-release (`v1.2.0-1`) as latest: users would be offered it.
+4. Do not delete or rename `latest.json` or the installer files of the latest release. Each entry points at `https://github.com/crrrowz/bibalak/releases/download/<tag>/<file>`.
+5. Check after publishing: open the `latest.json` link above in a browser; it must show the new version and the per-installer keys (`windows-x86_64-nsis`, `windows-x86_64-msi`, `linux-x86_64-appimage`, `linux-x86_64-deb`, `linux-x86_64-rpm`, `darwin-aarch64-app`, `darwin-x86_64-app`).
+
+Forks build without the maintainer secrets: their builds have no update source and say so in **Settings → Updates**.
 
 ## Code signing
 

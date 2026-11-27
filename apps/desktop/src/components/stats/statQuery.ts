@@ -5,14 +5,13 @@
  * the Rust stats aggregates in `crates/bibalak-db/src/stats.rs`.
  */
 
+import { deckSearchToken } from "@/features/browse/browseHelpers";
+
 const STABILITY_EDGES = [1, 7, 21, 90, 180, 365];
 
-function escapeQuotes(str: string): string {
-  return str.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
+/** `deck:"Name"` matches the deck and its subdecks, never a sibling `Name …` (SUB1 F5). */
 function withDeck(query: string, deckName: string | null): string {
-  return deckName ? `deck:"${escapeQuotes(deckName)}*" ${query}` : query;
+  return deckName ? `${deckSearchToken(deckName)} ${query}` : query;
 }
 
 export type MaturityBucket = "new" | "learning" | "young" | "mature" | "suspended";

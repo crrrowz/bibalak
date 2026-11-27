@@ -403,6 +403,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::app::get_startup_error,
             commands::app::app_info,
+            commands::app::is_portable,
             commands::app::pick_open_path,
             commands::app::pick_save_path,
             commands::deck::list_decks,

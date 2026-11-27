@@ -156,30 +156,42 @@ pub(crate) fn import(
         })
         .flatten()
         .collect();
-    let needed_deck_names: std::collections::HashSet<&str> = model
+    // Deck names are normalised per `::` segment (SUB1 F6), so `A:: B` in a
+    // package lands in `A::B`; a name with no segment left goes to Default.
+    let norm = |name: &str| {
+        bibalak_core::normalise_deck_name(name).unwrap_or_else(|_| "Default".to_string())
+    };
+    let model_deck_names: HashMap<i64, String> =
+        model.decks.iter().map(|d| (d.id, norm(&d.name))).collect();
+    let needed_deck_names: HashSet<&str> = model
         .decks
         .iter()
         .filter(|d| direct_deck_ids.contains(&d.id))
-        .map(|d| d.name.as_str())
+        .map(|d| model_deck_names[&d.id].as_str())
         .collect();
     let decks_to_import: Vec<&bibalak_core::model::Deck> = model
         .decks
         .iter()
         .filter(|d| {
+            let own = &model_deck_names[&d.id];
             direct_deck_ids.contains(&d.id)
                 || needed_deck_names
                     .iter()
-                    .any(|&name| name.starts_with(&format!("{}::", d.name)))
+                    .any(|&name| name.starts_with(&format!("{own}::")))
         })
         .collect();
 
-    let model_decks_by_name: HashMap<&str, &bibalak_core::model::Deck> =
-        model.decks.iter().map(|d| (d.name.as_str(), d)).collect();
+    let model_decks_by_name: HashMap<&str, &bibalak_core::model::Deck> = model
+        .decks
+        .iter()
+        .map(|d| (model_deck_names[&d.id].as_str(), d))
+        .collect();
 
     let mut all_required_deck_names: HashSet<String> = HashSet::new();
     for d in &decks_to_import {
-        all_required_deck_names.insert(d.name.clone());
-        let mut curr = d.name.as_str();
+        let name = &model_deck_names[&d.id];
+        all_required_deck_names.insert(name.clone());
+        let mut curr = name.as_str();
         while let Some((parent, _)) = curr.rsplit_once("::") {
             all_required_deck_names.insert(parent.to_string());
             curr = parent;
@@ -253,8 +265,11 @@ pub(crate) fn import(
             }
         };
 
-        if let Some(model_deck) = model_decks_by_name.get(name.as_str()) {
-            deck_map.insert(model_deck.id, target);
+        // Every package deck whose normalised name is this one maps here.
+        for (model_id, model_name) in &model_deck_names {
+            if model_name == name {
+                deck_map.insert(*model_id, target);
+            }
         }
     }
 
@@ -690,6 +705,23 @@ mod tests {
                 review_kind: 0,
             }],
         }
+    }
+
+    #[test]
+    fn import_normalises_deck_names_and_creates_missing_parents() {
+        // SUB1 F6: `Spanish:: Verbs ` lands in `Spanish::Verbs`; the package
+        // has no `Spanish` deck row, so the parent is created and linked.
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut model = sample_model();
+        model.decks = vec![deck(1, "Default"), deck(3, "Spanish:: Verbs ")];
+        storage.import(&model, 1_000).unwrap();
+        let verbs = storage
+            .deck_by_name("Spanish::Verbs")
+            .unwrap()
+            .expect("normalised name");
+        let spanish = storage.deck_by_name("Spanish").unwrap().unwrap();
+        assert_eq!(verbs.parent_id, Some(spanish.id));
+        assert!(storage.deck_by_name("Spanish:: Verbs ").unwrap().is_none());
     }
 
     #[test]

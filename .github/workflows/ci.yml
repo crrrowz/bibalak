@@ -259,5 +259,7 @@ jobs:
         run: cargo install cargo-about --locked --version 0.9.3 --features cli
       - name: Licence script tests
         run: node --test scripts/licenses/generate-notices.test.mjs
+      - name: Release script tests (update source, latest.json)
+        run: node --test scripts/release/release-scripts.test.mjs scripts/release/bump-version.test.mjs
       - name: Check THIRD_PARTY_NOTICES.md and licence allowlist
         run: node scripts/licenses/generate-notices.mjs --check

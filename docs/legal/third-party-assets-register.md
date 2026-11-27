@@ -27,15 +27,16 @@ only) · `Own` (our own work) · `Avoid` (must never be used).
 
 ## Fonts and icons
 
-| Item                 | Source / licence                            | Where used            | Action                                                        |
-| -------------------- | ------------------------------------------- | --------------------- | ------------------------------------------------------------- |
-| Figtree (variable)   | `@fontsource-variable/figtree`, OFL-1.1     | UI and card base font | Keep — notice                                                 |
-| IBM Plex Sans Arabic | `@fontsource/ibm-plex-sans-arabic`, OFL-1.1 | Arabic UI             | Keep — notice                                                 |
-| Literata (variable)  | `@fontsource-variable/literata`, OFL-1.1    | Scholar headings      | Keep — notice                                                 |
-| Amiri                | `@fontsource/amiri`, OFL-1.1                | Scholar headings      | Keep — notice                                                 |
-| Handjet (variable)   | `@fontsource-variable/handjet`, OFL-1.1     | Game headings & level | Keep — notice                                                 |
-| Lucide icons         | `lucide-react`, ISC                         | all UI icons          | Keep — notice; progress and Game styles use our own SVG icons |
-| Bibalak logo         | own (`public/logos/bibalak-icon.svg`)       | app icon              | Own — see [`TRADEMARKS.md`](../../TRADEMARKS.md)              |
+| Item                     | Source / licence                                                                | Where used                                                | Action                                                        |
+| ------------------------ | ------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------- |
+| Figtree (variable)       | `@fontsource-variable/figtree`, OFL-1.1                                         | UI and card base font                                     | Keep — notice                                                 |
+| IBM Plex Sans Arabic     | `@fontsource/ibm-plex-sans-arabic`, OFL-1.1                                     | Arabic UI                                                 | Keep — notice                                                 |
+| Literata (variable)      | `@fontsource-variable/literata`, OFL-1.1                                        | Scholar headings                                          | Keep — notice                                                 |
+| Amiri                    | `@fontsource/amiri`, OFL-1.1                                                    | Scholar headings                                          | Keep — notice                                                 |
+| Handjet (variable)       | `@fontsource-variable/handjet`, OFL-1.1                                         | Game headings & level                                     | Keep — notice                                                 |
+| Lucide icons             | `lucide-react`, ISC                                                             | all UI icons                                              | Keep — notice; progress and Game styles use our own SVG icons |
+| Bibalak logo             | own (`public/logos/bibalak-icon.svg`)                                           | app icon                                                  | Own — see [`TRADEMARKS.md`](../../TRADEMARKS.md)              |
+| Windows installer images | own (generated from `icons/icon.png` by `scripts/release/installer-images.mjs`) | NSIS and WiX installer BMPs (`src-tauri/installer/*.bmp`) | Own — derived from our own logo                               |
 
 ## Game-style art, sounds and UI kits
 

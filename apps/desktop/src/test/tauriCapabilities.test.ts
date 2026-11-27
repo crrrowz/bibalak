@@ -50,6 +50,12 @@ describe("tauri per-window command capabilities (H1)", () => {
     expect(declared.length).toBe(registered.length);
   });
 
+  it("exposes is_portable to the main window only, for the portable update branch (UPD1)", () => {
+    expect(registeredCommands()).toContain("is_portable");
+    expect(defaultCap.permissions).toContain("allow-is-portable");
+    expect(quickAddCap.permissions).not.toContain("allow-is-portable");
+  });
+
   it("grants all app commands to the main window and removes raw dialog plugin access", () => {
     expect(defaultCap.windows).toEqual(["main"]);
     expect(defaultCap.permissions).not.toContain("dialog:default");

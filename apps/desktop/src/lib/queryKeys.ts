@@ -6,6 +6,7 @@ import type { ExportScope, MediaLibraryFilter, TextImportOptions } from "@bibala
  */
 export const queryKeys = {
   appInfo: ["app-info"] as const,
+  isPortable: ["is-portable"] as const,
   decks: ["decks"] as const,
   deck: (deckId: string) => ["decks", deckId] as const,
   queue: (deckId: string) => ["queue", deckId] as const,

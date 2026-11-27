@@ -282,9 +282,17 @@ fn integrity_check_on_large_collection_passes_and_repairs_orphan_subdecks() {
     let nt_id = storage.add_stock_notetype(0, T0).unwrap();
     let deck = storage.create_deck("LargeDeck", T0).unwrap();
 
-    // Create an orphan subdeck whose ancestors do not exist yet.
-    let orphan = storage.create_deck("OrphanRoot::Branch::Leaf", T0).unwrap();
-    assert_eq!(orphan.parent_id, None);
+    // Create an orphan subdeck whose ancestors do not exist yet. `create_deck`
+    // now makes missing parents (SUB1), so write the broken row directly, as
+    // an old collection or a buggy sync could have left it.
+    rusqlite::Connection::open(&db_path)
+        .unwrap()
+        .execute(
+            r#"INSERT INTO decks (name, parent_id, config_id, "mod", usn)
+               VALUES ('OrphanRoot::Branch::Leaf', NULL, 1, ?1, -1)"#,
+            [T0],
+        )
+        .unwrap();
 
     // Seed 2,200 notes/cards in one batch.
     let batch: Vec<BatchNoteInput> = (0..2_200)

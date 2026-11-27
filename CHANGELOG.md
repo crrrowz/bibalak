@@ -9,6 +9,47 @@ up to 0.1.0-beta.3 are Synapse's history.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-27
+
+### Added
+
+- **Export one deck:** every deck menu has **Export deck…**. Choose whether to
+  include subdecks, media files and review history, see the size before you
+  start, follow a progress bar and cancel at any time. Collection export moved
+  to Settings → Data and the command palette. Exports are written to a
+  temporary file first, so a cancelled or failed export never leaves a broken
+  `.apkg` behind, and large collections export several times faster.
+- **Import progress:** importing a package shows its stages (reading, media,
+  merging) and can be cancelled before anything is written. Importing a deck
+  you already have says so instead of finishing silently.
+- **Updates inside the app:** Bibalak checks GitHub Releases once a day when it
+  starts (you can turn this off in Settings → Updates), shows the new version
+  and its notes, and installs only when you click **Update and restart**.
+  Portable copies show a link to the new version instead. Users of 1.0.0
+  install this version by hand once.
+
+### Changed
+
+- **Subdecks work like Anki:** creating `A::B::C` also creates missing
+  parents; renaming a deck moves all its subdecks with it (and `X::Y` moves it
+  under `X`), with one undo step; names such as `A:: B` or `A::` are tidied;
+  deck lists show subdecks right under their parent.
+- **Search:** `deck:Name` now finds cards in the deck and all its subdecks,
+  ignores upper and lower case, and includes cards that are in a filtered deck
+  right now. Clicking a deck in Browse and the statistics drill-down use the
+  same rule.
+- **Windows installer:** `-setup.exe` carries the Bibalak icon, branded setup
+  pages and an English / Arabic language choice; the `.msi` uses the same
+  pages.
+
+### Fixed
+
+- Resetting the progress of a deck, or **Forget** in Browse, now also resets
+  cards that sit in a filtered deck, and returns them to their home deck first.
+- Deleting a deck that had been renamed now deletes its subdecks too.
+- Statistics for a deck no longer count a different deck whose name starts
+  with the same word.
+
 ## [1.0.0] - 2026-11-26
 
 The first release of Bibalak.
@@ -118,5 +159,6 @@ Synapse release, kept as history. Source:
 - Bidirectional .apkg/.colpkg import/export (Anki schema v11/v18)
 - Statistics dashboards
 
-[unreleased]: https://github.com/crrrowz/bibalak/compare/v1.0.0...HEAD
+[unreleased]: https://github.com/crrrowz/bibalak/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/crrrowz/bibalak/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/crrrowz/bibalak/releases/tag/v1.0.0

@@ -1,11 +1,30 @@
+use crate::deck_name::{deck_ancestors, is_same_or_below, normalise_deck_name, sort_decks_as_tree};
 use crate::error::{CoreError, CoreResult};
 use crate::events::{DomainEvent, EventSink};
 use crate::ipc::{DeckConfig, DeckSummary, FilteredDeckConfig};
 use crate::model::Deck;
+use crate::ports::Storage;
 use crate::undo::UndoAction;
 use crate::Collection;
 
 use super::study::StudySubtreePlan;
+
+/// Undo helper: remove decks a create/rename made as missing parents, deepest
+/// first, but only while they are still empty (no subdeck, no card) so an
+/// undo never deletes anything added since.
+fn remove_empty_decks(s: &dyn Storage, ids: &[i64], now_ms: i64) -> CoreResult<()> {
+    for &id in ids.iter().rev() {
+        if s.deck_by_id(id)?.is_none() {
+            continue;
+        }
+        let has_child = s.list_decks()?.iter().any(|d| d.parent_id == Some(id));
+        if has_child || !s.deck_card_ids(&[id])?.is_empty() {
+            continue;
+        }
+        s.remove_deck(id, now_ms)?;
+    }
+    Ok(())
+}
 
 impl Collection {
     /// Decks with per-type card counts `(new, learning, review)`, capped by
@@ -14,7 +33,7 @@ impl Collection {
     /// report only their own counts in isolation.
     #[allow(clippy::type_complexity)]
     pub fn list_decks_with_counts(&self) -> CoreResult<Vec<(Deck, (u32, u32, u32))>> {
-        let decks = self.storage.list_decks()?;
+        let decks = self.list_decks()?;
         let raw_counts =
             self.storage
                 .deck_due_counts(self.today(), self.now_ms(), self.today_end_ms())?;
@@ -206,12 +225,11 @@ impl Collection {
         order: u8,
         limit: u32,
     ) -> CoreResult<DeckSummary> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(CoreError::Invalid("deck name is empty".into()));
-        }
+        let name = normalise_deck_name(name)?;
+        self.ensure_name_free(&name, None)?;
+        let missing = self.missing_ancestors(&name)?;
         let deck = self.storage.create_filtered_deck(
-            name,
+            &name,
             search,
             order,
             limit,
@@ -219,7 +237,9 @@ impl Collection {
             self.clock.now_ms(),
         )?;
         let id = deck.id;
-        self.events.emit(DomainEvent::DeckChanged { deck_id: id });
+        for deck_id in self.ids_by_name(&missing)?.into_iter().chain([id]) {
+            self.events.emit(DomainEvent::DeckChanged { deck_id });
+        }
         Ok(DeckSummary::from(deck))
     }
 
@@ -241,51 +261,106 @@ impl Collection {
         self.storage.get_filtered_config(deck_id)
     }
 
+    /// All decks in tree order (each subdeck right after its parent, SUB1 F7).
     pub fn list_decks(&self) -> CoreResult<Vec<Deck>> {
-        self.storage.list_decks()
+        let mut decks = self.storage.list_decks()?;
+        sort_decks_as_tree(&mut decks, |d| d.name.as_str());
+        Ok(decks)
     }
 
+    /// Create a deck. The name is normalised per `::` segment and any missing
+    /// parent deck is created too (Anki rule, SUB1); undo removes the deck and
+    /// the parents this call made.
     pub fn create_deck(&self, name: &str) -> CoreResult<Deck> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(CoreError::Invalid("deck name is empty".into()));
-        }
-        if self.storage.deck_by_name(name)?.is_some() {
-            return Err(CoreError::Invalid(format!(
-                "a deck named \"{name}\" already exists"
-            )));
-        }
-        let deck = self.storage.create_deck(name, self.clock.now_ms())?;
+        let name = normalise_deck_name(name)?;
+        self.ensure_name_free(&name, None)?;
+        let missing = self.missing_ancestors(&name)?;
+        let deck = self.storage.create_deck(&name, self.clock.now_ms())?;
         let id = deck.id;
-        self.record_undo(
-            UndoAction::CreateDeck {
-                name: name.to_string(),
-            },
-            move |s, now| s.remove_deck(id, now).map(|_| ()),
-        );
-        self.events.emit(DomainEvent::DeckChanged { deck_id: id });
+        let made = self.ids_by_name(&missing)?;
+        let undo_made = made.clone();
+        self.record_undo(UndoAction::CreateDeck { name }, move |s, now| {
+            if s.deck_by_id(id)?.is_some() {
+                s.remove_deck(id, now)?;
+            }
+            remove_empty_decks(s, &undo_made, now)
+        });
+        for deck_id in made.into_iter().chain([id]) {
+            self.events.emit(DomainEvent::DeckChanged { deck_id });
+        }
         Ok(deck)
     }
 
+    /// Rename a deck and move its whole subtree with it: every subdeck gets
+    /// the new prefix, and a `X::Y` name moves the deck under `X` (created if
+    /// missing). Undo restores all names and parents in one step.
     pub fn rename_deck(&self, id: i64, name: &str) -> CoreResult<()> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(CoreError::Invalid("deck name is empty".into()));
-        }
+        let name = normalise_deck_name(name)?;
         let old = self
             .storage
             .deck_by_id(id)?
             .ok_or_else(|| CoreError::NotFound(format!("deck {id}")))?;
-        self.storage.rename_deck(id, name, self.clock.now_ms())?;
+        if name == old.name {
+            return Ok(());
+        }
+        if is_same_or_below(&name, &old.name) {
+            return Err(CoreError::Invalid(
+                "a deck cannot be moved into its own subdeck".into(),
+            ));
+        }
+        self.ensure_name_free(&name, Some(id))?;
+        let missing = self.missing_ancestors(&name)?;
+        let subtree = self.deck_and_descendants(id)?;
+        self.storage.rename_deck(id, &name, self.clock.now_ms())?;
+        let made = self.ids_by_name(&missing)?;
+        let undo_made = made.clone();
         let old_name = old.name;
-        self.record_undo(
-            UndoAction::RenameDeck {
-                name: name.to_string(),
-            },
-            move |s, now| s.rename_deck(id, &old_name, now),
-        );
-        self.events.emit(DomainEvent::DeckChanged { deck_id: id });
+        self.record_undo(UndoAction::RenameDeck { name }, move |s, now| {
+            s.rename_deck(id, &old_name, now)?;
+            remove_empty_decks(s, &undo_made, now)
+        });
+        for deck_id in made.into_iter().chain(subtree) {
+            self.events.emit(DomainEvent::DeckChanged { deck_id });
+        }
         Ok(())
+    }
+
+    /// Refuse `name` when another deck (not `except`) already has it.
+    fn ensure_name_free(&self, name: &str, except: Option<i64>) -> CoreResult<()> {
+        match self.storage.deck_by_name(name)? {
+            Some(d) if Some(d.id) != except => Err(CoreError::Invalid(format!(
+                "a deck named \"{name}\" already exists"
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    /// Ancestors of `name` that do not exist yet (top level first). Refuses a
+    /// filtered ancestor: filtered decks cannot hold subdecks (Anki rule).
+    fn missing_ancestors(&self, name: &str) -> CoreResult<Vec<String>> {
+        let mut missing = Vec::new();
+        for ancestor in deck_ancestors(name) {
+            match self.storage.deck_by_name(ancestor)? {
+                Some(d) if d.is_filtered => {
+                    return Err(CoreError::Invalid(format!(
+                        "\"{ancestor}\" is a filtered deck and cannot have subdecks"
+                    )))
+                }
+                Some(_) => {}
+                None => missing.push(ancestor.to_string()),
+            }
+        }
+        Ok(missing)
+    }
+
+    fn ids_by_name(&self, names: &[String]) -> CoreResult<Vec<i64>> {
+        let mut ids = Vec::with_capacity(names.len());
+        for n in names {
+            if let Some(d) = self.storage.deck_by_name(n)? {
+                ids.push(d.id);
+            }
+        }
+        Ok(ids)
     }
 
     pub fn remove_deck(&self, id: i64) -> CoreResult<()> {

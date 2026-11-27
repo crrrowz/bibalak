@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
 import { QualityConsentDialog } from "@/features/ai/quality/QualityConsentDialog";
+import { deckSearchToken } from "@/features/browse/browseHelpers";
 import { QualityFindingCard } from "@/features/ai/quality/QualityFindingCard";
 import {
   buildQualityApplyPlan,
@@ -360,7 +361,7 @@ export function QualityReviewScreen({
         touchedIds.size > 0
           ? `nid:${Array.from(touchedIds).join(",")}`
           : selectedDeck
-            ? `deck:"${selectedDeck.name}"`
+            ? deckSearchToken(selectedDeck.name)
             : "";
 
       const banner: AppliedBanner = {

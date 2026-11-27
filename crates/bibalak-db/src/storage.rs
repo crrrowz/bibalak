@@ -5,9 +5,11 @@
 //! `Connection` is `Send` but not `Sync`) and the application layer can hold it
 //! behind a `&self` trait object.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
+use bibalak_core::deck_name::{deck_ancestors, is_same_or_below, DECK_SEPARATOR};
 use bibalak_core::error::{CoreError, CoreResult};
 use bibalak_core::ipc::{
     FieldOptions, FieldRemoveWarning, FilteredDeckConfig, NoteDetail, NoteOverview, NotetypeDetail,
@@ -154,41 +156,93 @@ impl SqliteStorage {
             }
         }
     }
+}
 
-    /// Resolve the immediate parent id for an Anki-style `A::B::C` name.
-    fn parent_id_for(conn: &Connection, name: &str) -> CoreResult<Option<i64>> {
-        match name.rsplit_once("::") {
-            None => Ok(None),
-            Some((parent, _)) => conn
-                .query_row("SELECT id FROM decks WHERE name = ?1", [parent], |r| {
-                    r.get(0)
-                })
-                .optional()
-                .map_err(storage_err),
-        }
+/// Insert one deck row. Each deck gets its own options group (cloned from
+/// Default) so that per-deck limits like "new cards/day" don't silently apply
+/// to every other deck sharing config_id=1.
+fn insert_deck_row(
+    conn: &Connection,
+    name: &str,
+    parent_id: Option<i64>,
+    now_ms: i64,
+) -> CoreResult<i64> {
+    conn.execute(
+        r#"INSERT INTO deck_config (name, "mod", usn, config)
+           SELECT ?1, ?2, -1, config FROM deck_config WHERE id = 1"#,
+        params![name, now_ms],
+    )
+    .map_err(storage_err)?;
+    let config_id = conn.last_insert_rowid();
+    conn.execute(
+        r#"INSERT INTO decks (name, parent_id, config_id, "mod", usn) VALUES (?1, ?2, ?3, ?4, -1)"#,
+        params![name, parent_id, config_id, now_ms],
+    )
+    .map_err(storage_err)?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn deck_id_by_name(conn: &Connection, name: &str) -> CoreResult<Option<i64>> {
+    conn.query_row("SELECT id FROM decks WHERE name = ?1", [name], |r| r.get(0))
+        .optional()
+        .map_err(storage_err)
+}
+
+/// Make sure every ancestor of an `A::B::C` name exists — missing levels are
+/// created top-first, each linked to its own parent (Anki rule, SUB1 F1) —
+/// and return the id of the direct parent (`None` for a top-level name).
+pub(crate) fn ensure_deck_parents(
+    conn: &Connection,
+    name: &str,
+    now_ms: i64,
+) -> CoreResult<Option<i64>> {
+    let mut parent = None;
+    for ancestor in deck_ancestors(name) {
+        parent = Some(match deck_id_by_name(conn, ancestor)? {
+            Some(id) => id,
+            None => insert_deck_row(conn, ancestor, parent, now_ms)?,
+        });
     }
+    Ok(parent)
+}
+
+/// Subtree below `root` by `parent_id` (not by name), parent-first, as
+/// `(id, parent_id, name)`. `root` itself is included first when `with_root`.
+/// The depth cap stops a corrupt `parent_id` cycle from looping forever.
+fn deck_subtree(
+    conn: &Connection,
+    root: i64,
+    with_root: bool,
+) -> CoreResult<Vec<(i64, Option<i64>, String)>> {
+    let mut stmt = conn
+        .prepare(
+            "WITH RECURSIVE sub(sub_id, depth) AS (
+                 SELECT ?1, 0
+                 UNION ALL
+                 SELECT d.id, sub.depth + 1 FROM decks d
+                 JOIN sub ON d.parent_id = sub.sub_id
+                 WHERE sub.depth < 64
+             )
+             SELECT id, parent_id, name FROM decks JOIN sub ON id = sub_id
+             WHERE depth > 0 OR ?2
+             ORDER BY depth, id",
+        )
+        .map_err(storage_err)?;
+    let rows = stmt
+        .query_map(params![root, with_root], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .map_err(storage_err)?;
+    rows.collect::<rusqlite::Result<_>>().map_err(storage_err)
 }
 
 impl DeckStore for SqliteStorage {
     fn create_deck(&self, name: &str, now_ms: i64) -> CoreResult<Deck> {
-        let conn = self.lock();
-        let parent_id = Self::parent_id_for(&conn, name)?;
-        // Each deck gets its own options group (cloned from Default) so that
-        // per-deck limits like "new cards/day" don't silently apply to
-        // every other deck sharing config_id=1.
-        conn.execute(
-            r#"INSERT INTO deck_config (name, "mod", usn, config)
-               SELECT ?1, ?2, -1, config FROM deck_config WHERE id = 1"#,
-            params![name, now_ms],
-        )
-        .map_err(storage_err)?;
-        let config_id = conn.last_insert_rowid();
-        conn.execute(
-            r#"INSERT INTO decks (name, parent_id, config_id, "mod", usn) VALUES (?1, ?2, ?3, ?4, -1)"#,
-            params![name, parent_id, config_id, now_ms],
-        )
-        .map_err(storage_err)?;
-        let id = conn.last_insert_rowid();
+        let mut conn = self.lock();
+        let tx = conn.transaction().map_err(storage_err)?;
+        let parent_id = ensure_deck_parents(&tx, name, now_ms)?;
+        let id = insert_deck_row(&tx, name, parent_id, now_ms)?;
+        tx.commit().map_err(storage_err)?;
         conn.query_row(
             &format!("SELECT {DECK_COLUMNS} FROM decks WHERE id = ?1"),
             [id],
@@ -230,42 +284,101 @@ impl DeckStore for SqliteStorage {
     }
 
     fn rename_deck(&self, id: i64, name: &str, now_ms: i64) -> CoreResult<()> {
-        let affected = self
-            .lock()
-            .execute(
+        let mut conn = self.lock();
+        let tx = conn.transaction().map_err(storage_err)?;
+        let old: String = tx
+            .query_row("SELECT name FROM decks WHERE id = ?1", [id], |r| r.get(0))
+            .optional()
+            .map_err(storage_err)?
+            .ok_or_else(|| CoreError::NotFound(format!("deck {id}")))?;
+        if old == name {
+            return Ok(());
+        }
+        if is_same_or_below(name, &old) {
+            return Err(CoreError::Invalid(
+                "a deck cannot be moved into its own subdeck".into(),
+            ));
+        }
+
+        // New name for every deck in the subtree (found by parent_id),
+        // parent-first: parent's new name + the child's own last part.
+        let mut renamed: HashMap<i64, (String, String)> = HashMap::new();
+        renamed.insert(id, (old, name.to_string()));
+        let mut updates = vec![(id, name.to_string())];
+        for (child, parent, child_name) in deck_subtree(&tx, id, false)? {
+            let Some((parent_old, parent_new)) = parent.and_then(|p| renamed.get(&p)).cloned()
+            else {
+                continue;
+            };
+            let leaf = child_name
+                .strip_prefix(parent_old.as_str())
+                .and_then(|rest| rest.strip_prefix(DECK_SEPARATOR))
+                .filter(|rest| !rest.is_empty())
+                .or_else(|| child_name.rsplit(DECK_SEPARATOR).next())
+                .unwrap_or(child_name.as_str())
+                .to_string();
+            let new_name = format!("{parent_new}{DECK_SEPARATOR}{leaf}");
+            renamed.insert(child, (child_name, new_name.clone()));
+            updates.push((child, new_name));
+        }
+        for (_, new_name) in &updates {
+            if let Some(other) = deck_id_by_name(&tx, new_name)? {
+                if !renamed.contains_key(&other) {
+                    return Err(CoreError::Invalid(format!(
+                        "a deck named \"{new_name}\" already exists"
+                    )));
+                }
+            }
+        }
+
+        let parent_id = ensure_deck_parents(&tx, name, now_ms)?;
+        tx.execute(
+            r#"UPDATE decks SET name = ?1, parent_id = ?2, "mod" = ?3, usn = -1 WHERE id = ?4"#,
+            params![name, parent_id, now_ms, id],
+        )
+        .map_err(storage_err)?;
+        for (child, new_name) in updates.iter().skip(1) {
+            tx.execute(
                 r#"UPDATE decks SET name = ?1, "mod" = ?2, usn = -1 WHERE id = ?3"#,
-                params![name, now_ms, id],
+                params![new_name, now_ms, child],
             )
             .map_err(storage_err)?;
-        if affected == 0 {
-            return Err(CoreError::NotFound(format!("deck {id}")));
         }
-        Ok(())
+        tx.commit().map_err(storage_err)
     }
 
     fn remove_deck(&self, id: i64, now_ms: i64) -> CoreResult<RemovedDeck> {
         let mut conn = self.lock();
         let tx = conn.transaction().map_err(storage_err)?;
 
-        // Resolve the subtree: the deck plus every sub-deck (`name::*`).
-        let name: String = tx
-            .query_row("SELECT name FROM decks WHERE id = ?1", [id], |r| r.get(0))
-            .optional()
-            .map_err(storage_err)?
-            .ok_or_else(|| CoreError::NotFound(format!("deck {id}")))?;
+        // Resolve the subtree by parent_id (never by name pattern: LIKE is
+        // case-insensitive and treats `_`/`%` in names as wildcards).
+        let ids: Vec<i64> = deck_subtree(&tx, id, true)?
+            .into_iter()
+            .map(|(deck_id, _, _)| deck_id)
+            .collect();
+        if ids.is_empty() {
+            return Err(CoreError::NotFound(format!("deck {id}")));
+        }
+        let ids_json = format!(
+            "[{}]",
+            ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+        );
 
         // Parent-first order so the subtree can be restored (and re-linked) safely.
         let decks: Vec<Deck> = {
-            let mut stmt = tx
-                .prepare(&format!(
-                    "SELECT {DECK_COLUMNS} FROM decks WHERE id = ?1 OR name LIKE ?2 \
-                     ORDER BY LENGTH(name)"
-                ))
-                .map_err(storage_err)?;
-            let rows = stmt
-                .query_map(params![id, format!("{name}::%")], map_deck)
-                .map_err(storage_err)?;
-            rows.collect::<rusqlite::Result<_>>().map_err(storage_err)?
+            let mut by_id: HashMap<i64, Deck> = {
+                let mut stmt = tx
+                    .prepare(&format!(
+                        "SELECT {DECK_COLUMNS} FROM decks WHERE id IN (SELECT value FROM json_each(?1))"
+                    ))
+                    .map_err(storage_err)?;
+                let rows = stmt.query_map([&ids_json], map_deck).map_err(storage_err)?;
+                rows.map(|r| r.map(|d| (d.id, d)))
+                    .collect::<rusqlite::Result<_>>()
+                    .map_err(storage_err)?
+            };
+            ids.iter().filter_map(|i| by_id.remove(i)).collect()
         };
 
         // All cards held by those decks, captured for undo.
@@ -273,12 +386,10 @@ impl DeckStore for SqliteStorage {
             let mut stmt = tx
                 .prepare(&format!(
                     "SELECT {CARD_COLUMNS} FROM cards c
-                     WHERE c.deck_id IN (SELECT id FROM decks WHERE id = ?1 OR name LIKE ?2)"
+                     WHERE c.deck_id IN (SELECT value FROM json_each(?1))"
                 ))
                 .map_err(storage_err)?;
-            let rows = stmt
-                .query_map(params![id, format!("{name}::%")], map_card)
-                .map_err(storage_err)?;
+            let rows = stmt.query_map([&ids_json], map_card).map_err(storage_err)?;
             rows.collect::<rusqlite::Result<_>>().map_err(storage_err)?
         };
 

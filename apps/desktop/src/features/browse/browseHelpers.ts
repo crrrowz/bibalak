@@ -96,15 +96,24 @@ export function querySyntax(): string {
   a or b  (${t("browse.syntax.or")})`;
 }
 
+/**
+ * `deck:"<name>"` for one deck and its subdecks (Anki rule, SUB1). The name is
+ * escaped so `\`, `"`, `*` and `_` match literally instead of as search syntax.
+ */
+export function deckSearchToken(deckName: string): string {
+  const escaped = deckName.replace(/[\\"*_]/g, (ch) => `\\${ch}`);
+  return `deck:"${escaped}"`;
+}
+
 /** Format a Browse search token (`deck:"..."` or `tag:...`), quoting values with spaces. */
 export function buildBrowseFilterQuery(
   deckName: string | null | undefined,
   tagName: string | null | undefined,
 ): string {
   const parts: string[] = [];
-  const deck = deckName?.trim().replace(/"/g, "");
+  const deck = deckName?.trim();
   if (deck) {
-    parts.push(`deck:"${deck}"`);
+    parts.push(deckSearchToken(deck));
   }
   const tag = tagName?.trim().replace(/"/g, "");
   if (tag) {

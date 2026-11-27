@@ -11,6 +11,8 @@
 | Linux    | x86_64                    | `Bibalak_<version>_amd64.deb`        | Debian / Ubuntu (`sudo apt install ./Bibalak_*.deb`)      |
 | Linux    | x86_64                    | `Bibalak-<version>-1.x86_64.rpm`     | Fedora / openSUSE (`sudo dnf install ./Bibalak-*.rpm`)    |
 
+Use `Bibalak_<version>_x64-setup.exe` for normal Windows installs; Windows Explorer shows the generic Windows Installer icon on `.msi` files by design.
+
 ### Unsigned installer notice
 
 Installers are **not code-signed yet**:

@@ -1,6 +1,7 @@
 const APP_COMMANDS: &[&str] = &[
     "get_startup_error",
     "app_info",
+    "is_portable",
     "pick_open_path",
     "pick_save_path",
     "list_decks",

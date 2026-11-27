@@ -37,6 +37,7 @@ import { NotificationBell } from "@/features/notifications/NotificationBell";
 import { NotificationEventWatcher } from "@/features/notifications/NotificationEventWatcher";
 import { NotificationToastHost } from "@/features/notifications/NotificationToastHost";
 import { CelebrationHost } from "@/features/progress/CelebrationHost";
+import { UpdateCheckHost } from "@/features/settings/UpdateCheckHost";
 import { StyleHud } from "@/features/progress/StyleHud";
 import { Kbd } from "@/components/Kbd";
 import { modShortcut } from "@/lib/shortcuts";
@@ -825,6 +826,7 @@ export function AppShell() {
       <OnboardingGate />
       {isTauri() && <NotificationEventWatcher />}
       {isTauri() && platform.notifications && <ReminderSchedulerHost />}
+      {isTauri() && !isQuickAddWindow && <UpdateCheckHost />}
       {isTauri() && <CelebrationHost />}
       {isTauri() && <UnlockToastHost />}
       {shortcutsOpen && <KeyboardShortcutsDialog onClose={() => setShortcutsOpen(false)} />}

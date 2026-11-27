@@ -11,6 +11,7 @@ import * as releasesModule from "@/lib/releases";
 import { useStyle } from "@/stores/style";
 import { useTheme } from "@/stores/theme";
 import { useReminders } from "@/stores/reminders";
+import { useUpdateCheck } from "./updateCheck";
 
 const {
   isAvailableMock,
@@ -20,6 +21,8 @@ const {
   updaterCheckMock,
   updaterDownloadAndInstallMock,
   updaterRelaunchMock,
+  updaterIsPortableMock,
+  updaterOpenReleasePageMock,
   notifIsGrantedMock,
   notifRequestPermissionMock,
   notifSendMock,
@@ -37,6 +40,8 @@ const {
     ) => Promise<void>
   >(async () => {}),
   updaterRelaunchMock: vi.fn<() => Promise<void>>(async () => {}),
+  updaterIsPortableMock: vi.fn<() => Promise<boolean>>(async () => false),
+  updaterOpenReleasePageMock: vi.fn<(url: string) => Promise<void>>(async () => {}),
   notifIsGrantedMock: vi.fn<() => Promise<boolean>>(async () => true),
   notifRequestPermissionMock: vi.fn<() => Promise<"granted" | "denied" | "default">>(
     async () => "granted",
@@ -69,6 +74,8 @@ vi.mock("@/lib/platform", () => ({
         }) => void,
       ) => updaterDownloadAndInstallMock(onProgress),
       relaunch: () => updaterRelaunchMock(),
+      isPortable: () => updaterIsPortableMock(),
+      openReleasePage: (url: string) => updaterOpenReleasePageMock(url),
     },
   },
 }));
@@ -149,6 +156,9 @@ describe("SettingsScreen (Q2)", () => {
     updaterCheckMock.mockReset().mockResolvedValue(null);
     updaterDownloadAndInstallMock.mockReset().mockResolvedValue(undefined);
     updaterRelaunchMock.mockReset().mockResolvedValue(undefined);
+    updaterIsPortableMock.mockReset().mockResolvedValue(false);
+    updaterOpenReleasePageMock.mockReset().mockResolvedValue(undefined);
+    useUpdateCheck.setState({ autoCheck: true, checking: false, result: null });
     notifIsGrantedMock.mockReset().mockResolvedValue(true);
     notifRequestPermissionMock.mockReset().mockResolvedValue("granted");
     notifSendMock.mockReset().mockResolvedValue(undefined);
@@ -748,7 +758,7 @@ describe("SettingsScreen (Q2)", () => {
     const { unmount } = renderScreen();
     expect(
       await screen.findByText(
-        "Automatic updates are off in this version. Get new versions from the Releases page: github.com/crrrowz/bibalak/releases",
+        "Automatic updates are not available in this build. Get new versions from the Releases page: github.com/crrrowz/bibalak/releases",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();
@@ -789,7 +799,7 @@ describe("SettingsScreen (Q2)", () => {
     expect(updaterRelaunchMock).not.toHaveBeenCalled();
 
     // Explicit click on Install and restart -> shows progress then relaunches
-    await user.click(screen.getByRole("button", { name: "Install and restart" }));
+    await user.click(screen.getByRole("button", { name: "Update and restart" }));
     expect(await screen.findByText("Downloading… 50%")).toBeInTheDocument();
     resolveInstall();
     await waitFor(() => expect(updaterRelaunchMock).toHaveBeenCalledTimes(1));
@@ -797,7 +807,7 @@ describe("SettingsScreen (Q2)", () => {
     // Up-to-date (also covers older/equal manifests since the plugin filters them to null)
     await user.click(screen.getByRole("button", { name: "Check for updates" }));
     expect(await screen.findByText("Bibalak is up to date.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Install and restart" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update and restart" })).not.toBeInTheDocument();
 
     // Check error -> role="alert"
     await user.click(screen.getByRole("button", { name: "Check for updates" }));
@@ -805,9 +815,54 @@ describe("SettingsScreen (Q2)", () => {
 
     // Install error -> role="alert" and no relaunch
     await user.click(screen.getByRole("button", { name: "Check for updates" }));
-    await user.click(await screen.findByRole("button", { name: "Install and restart" }));
+    await user.click(await screen.findByRole("button", { name: "Update and restart" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Signature mismatch");
     expect(updaterRelaunchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("13c. a portable copy never self-installs: it links to the release page instead (UPD1)", async () => {
+    sessionStorage.setItem("keepsake-settings-category", "updates");
+    setupDefaultTauriIpc({ appInfo: { ...DEFAULT_APP_INFO, version: "1.0.0" } });
+    vi.spyOn(releasesModule, "updateManifestUrl").mockReturnValue(
+      "https://github.com/crrrowz/bibalak/releases/latest/download/latest.json",
+    );
+    updaterIsPortableMock.mockResolvedValue(true);
+    updaterCheckMock.mockResolvedValueOnce({ version: "1.1.0", notes: "Faster study queue" });
+    const user = userEvent.setup();
+
+    renderScreen();
+
+    await user.click(await screen.findByRole("button", { name: "Check for updates" }));
+    expect(await screen.findByText(/A new version is out/)).toBeInTheDocument();
+    expect(screen.getByText("1.1.0")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update and restart" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open the release page" }));
+    expect(updaterOpenReleasePageMock).toHaveBeenCalledWith(
+      "https://github.com/crrrowz/bibalak/releases/tag/v1.1.0",
+    );
+    expect(updaterDownloadAndInstallMock).not.toHaveBeenCalled();
+    expect(updaterRelaunchMock).not.toHaveBeenCalled();
+  });
+
+  it("13d. the check-on-start setting is on by default and can be turned off (UPD1)", async () => {
+    sessionStorage.setItem("keepsake-settings-category", "updates");
+    setupDefaultTauriIpc();
+    vi.spyOn(releasesModule, "updateManifestUrl").mockReturnValue(
+      "https://github.com/crrrowz/bibalak/releases/latest/download/latest.json",
+    );
+    const user = userEvent.setup();
+
+    renderScreen();
+
+    const toggle = await screen.findByRole("checkbox", {
+      name: "Check for updates when Bibalak starts (at most once a day)",
+    });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(localStorage.getItem("keepsake-update-auto-check")).toBe("off");
+    expect(updaterCheckMock).not.toHaveBeenCalled();
   });
 
   it("13b. shows the build stamp with sha and formatted date under the version (A3)", async () => {

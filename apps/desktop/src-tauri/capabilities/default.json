@@ -22,6 +22,7 @@
     "process:allow-restart",
     "allow-get-startup-error",
     "allow-app-info",
+    "allow-is-portable",
     "allow-pick-open-path",
     "allow-pick-save-path",
     "allow-list-decks",

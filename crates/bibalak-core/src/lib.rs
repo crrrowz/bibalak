@@ -11,6 +11,7 @@
 
 pub mod ai;
 pub mod collection;
+pub mod deck_name;
 pub mod error;
 pub mod events;
 pub mod game;
@@ -29,6 +30,7 @@ pub mod search_norm;
 pub mod sync;
 pub mod undo;
 
+pub use deck_name::normalise_deck_name;
 pub use search_norm::normalize_search_text;
 
 pub use collection::{
