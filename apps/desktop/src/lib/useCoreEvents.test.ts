@@ -127,11 +127,20 @@ describe("useCoreEvents", () => {
     emit("card-answered");
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.yesterdaySummary });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.habitsAll });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.habitHistoryAll });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.archivedHabits });
 
     invalidateSpy.mockClear();
     emit("productivity-changed");
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.yesterdaySummary });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.habitsAll });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.habitHistoryAll });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.archivedHabits });
+
+    invalidateSpy.mockClear();
+    emit("schema-changed");
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.habitHistoryAll });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.archivedHabits });
   });
 
   it("14d: invalidates gameState, customRewards, spendHistory, and gameDepthState on game-changed, card-answered, productivity-changed, and schema-changed", () => {
@@ -164,5 +173,63 @@ describe("useCoreEvents", () => {
 
     emit("schema-changed");
     expect(queryClient.getQueryState(queryKeys.notetypesDetail(7))?.isInvalidated).toBe(true);
+  });
+
+  it("LOGIC1: invalidates decks, queue, and deck-card-ids on notes-changed and deck-changed", () => {
+    const { emit, invalidateSpy, queryClient } = mountCoreEvents();
+
+    queryClient.setQueryData(["queue", "1"], { card_id: 1 });
+    queryClient.setQueryData(["deck-card-ids", 1, true], [1]);
+
+    emit("notes-changed");
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.decks });
+    expect(queryClient.getQueryState(["queue", "1"])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(["deck-card-ids", 1, true])?.isInvalidated).toBe(true);
+
+    invalidateSpy.mockClear();
+    queryClient.setQueryData(["queue", "1"], { card_id: 1 });
+    queryClient.setQueryData(["deck-card-ids", 1, true], [1]);
+
+    emit("deck-changed");
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.statsAll });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.cardsAll });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.notesAll });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.tags });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.notetypesAll });
+    expect(queryClient.getQueryState(["queue", "1"])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(["deck-card-ids", 1, true])?.isInvalidated).toBe(true);
+  });
+
+  it("LOGIC1: invalidates mediaLibraryAll, queue, and deck-card-ids on schema-changed", () => {
+    const { emit, invalidateSpy, queryClient } = mountCoreEvents();
+
+    queryClient.setQueryData(["queue", "2"], { card_id: 2 });
+    queryClient.setQueryData(["deck-card-ids", 2, false], [2]);
+
+    emit("schema-changed");
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.mediaLibraryAll });
+    expect(queryClient.getQueryState(["queue", "2"])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(["deck-card-ids", 2, false])?.isInvalidated).toBe(true);
+  });
+
+  it("LOGIC1: invalidates day-boundary queries after setLocalOffset resolves", async () => {
+    const { ipc } = await import("./ipc");
+    let resolveOffset!: () => void;
+    vi.mocked(ipc.setLocalOffset).mockImplementation(
+      () =>
+        new Promise<void>((res) => {
+          resolveOffset = res;
+        }),
+    );
+
+    const { invalidateSpy } = mountCoreEvents();
+    invalidateSpy.mockClear();
+    resolveOffset();
+
+    await vi.waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.decks });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.motivationState });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.matrixAll });
+    });
   });
 });

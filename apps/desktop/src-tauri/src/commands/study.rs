@@ -106,7 +106,7 @@ fn present(collection: &Collection, card: StudyCard, session_deck_id: i64) -> St
     let rendered = render_card_faces(&card.render);
 
     let config = collection
-        .get_sched_config(card.deck_id)
+        .get_sched_config_for_card(card.id, card.deck_id)
         .unwrap_or_default();
     let algorithm = config.algorithm;
     let scheduler = scheduler_for(algorithm);

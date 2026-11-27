@@ -58,11 +58,19 @@ function updateCargoToml(cargoPath, version) {
 function updateJsonVersion(jsonPath, version) {
   if (!fs.existsSync(jsonPath)) return false;
   const raw = fs.readFileSync(jsonPath, "utf8");
-  const eol = raw.includes("\r\n") ? "\r\n" : "\n";
   const parsed = JSON.parse(raw);
-  parsed.version = version;
-  const serialized = `${JSON.stringify(parsed, null, 2).replace(/\n/g, eol)}${eol}`;
-  fs.writeFileSync(jsonPath, serialized, "utf8");
+  if (typeof parsed.version !== "string") {
+    throw new Error(`Could not locate string "version" field in ${jsonPath}`);
+  }
+  const pattern = /^([ \t]*"version"\s*:\s*")[^"]+(")/m;
+  if (!pattern.test(raw)) {
+    throw new Error(`Could not update "version" line in place in ${jsonPath}`);
+  }
+  const updated = raw.replace(pattern, `$1${version}$2`);
+  if (JSON.parse(updated).version !== version) {
+    throw new Error(`In-place version update verification failed for ${jsonPath}`);
+  }
+  fs.writeFileSync(jsonPath, updated, "utf8");
   return true;
 }
 

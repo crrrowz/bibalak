@@ -3,7 +3,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { platform } from "@/lib/platform";
 import { AnimatePresence, motion } from "framer-motion";
-import { Download, FileText, Filter, LayoutGrid, Layers, List, Plus, Undo2 } from "lucide-react";
+import {
+  Download,
+  FileText,
+  Filter,
+  LayoutGrid,
+  Layers,
+  List,
+  Plus,
+  Sparkles,
+  Undo2,
+  X,
+} from "lucide-react";
 import type {
   DeckSummary,
   FilteredDeckConfig,
@@ -36,7 +47,7 @@ import { listItem, staggerList } from "@/lib/motion";
 import { useUi, type HomeLayout } from "@/stores/ui";
 import { useStyle } from "@/stores/style";
 import { cn } from "@/lib/utils";
-import { t, tn, textDirection } from "@/lib/i18n";
+import { formatNumber, getLocale, t, tn, textDirection } from "@/lib/i18n";
 import { formatUndoAction } from "@/lib/undo";
 import type { LocaleKey } from "@/locales/en";
 
@@ -211,6 +222,11 @@ export function DeckBrowserScreen() {
     onSuccess: () => void invalidateDecks(),
   });
 
+  const sampleMut = useMutation({
+    mutationFn: () => ipc.completeOnboarding(false, true, getLocale()),
+    onSuccess: () => void invalidateDecks(),
+  });
+
   const rawDecks = decksQuery.data;
   const decks = useMemo(() => rawDecks ?? [], [rawDecks]);
 
@@ -257,9 +273,9 @@ export function DeckBrowserScreen() {
     return map;
   }, [decks]);
 
-  const hasChildren = (deck: DeckSummary) => decks.some((d) => d.name.startsWith(`${deck.name}::`));
+  const hasChildren = (deck: DeckSummary) => decks.some((d) => d.parent_id === deck.id);
   const totalDue = useMemo(() => {
-    const topLevel = decks.filter((d) => d.parent_id === null);
+    const topLevel = decks.filter((d) => d.parent_id === null || d.is_filtered);
     const source = topLevel.length > 0 ? topLevel : decks;
     return source.reduce((acc, d) => acc + d.new_count + d.learning_count + d.review_count, 0);
   }, [decks]);
@@ -276,6 +292,30 @@ export function DeckBrowserScreen() {
   function studyDeck(deck: DeckSummary) {
     void navigate({ to: "/study/$deckId", params: { deckId: deck.id } });
   }
+
+  const emptyHomeActions = (
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      <Button size="sm" onClick={() => setCreating(true)}>
+        <Plus /> {t("decks.none.createDeck")}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => importMut.mutate()}
+        disabled={importMut.isPending}
+      >
+        <Download /> {t("decks.none.importAnki")}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => sampleMut.mutate()}
+        disabled={sampleMut.isPending}
+      >
+        <Sparkles /> {t("decks.none.addSample")}
+      </Button>
+    </div>
+  );
 
   return (
     <div className="relative flex h-full flex-col">
@@ -295,8 +335,8 @@ export function DeckBrowserScreen() {
               {importMut.isPending
                 ? importProgress && importProgress.total > 0
                   ? t("decks.importingProgress", {
-                      done: importProgress.done,
-                      total: importProgress.total,
+                      done: formatNumber(importProgress.done),
+                      total: formatNumber(importProgress.total),
                     })
                   : t("decks.importing")
                 : t("decks.import")}
@@ -350,64 +390,85 @@ export function DeckBrowserScreen() {
           {creating && <CreateDeckForm onClose={() => setCreating(false)} />}
         </AnimatePresence>
 
+        {lastImport ? (
+          <div
+            data-testid="import-summary-notice"
+            className="mx-4 mt-4 flex items-start justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-foreground sm:mx-6 lg:mx-8"
+          >
+            <p className="min-w-0 flex-1 leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+              {isNothingNewImport(lastImport) ? (
+                t("decks.importNothingNew")
+              ) : (
+                <>
+                  {t("decks.importSummary.result", {
+                    parts: [
+                      tn("decks.importSummary.notes", lastImport.notes_added),
+                      tn("decks.importSummary.cards", lastImport.cards_added),
+                      tn("decks.importSummary.decks", lastImport.decks_added),
+                      tn("decks.importSummary.media", lastImport.media_imported),
+                    ].join(textDirection() === "rtl" ? "، " : ", "),
+                  })}
+                  {lastImport.notes_updated > 0
+                    ? ` · ${tn("decks.importSummary.updated", lastImport.notes_updated)}`
+                    : ""}
+                </>
+              )}
+            </p>
+            <button
+              type="button"
+              aria-label={t("common.close")}
+              onClick={() => setLastImport(null)}
+              className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <X className="size-4" aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
+
+        {importCancelled ? (
+          <div className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground sm:mx-6 lg:mx-8">
+            <p className="min-w-0 flex-1 [overflow-wrap:anywhere]">{t("import.cancelled")}</p>
+            <button
+              type="button"
+              aria-label={t("common.close")}
+              onClick={() => setImportCancelled(false)}
+              className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <X className="size-4" aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
+
+        {[
+          importMut.isError && !importCancelled
+            ? t("decks.importFailed", { error: errorMessage(importMut.error) })
+            : null,
+          deleteMut.isError
+            ? t("decks.deleteFailed", { error: errorMessage(deleteMut.error) })
+            : null,
+          renameMut.isError
+            ? t("decks.renameFailed", { error: errorMessage(renameMut.error) })
+            : null,
+          emptyMut.isError ? t("decks.emptyFailed", { error: errorMessage(emptyMut.error) }) : null,
+          undoMut.isError ? t("decks.undoFailed", { error: errorMessage(undoMut.error) }) : null,
+          sampleMut.isError ? errorMessage(sampleMut.error) : null,
+        ]
+          .filter((msg): msg is string => Boolean(msg))
+          .map((msg) => (
+            <p
+              key={msg}
+              role="alert"
+              className="mx-4 mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:mx-6 lg:mx-8 [overflow-wrap:anywhere]"
+            >
+              {msg}
+            </p>
+          ))}
+
         {tauri && <ComebackCard />}
         {tauri && <TodayCard decks={decks} onStudy={studyDeck} />}
 
         {tauri && style !== "game" && <ProgressPanel variant="compact" />}
         {tauri && <YesterdaySummaryCard />}
-
-        {importMut.isError && !importCancelled ? (
-          <p className="px-4 py-2 text-sm text-destructive sm:px-6 lg:px-8">
-            {t("decks.importFailed", { error: errorMessage(importMut.error) })}
-          </p>
-        ) : null}
-        {importCancelled ? (
-          <p className="border-b border-border bg-secondary/40 px-4 py-2 text-sm text-muted-foreground sm:px-6 lg:px-8">
-            {t("import.cancelled")}
-          </p>
-        ) : null}
-        {deleteMut.isError ? (
-          <p className="px-4 py-2 text-sm text-destructive sm:px-6 lg:px-8">
-            {t("decks.deleteFailed", { error: errorMessage(deleteMut.error) })}
-          </p>
-        ) : null}
-        {renameMut.isError ? (
-          <p className="px-4 py-2 text-sm text-destructive sm:px-6 lg:px-8">
-            {t("decks.renameFailed", { error: errorMessage(renameMut.error) })}
-          </p>
-        ) : null}
-        {emptyMut.isError ? (
-          <p className="px-4 py-2 text-sm text-destructive sm:px-6 lg:px-8">
-            {t("decks.emptyFailed", { error: errorMessage(emptyMut.error) })}
-          </p>
-        ) : null}
-        {undoMut.isError ? (
-          <p className="px-4 py-2 text-sm text-destructive sm:px-6 lg:px-8">
-            {t("decks.undoFailed", { error: errorMessage(undoMut.error) })}
-          </p>
-        ) : null}
-
-        {lastImport ? (
-          <p className="border-b border-border bg-secondary/40 px-4 py-2 text-sm text-muted-foreground sm:px-6 lg:px-8">
-            {isNothingNewImport(lastImport) ? (
-              t("decks.importNothingNew")
-            ) : (
-              <>
-                {t("decks.importSummary.result", {
-                  parts: [
-                    tn("decks.importSummary.notes", lastImport.notes_added),
-                    tn("decks.importSummary.cards", lastImport.cards_added),
-                    tn("decks.importSummary.decks", lastImport.decks_added),
-                    tn("decks.importSummary.media", lastImport.media_imported),
-                  ].join(textDirection() === "rtl" ? "، " : ", "),
-                })}
-                {lastImport.notes_updated > 0
-                  ? ` · ${tn("decks.importSummary.updated", lastImport.notes_updated)}`
-                  : ""}
-              </>
-            )}
-          </p>
-        ) : null}
 
         {!tauri ? (
           <EmptyState
@@ -421,21 +482,7 @@ export function DeckBrowserScreen() {
               icon={Layers}
               title={t("decks.none.title")}
               description={t("decks.none.description")}
-              action={
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <Button size="sm" onClick={() => setCreating(true)}>
-                    <Plus /> {t("decks.newDeck")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => importMut.mutate()}
-                    disabled={importMut.isPending}
-                  >
-                    <Download /> {t("decks.importFromAnki")}
-                  </Button>
-                </div>
-              }
+              action={emptyHomeActions}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
@@ -446,19 +493,7 @@ export function DeckBrowserScreen() {
                   {t("decks.none.description")}
                 </p>
               </div>
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button size="sm" onClick={() => setCreating(true)}>
-                  <Plus /> {t("decks.newDeck")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => importMut.mutate()}
-                  disabled={importMut.isPending}
-                >
-                  <Download /> {t("decks.importFromAnki")}
-                </Button>
-              </div>
+              {emptyHomeActions}
             </div>
           )
         ) : homeLayout === "grid" ? (
@@ -495,11 +530,13 @@ export function DeckBrowserScreen() {
           </motion.div>
         ) : (
           <>
-            <div className="flex items-center justify-end gap-1 px-4 pb-1 pt-3 text-xs font-medium text-muted-foreground sm:px-6 lg:px-8">
-              <span className="w-9 text-center">{t("decks.col.new")}</span>
-              <span className="w-9 text-center">{t("decks.col.learn")}</span>
-              <span className="w-9 text-center">{t("decks.col.due")}</span>
-              <span className="w-36" />
+            <div className="flex items-center justify-end gap-3 px-4 pb-1 pt-3 text-xs font-medium text-muted-foreground sm:px-6 lg:px-8">
+              <span className="flex items-center gap-1">
+                <span className="w-11 shrink-0 text-center">{t("decks.col.new")}</span>
+                <span className="w-11 shrink-0 text-center">{t("decks.col.learn")}</span>
+                <span className="w-11 shrink-0 text-center">{t("decks.col.due")}</span>
+              </span>
+              <span className="w-36 shrink-0" />
             </div>
             <motion.ul variants={staggerList} initial="hidden" animate="show">
               <AnimatePresence>

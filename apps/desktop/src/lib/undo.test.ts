@@ -60,4 +60,35 @@ describe("formatUndoAction", () => {
       setLocale("en");
     }
   });
+
+  it("UND-ADD: formats add-note undo label in English and Arabic", () => {
+    try {
+      setLocale("en");
+      expect(formatUndoAction({ kind: "add-note", count: 1 })).toBe("Add 1 note");
+      expect(formatUndoAction({ kind: "add-note", count: 3 })).toBe("Add 3 notes");
+      setLocale("ar");
+      expect(formatUndoAction({ kind: "add-note", count: 1 })).toBe("إضافة ملاحظة واحدة");
+      expect(formatUndoAction({ kind: "add-note", count: 3 })).toBe("إضافة 3 ملاحظات");
+    } finally {
+      setLocale("en");
+    }
+  });
+
+  it("formats new card/deck undo variants in English and Arabic", () => {
+    try {
+      setLocale("en");
+      expect(formatUndoAction({ kind: "suspend-cards", count: 1 })).toBe("Suspend 1 card");
+      expect(formatUndoAction({ kind: "bury-cards", count: 2 })).toBe("Bury 2 cards");
+      expect(formatUndoAction({ kind: "move-cards", count: 3 })).toBe("Move 3 cards");
+      expect(formatUndoAction({ kind: "change-deck-options" })).toBe("Change deck options");
+      expect(formatUndoAction({ kind: "increase-today-limit" })).toBe("Increase today's limit");
+
+      setLocale("ar");
+      expect(formatUndoAction({ kind: "suspend-cards", count: 1 })).toBe("تعليق بطاقة واحدة");
+      expect(formatUndoAction({ kind: "bury-cards", count: 2 })).toBe("دفن بطاقتين");
+      expect(formatUndoAction({ kind: "change-deck-options" })).toBe("تغيير خيارات المجموعة");
+    } finally {
+      setLocale("en");
+    }
+  });
 });

@@ -46,6 +46,8 @@ export function ResetDeckProgressDialog({
     mutationFn: () => ipc.forgetCards(cardIds, resetCounts),
     onSuccess: () => {
       void invalidateTodayCounts(queryClient);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.queueAll });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
       onDone();
       onClose();
     },
@@ -55,7 +57,7 @@ export function ResetDeckProgressDialog({
     <DialogFrame open={Boolean(deck)} title={t("decks.reset.title")} onClose={onClose}>
       <h2 className="mb-2 text-base font-semibold">{t("decks.reset.title")}</h2>
       {deck && (
-        <p className="mb-4 text-sm text-muted-foreground">
+        <p className="mb-4 text-sm text-muted-foreground [overflow-wrap:anywhere]">
           {cardIdsQuery.isLoading
             ? t("decks.reset.loading")
             : tn("decks.reset.description", cardIds.length, {
@@ -103,7 +105,7 @@ export function ResetDeckProgressDialog({
         </Button>
         <Button
           variant="destructive"
-          disabled={resetMut.isPending || cardIdsQuery.isLoading || cardIds.length === 0}
+          disabled={resetMut.isPending || cardIdsQuery.isFetching || cardIds.length === 0}
           onClick={() => resetMut.mutate()}
         >
           {t("decks.reset.confirm")}

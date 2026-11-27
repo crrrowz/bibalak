@@ -22,14 +22,14 @@ interface DeckNode extends DeckStat {
   rollup: DeckStat;
 }
 
-function buildTree(rows: DeckStat[]): DeckNode[] {
+function buildTree(rows: DeckStat[], filteredIds: Set<number>): DeckNode[] {
   const byId = new Map<number, DeckNode>();
   for (const r of rows) {
     byId.set(r.deck_id, { ...r, children: [], rollup: { ...r } });
   }
   const roots: DeckNode[] = [];
   for (const node of byId.values()) {
-    if (node.parent_id !== null && byId.has(node.parent_id)) {
+    if (!filteredIds.has(node.deck_id) && node.parent_id !== null && byId.has(node.parent_id)) {
       byId.get(node.parent_id)!.children.push(node);
     } else {
       roots.push(node);
@@ -89,12 +89,19 @@ function leafLabel(name: string): string {
 
 export function DeckTable({
   deckStats,
+  filteredDeckIds = [],
   onSelectDeck,
 }: {
   deckStats: DeckStat[];
+  filteredDeckIds?: number[];
   onSelectDeck: (deckId: number) => void;
 }) {
-  const tree = useMemo(() => buildTree(deckStats), [deckStats]);
+  const filteredKey = filteredDeckIds.join(",");
+  const tree = useMemo(
+    () => buildTree(deckStats, new Set(filteredDeckIds)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [deckStats, filteredKey],
+  );
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDesc, setSortDesc] = useState(false);
@@ -157,8 +164,8 @@ export function DeckTable({
   ];
 
   return (
-    <div className="relative">
-      <div className="absolute end-0 top-0">
+    <div>
+      <div className="mb-2 flex justify-end">
         <ExportButton filename="deck-stats" rows={deckStats.map((d) => ({ ...d }))} />
       </div>
       <table className="w-full text-sm">

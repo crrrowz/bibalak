@@ -9,7 +9,7 @@ import { formatNumber, t, tn } from "@/lib/i18n";
 export function TodaySummary({ decks }: { decks: DeckSummary[] }) {
   if (decks.length === 0) return t("summary.empty");
 
-  const topLevel = decks.filter((d) => d.parent_id === null);
+  const topLevel = decks.filter((d) => d.parent_id === null || d.is_filtered);
   const totals = topLevel.reduce(
     (acc, d) => ({
       new: acc.new + d.new_count,

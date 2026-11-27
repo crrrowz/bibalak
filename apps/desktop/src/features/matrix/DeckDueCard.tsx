@@ -84,7 +84,7 @@ export function DeckDueCard({
               {deckItem.deck_name}
             </p>
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
             {tn("matrix.deckDue.count", deckItem.due_count)}
           </p>
         </div>

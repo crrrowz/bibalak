@@ -36,7 +36,8 @@ export function CalendarAgendaView({
       (occurrencesByDate.get(d)?.length ?? 0) === 0 &&
       (tasksByDate.timed.get(d)?.length ?? 0) === 0 &&
       (tasksByDate.dueOnly.get(d)?.length ?? 0) === 0 &&
-      (forecastMap.get(d) ?? 0) === 0,
+      (forecastMap.get(d) ?? 0) === 0 &&
+      scheduledHabitsForDate(habits, d, todayDayIndex, backendTodayDate).length === 0,
   );
 
   return (
@@ -127,6 +128,16 @@ export function CalendarAgendaView({
                     </span>
                     <span dir="auto" className="text-foreground">
                       {task.title}
+                    </span>
+                  </div>
+                ))}
+                {dayHabits.map((habit) => (
+                  <div
+                    key={habit.id}
+                    className="flex items-center justify-between rounded-lg border border-primary/25 bg-primary/5 px-3 py-1.5 text-xs"
+                  >
+                    <span dir="auto" className="font-medium text-foreground">
+                      {habit.title}
                     </span>
                   </div>
                 ))}

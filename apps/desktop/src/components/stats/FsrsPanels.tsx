@@ -13,6 +13,7 @@ import {
 } from "./chartTheme";
 import { difficultyQuery, stabilityQuery } from "./statQuery";
 import { t, formatNumber } from "@/lib/i18n";
+import { FSRS_ALGORITHM_NAME } from "@/lib/schedulingConstants";
 
 const STABILITY_LABELS = ["<1d", "1-7d", "7-21d", "21-90d", "90-180d", "180-365d", "365d+"];
 
@@ -35,7 +36,7 @@ export function FsrsPanels({
         <EmptyState
           icon={Brain}
           title={t("stats.fsrs.noneNoDecksTitle")}
-          description={t("stats.fsrs.noneNoDecksDescription")}
+          description={t("stats.fsrs.noneNoDecksDescription", { algo: FSRS_ALGORITHM_NAME })}
         />
       );
     }

@@ -128,7 +128,7 @@ In `v13 -> v14` (`MIGRATIONS[13]`), `CREATE INDEX idx_progress_ledger_active_cre
 ### 2.9 Out of Scope (Later Cards)
 
 - Progress UI panel & presentation styles (`Default`, `Scholar`, `Game`) → Step 8 (`P1`).
-- Tasks, matrix, habits, dailies, calendar → Steps 9–13 (`M1`–`CAL1`, ADR-018).
+- Tasks, matrix, habits, dailies, calendar → Steps 9–13 (`M1` to the calendar step, ADR-018).
 - Avatar, shop, spending gold, HP, mana, streaks, parties, bosses → Step 14 (`G1`).
 - Hosted API server & Supabase sync transport → Stage 2 (ADR-017).
 
@@ -383,4 +383,4 @@ Step `8a` (`P2`) adds three read-only queries and IPC commands for Scholar extra
 
 - `Game` style presentation (avatar, HUD, equipment, shop, custom rewards) → Step `14` (`R2`).
 - Random item drops, pets, mounts, classes, skills, solo achievements, sound effects → Step `15` (`R4`).
-- Any UI screen layouts beyond naming where `tasks_rewarded_today`, `YesterdaySummaryDto`, read-only deck-linked habit counts, and Lecture Log columns appear (`M2`, `M3`, `CAL1`, `R3`).
+- Any UI screen layouts beyond naming where `tasks_rewarded_today`, `YesterdaySummaryDto`, read-only deck-linked habit counts, and Lecture Log columns appear (`M2`, `M3`, the calendar step, `R3`).

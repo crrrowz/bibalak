@@ -26,8 +26,25 @@ test("bumpVersion updates Cargo.toml, all workspace package.json files, tauri.co
         JSON.stringify({ name: "@bibalak/ipc-types", version: "0.1.0" }, null, 2) + "\n",
       "packages/plugin-sdk/package.json":
         JSON.stringify({ name: "@bibalak/plugin-sdk", version: "0.1.0" }, null, 2) + "\n",
-      "apps/desktop/src-tauri/tauri.conf.json":
-        JSON.stringify({ productName: "Bibalak", version: "1.0.0" }, null, 2) + "\n",
+      "apps/desktop/src-tauri/tauri.conf.json": [
+        "{",
+        '  "productName": "Bibalak",',
+        '  "version": "1.0.0",',
+        '  "app": {',
+        '    "security": {',
+        '      "dangerousDisableAssetCspModification": ["script-src", "style-src"]',
+        "    }",
+        "  },",
+        '  "bundle": {',
+        '    "windows": {',
+        '      "nsis": {',
+        '        "languages": ["English", "Arabic"]',
+        "      }",
+        "    }",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
       "CHANGELOG.md": [
         "# Changelog",
         "",
@@ -71,10 +88,18 @@ test("bumpVersion updates Cargo.toml, all workspace package.json files, tauri.co
         .version,
       "0.1.0",
     );
-    assert.equal(
-      JSON.parse(fs.readFileSync(path.join(root, "apps/desktop/src-tauri/tauri.conf.json"), "utf8"))
-        .version,
-      "1.2.0",
+    const tauriConfRaw = fs.readFileSync(
+      path.join(root, "apps/desktop/src-tauri/tauri.conf.json"),
+      "utf8",
+    );
+    assert.equal(JSON.parse(tauriConfRaw).version, "1.2.0");
+    assert.ok(
+      tauriConfRaw.includes('"dangerousDisableAssetCspModification": ["script-src", "style-src"]'),
+      "tauri.conf.json single-line arrays must stay Prettier-compact",
+    );
+    assert.ok(
+      tauriConfRaw.includes('"languages": ["English", "Arabic"]'),
+      "tauri.conf.json languages array must stay Prettier-compact",
     );
 
     const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");

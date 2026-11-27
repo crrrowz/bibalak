@@ -2,7 +2,7 @@
 
 **Status:** Accepted (2026-11-22, owner approval)  
 **Date:** 2026-11-22  
-**Card:** `M1s` (Backlog Step 9a; contract for Phase C Steps `9` `M1`, `10` `M2`, `11` `M3`, `12` `CAL1`, `13` `R3`)  
+**Card:** `M1s` (Backlog Step 9a; contract for Phase C Steps `9` `M1`, `10` `M2`, `11` `M3`, `12` calendar, `13` `R3`)  
 **Related:** ADR-001, ADR-014, ADR-019  
 **Supersedes (where they differ):** internal design notes (and `01`–`03` §1 where noted)
 
@@ -20,7 +20,7 @@ The following product choices left open by the blueprints were confirmed by the 
 2. **Task checklists (sub-items):** **Deferred** beyond `v10` (no checklist table or JSON column in `v10`).
 3. **Recurrence in `v10`:**
    - **Tasks:** One-off only (no recurrence on `tasks`; recurring daily/weekly routines belong in `habits`).
-   - **Calendar events:** Simple structured recurrence without an external crate — `daily` or `weekly` on selected weekdays, with optional `until` date or occurrence `count`, stored structurally (`freq`, `interval`, `weekdays`, `until`/`count`) so it converts 1:1 to RFC 5545 `RRULE` for `CAL2`. Expansion runs in Rust over a UI-requested time window. Deleting a single occurrence uses an excluded-dates list (`exdates`) only; editing a single occurrence in isolation is deferred.
+   - **Calendar events:** Simple structured recurrence without an external crate — `daily` or `weekly` on selected weekdays, with optional `until` date or occurrence `count`, stored structurally (`freq`, `interval`, `weekdays`, `until`/`count`) so it converts 1:1 to RFC 5545 `RRULE` for Stage 2 calendar sync. Expansion runs in Rust over a UI-requested time window. Deleting a single occurrence uses an excluded-dates list (`exdates`) only; editing a single occurrence in isolation is deferred.
 
 ---
 
@@ -44,7 +44,7 @@ The live schema is `v9` (`MIGRATIONS` in `crates/bibalak-db/src/schema.rs:L8-L23
 
 **External calendar accounts:**
 
-- **No `calendar_accounts` table in `v10`.** Google/Outlook/CalDAV accounts and OAuth tokens belong to Stage 2 through the Bibalak API server (`CAL2`/`CAL3`, ADR-020).
+- **No `calendar_accounts` table in `v10`.** Google/Outlook/CalDAV accounts and OAuth tokens belong to Stage 2 through the Bibalak API server (Stage 2 calendar sync, ADR-020).
 - `calendar_events` reserves only two cheap nullable columns — `external_account_id TEXT NULL` and `external_event_id TEXT NULL` — so Stage 2 can link synced external events without rewriting `calendar_events` or adding half-built sync state (`sync_cursor`, `remote_etag`, `raw_provider_json`) in Stage 1.
 
 ---
@@ -273,7 +273,7 @@ CREATE INDEX idx_calendar_events_task
   - `weekdays`: `Vec<u8>` (`1..=7`, ISO weekdays; empty for `Daily`, non-empty sorted unique for `Weekly`).
   - Optional end bound (mutually exclusive): `until_date: Option<String>` (`"YYYY-MM-DD"`, inclusive) **or** `count: Option<u32>` (`>= 1`).
   - `exdates: Vec<String>` (`"YYYY-MM-DD"` dates excluded when deleting a single occurrence).
-  - **1:1 `RRULE` formatter (`CalendarRecurrence::to_rrule`):** Produces `FREQ=DAILY|WEEKLY;INTERVAL=<n>[;BYDAY=MO,TU,...][;UNTIL=YYYYMMDD|;COUNT=<c>]` so Stage 2 `CAL2` can export directly without schema changes.
+  - **1:1 `RRULE` formatter (`CalendarRecurrence::to_rrule`):** Produces `FREQ=DAILY|WEEKLY;INTERVAL=<n>[;BYDAY=MO,TU,...][;UNTIL=YYYYMMDD|;COUNT=<c>]` so Stage 2 calendar sync can export directly without schema changes.
   - **Rust window expansion (`expand_calendar_events`):** Given `[window_start_ms, window_end_ms)` and `tz_offset_minutes`, Rust expands recurring series into `CalendarOccurrenceDto` items, skipping dates in `exdates` and enforcing `until_date` / `count`.
   - **Out of scope for calendar events:** `MONTHLY`, `YEARLY`, `BYMONTHDAY`, `BYSETPOS`, arbitrary RFC 5545 `RRULE` parsing, and editing a single detached occurrence (`RECURRENCE-ID`).
 
@@ -1023,7 +1023,7 @@ Step `9` writes these tests **before** each implementation step (per Phase C/D r
 ## 3. Accepted Limitations
 
 - **Task checklists:** Tasks have no sub-item checklists in `v10`; deferred to a future migration.
-- **Single-occurrence calendar edits:** Users can delete one occurrence of a recurring calendar event (`exdates`), but editing one occurrence's title/time without splitting the series (`RECURRENCE-ID`) is deferred to `CAL2` / later.
+- **Single-occurrence calendar edits:** Users can delete one occurrence of a recurring calendar event (`exdates`), but editing one occurrence's title/time without splitting the series (`RECURRENCE-ID`) is deferred to Stage 2 calendar sync or later.
 - **Note flagging in Matrix:** `MatrixItemType` supports `Task` and `DeckDue` in `v10`; Anki `Note` flag projection waits until note/card flag workflows are surfaced in Browse.
 - **Cross-device deck links:** Because Anki `decks.id` is a per-collection integer (`crates/bibalak-db/src/import.rs:L11-L13`), a task/habit `deck_id` synced to another device assumes matching deck IDs (same limitation as `progress_by_deck` in ADR-019 §3).
 
@@ -1031,9 +1031,9 @@ Step `9` writes these tests **before** each implementation step (per Phase C/D r
 
 ## 4. Out of Scope
 
-- External calendar accounts, OAuth tokens, and Google/Outlook/CalDAV sync (`CAL2`, `CAL3`, ADR-020).
+- External calendar accounts, OAuth tokens, and Google/Outlook/CalDAV sync (Stage 2 calendar sync, ADR-020).
 - XP and gold reward amounts, daily rollover penalties, and deck-linked daily auto-completion rules (`R3`, spec `13a`).
-- Any UI screens, routes, or localized strings (`M2`, `M3`, `CAL1`).
+- Any UI screens, routes, or localized strings (`M2`, `M3`, the calendar step).
 - Game presentation style (avatar, HUD, shop, pets, bosses — `R2`, `R4`).
 
 ---
@@ -1048,13 +1048,13 @@ Step `9` writes these tests **before** each implementation step (per Phase C/D r
 
 ### Negative / Trade-offs
 
-- Storing calendar recurrence structurally (`daily` / `weekly` + `exdates`) means `monthly`/`yearly` local events cannot be created until a later extension adds them (or `CAL2` introduces an `RRULE` crate).
+- Storing calendar recurrence structurally (`daily` / `weekly` + `exdates`) means `monthly`/`yearly` local events cannot be created until a later extension adds them (or Stage 2 calendar sync introduces an `RRULE` crate).
 - Soft-referencing `deck_id` without a SQLite FK preserves deck-delete undo and sync FK safety, at the cost of checking missing decks at read time (`deck_name: None`).
 
 ---
 
 ## 6. Open Questions (For Later Cards)
 
-- **RRULE crate in `CAL2` (Stage 2):** When Stage 2 adds Google/Outlook/CalDAV sync (`CAL2`), evaluate whether to keep our pure formatter/expander or adopt an `rrule` crate (requires owner dependency approval per and `AGENTS.md`).
+- **RRULE crate in Stage 2 calendar sync:** When Stage 2 adds Google/Outlook/CalDAV sync, evaluate whether to keep our pure formatter/expander or adopt an `rrule` crate (requires owner dependency approval per and `AGENTS.md`).
 - **Reward numbers (`13a` / `R3`):** XP and gold constants for `task_done:<task_id>` and `habit_log:<habit_id>:<day_index>` are decided in spec `13a` (`R3s`).
 - **Claiming deterministic IDs in Stage 2 (`SUPA2`, ADR-017):** Deterministic RFC 4122 v5 IDs derived from `NIL_USER_ID` (`matrix_quadrants`, `habit_logs`, `progress_ledger`) must be re-derived from the signed-in account's `user_id` or remapped when local data is claimed.

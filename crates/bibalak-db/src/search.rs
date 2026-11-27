@@ -128,9 +128,9 @@ fn parse_token(token: &str, today: i32, now_ms: i64) -> Option<Cond> {
         let sql = match rest {
             "new" => "c.queue = 0".into(),
             "review" => "c.queue = 2".into(),
-            "learn" => "c.queue = 1".into(),
+            "learn" => "c.queue IN (1, 3)".into(),
             "due" => {
-                format!("(c.queue = 2 AND c.due <= {today}) OR (c.queue = 1 AND c.due <= {now_ms})")
+                format!("(c.queue = 2 AND c.due <= {today}) OR (c.queue = 1 AND c.due <= {now_ms}) OR (c.queue = 3 AND c.due <= {today})")
             }
             "suspended" => "c.queue = -1".into(),
             "buried" => "c.queue IN (-2, -3)".into(),
@@ -764,7 +764,9 @@ pub fn move_cards_to_deck(
 
     let json = serde_json::to_string(card_ids).map_err(err)?;
     conn.execute(
-        r#"UPDATE cards SET deck_id = ?1, "mod" = ?2, usn = -1 WHERE id IN (SELECT value FROM json_each(?3))"#,
+        r#"UPDATE cards
+           SET deck_id = ?1, original_deck_id = 0, original_due = 0, "mod" = ?2, usn = -1
+           WHERE id IN (SELECT value FROM json_each(?3))"#,
         rusqlite::params![deck_id, now_ms, json],
     )
     .map_err(err)?;

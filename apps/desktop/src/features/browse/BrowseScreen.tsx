@@ -171,9 +171,13 @@ export function BrowseScreen() {
 
   const invalidate = () => {
     setOffset(0);
-    void queryClient.invalidateQueries({
-      queryKey: mode === "cards" ? queryKeys.cardsAll : queryKeys.notesAll,
-    });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.cardsAll });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.decks });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.queueAll });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.deckCardIdsAll });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.statsAll });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.undoStatus });
   };
 
   const isFetching = mode === "cards" ? cardsQuery.isFetching : notesQuery.isFetching;
@@ -348,78 +352,82 @@ export function BrowseScreen() {
   }
 
   // Keyboard: Ctrl+A, Ctrl/Cmd+F, Up/Down row nav (with B3 autosave), Space toggle, Escape.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (isEditingTarget(e.target) || activeDialog !== null) return;
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === "a" && currentRows.length > 0) {
-        e.preventDefault();
-        setSelected(
-          new Set(
-            currentRows.map((r) =>
-              mode === "cards" ? (r as CardRow).card_id : (r as NoteRow).note_id,
-            ),
+  const keyHandler = (e: KeyboardEvent) => {
+    if (isEditingTarget(e.target) || activeDialog !== null) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === "a" && currentRows.length > 0) {
+      e.preventDefault();
+      setSelected(
+        new Set(
+          currentRows.map((r) =>
+            mode === "cards" ? (r as CardRow).card_id : (r as NoteRow).note_id,
           ),
-        );
+        ),
+      );
+      return;
+    }
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && currentRows.length > 0) {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      e.preventDefault();
+      const fallbackIdx = currentRows.findIndex((r) => selected.has(getRowId(r)));
+      const baseIdx = lastClickIdx !== null ? lastClickIdx : fallbackIdx;
+      const nextIdx =
+        e.key === "ArrowDown"
+          ? baseIdx < 0
+            ? 0
+            : Math.min(currentRows.length - 1, baseIdx + 1)
+          : baseIdx < 0
+            ? currentRows.length - 1
+            : Math.max(0, baseIdx - 1);
+      void focusRowAt(nextIdx);
+      return;
+    }
+    if (e.key === " " && currentRows.length > 0) {
+      if (
+        e.target instanceof HTMLElement &&
+        (e.target.closest("button") || e.target.closest("a") || e.target.closest("input"))
+      ) {
         return;
       }
-      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && currentRows.length > 0) {
-        if (e.altKey || e.ctrlKey || e.metaKey) return;
-        e.preventDefault();
-        const fallbackIdx = currentRows.findIndex((r) => selected.has(getRowId(r)));
-        const baseIdx = lastClickIdx !== null ? lastClickIdx : fallbackIdx;
-        const nextIdx =
-          e.key === "ArrowDown"
-            ? baseIdx < 0
-              ? 0
-              : Math.min(currentRows.length - 1, baseIdx + 1)
-            : baseIdx < 0
-              ? currentRows.length - 1
-              : Math.max(0, baseIdx - 1);
-        void focusRowAt(nextIdx);
+      e.preventDefault();
+      const fallbackIdx = currentRows.findIndex((r) => selected.has(getRowId(r)));
+      const targetIdx = lastClickIdx !== null ? lastClickIdx : Math.max(0, fallbackIdx);
+      const row = currentRows[targetIdx];
+      if (!row) return;
+      const id = getRowId(row);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      setLastClickIdx(targetIdx);
+      return;
+    }
+    if (e.key === "Escape") {
+      if (bulkAction !== null) {
+        setBulkAction(null);
         return;
       }
-      if (e.key === " " && currentRows.length > 0) {
-        if (
-          e.target instanceof HTMLElement &&
-          (e.target.closest("button") || e.target.closest("a") || e.target.closest("input"))
-        ) {
-          return;
-        }
-        e.preventDefault();
-        const fallbackIdx = currentRows.findIndex((r) => selected.has(getRowId(r)));
-        const targetIdx = lastClickIdx !== null ? lastClickIdx : Math.max(0, fallbackIdx);
-        const row = currentRows[targetIdx];
-        if (!row) return;
-        const id = getRowId(row);
-        setSelected((prev) => {
-          const next = new Set(prev);
-          if (next.has(id)) next.delete(id);
-          else next.add(id);
-          return next;
-        });
-        setLastClickIdx(targetIdx);
+      if (editorRef.current?.isDirty()) {
         return;
       }
-      if (e.key === "Escape") {
-        if (bulkAction !== null) {
-          setBulkAction(null);
-          return;
-        }
-        if (editorRef.current?.isDirty()) {
-          return;
-        }
-        setSelected(new Set());
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  });
+      setSelected(new Set());
+    }
+  };
+  const keyHandlerRef = useRef(keyHandler);
+  keyHandlerRef.current = keyHandler;
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => keyHandlerRef.current(e);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   function toggleRowSelection(id: number, checked: boolean) {
     setSelected((prev) => {

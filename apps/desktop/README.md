@@ -52,7 +52,7 @@ Useful query parameters on `preview.html`:
 When a file named `portable.txt` sits next to `Bibalak.exe` (Windows),
 `data_dir::data_dir` stores the entire user directory (`collection.sqlite`,
 `collection.media/`, `backups/`, `plugins/`, and app preferences) inside a `data/`
-folder beside the executable instead of `%APPDATA%\com.keepsake.desktop`. See
+folder beside the executable instead of `%APPDATA%\com.bibalak.desktop`. See
 [Install, build and portable use](../../docs/guides/install.md) and
 [ADR-006](../../docs/architecture/adr/006-portable-mode.md).
 

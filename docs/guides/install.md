@@ -243,12 +243,12 @@ deck), then **Import** in Bibalak. More in the [user guide](user-guide.md).
 
 ## Where data lives
 
-| Copy                | Folder                                               |
-| ------------------- | ---------------------------------------------------- |
-| Windows (installed) | `%APPDATA%\com.keepsake.desktop`                     |
-| Windows (portable)  | `data` next to `Bibalak.exe`                         |
-| macOS               | `~/Library/Application Support/com.keepsake.desktop` |
-| Linux               | `~/.local/share/com.keepsake.desktop`                |
+| Copy                | Folder                                              |
+| ------------------- | --------------------------------------------------- |
+| Windows (installed) | `%APPDATA%\com.bibalak.desktop`                     |
+| Windows (portable)  | `data` next to `Bibalak.exe`                        |
+| macOS               | `~/Library/Application Support/com.bibalak.desktop` |
+| Linux               | `~/.local/share/com.bibalak.desktop`                |
 
 Inside: `collection.sqlite` (the collection), `collection.media/`,
 `backups/` (a ZIP every day the app is opened, last 20 kept) and `plugins/`.

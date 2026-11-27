@@ -367,3 +367,379 @@ fn repro_d_badges_match_served_queue_counts() {
         "count_due_by_type must equal what the parent queue actually serves"
     );
 }
+
+#[test]
+fn forgotten_card_counts_as_new_again_and_decrements_new_badge_on_again() {
+    // Reproduces owner's case:
+    // 1. Studying a previously-studied card after Reset (forget_cards) must consume
+    //    today's new-card quota when answered Again, decrementing New (16 -> 15) as
+    //    Learn rises to 1 — whether the prior review was yesterday or earlier today.
+    // 2. Undoing forget_cards removes the manual-forget revlog boundary.
+    let (c, clock, nt_id) = setup();
+    let deck = c.create_deck("ResetTest").unwrap();
+    c.set_deck_options(deck.id, 16, 200).unwrap();
+    add_new_cards(&c, deck.id, nt_id, 20, "R");
+
+    // Day 0: study one card to review.
+    let c0 = c.next_card(deck.id).unwrap().unwrap();
+    answer(&c, &clock, c0.id, Rating::Easy);
+
+    // Day 1: forget c0, verify New = 16, Learn = 0.
+    clock.advance_days(1);
+    c.forget_cards(&[c0.id], true).unwrap();
+    assert_eq!(c.count_due_by_type(deck.id).unwrap(), (16, 0, 0));
+
+    // Answer c0 with Again on Day 1 -> must consume 1 new quota: New 15, Learn 1.
+    clock.set(clock.now_ms() + 1_000);
+    answer(&c, &clock, c0.id, Rating::Again);
+    assert_eq!(
+        c.count_due_by_type(deck.id).unwrap(),
+        (15, 1, 0),
+        "forgetting a previously-studied card must let its next Again decrement New"
+    );
+
+    // Now forget another card studied *earlier today* on Day 1:
+    // 1) Pre-forget quota is not refunded (new_done=1 already used, remaining=15, total=19 -> New=15).
+    // 2) Studying c0 again after today's forget must increment new_done -> New=14, Learn=1.
+    clock.set(clock.now_ms() + 1_000);
+    c.forget_cards(&[c0.id], true).unwrap();
+    assert_eq!(c.count_due_by_type(deck.id).unwrap(), (15, 0, 0));
+    clock.set(clock.now_ms() + 1_000);
+    answer(&c, &clock, c0.id, Rating::Again);
+    assert_eq!(
+        c.count_due_by_type(deck.id).unwrap(),
+        (14, 1, 0),
+        "answering a card reset earlier today must decrement remaining New quota"
+    );
+
+    // Undo second answer + second forget removes the boundary and restores learning state.
+    c.undo().unwrap();
+    assert_eq!(c.count_due_by_type(deck.id).unwrap(), (15, 0, 0));
+    c.undo().unwrap();
+    assert_eq!(c.count_due_by_type(deck.id).unwrap(), (15, 1, 0));
+}
+
+#[test]
+fn filtered_deck_ignores_default_limits_and_uses_home_deck_preset() {
+    let (c, clock, nt_id) = setup();
+    // Set Default deck (id = 1) limits to 0/0.
+    c.set_deck_options(1, 0, 0).unwrap();
+    let home = c.create_deck("Home").unwrap();
+    let mut home_cfg = c.get_deck_config(home.id).unwrap();
+    home_cfg.new_per_day = 5;
+    home_cfg.review_per_day = 5;
+    home_cfg.algorithm = bibalak_core::model::Algorithm::Fsrs;
+    c.set_deck_config(&home_cfg).unwrap();
+
+    add_new_cards(&c, home.id, nt_id, 5, "F");
+    // Graduate one card to future review (due = today + 4), keep 4 as new.
+    let first = c.next_card(home.id).unwrap().unwrap();
+    answer(&c, &clock, first.id, Rating::Easy);
+    clock.set(clock.now_ms() + 1_000);
+
+    // Filtered deck gathers all 5 cards from Home.
+    let cram = c.create_filtered_deck("Cram", "deck:Home", 0, 50).unwrap();
+    assert_eq!(
+        c.count_due_by_type(cram.id).unwrap(),
+        (4, 0, 1),
+        "filtered deck must not be capped by Default (0/0) or hide future reviews"
+    );
+    let next = c.next_card(cram.id).unwrap().expect("cram card served");
+    let sched_cfg = c.get_sched_config_for_card(next.id, next.deck_id).unwrap();
+    assert_eq!(
+        sched_cfg.algorithm,
+        bibalak_core::model::Algorithm::Fsrs,
+        "filtered card must use its home deck preset"
+    );
+}
+
+#[test]
+fn deck_list_unburies_yesterday_buried_cards_on_day_rollover() {
+    let (c, clock, nt_id) = setup();
+    let deck = c.create_deck("BuryRollover").unwrap();
+    add_new_cards(&c, deck.id, nt_id, 1, "B");
+    let card_id = c.deck_card_ids(deck.id, false).unwrap()[0];
+
+    c.bury_cards(&[card_id]).unwrap();
+    let day0_counts: std::collections::HashMap<i64, (u32, u32, u32)> = c
+        .list_decks_with_counts()
+        .unwrap()
+        .into_iter()
+        .map(|(d, cts)| (d.id, cts))
+        .collect();
+    assert_eq!(day0_counts[&deck.id], (0, 0, 0));
+
+    clock.advance_days(1);
+    let day1_counts: std::collections::HashMap<i64, (u32, u32, u32)> = c
+        .list_decks_with_counts()
+        .unwrap()
+        .into_iter()
+        .map(|(d, cts)| (d.id, cts))
+        .collect();
+    assert_eq!(
+        day1_counts[&deck.id],
+        (1, 0, 0),
+        "list_decks_with_counts must unbury on day rollover before study opens"
+    );
+}
+
+#[test]
+fn answer_card_rejects_suspended_or_buried_card() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let clock = Arc::new(TestClock::new(T0));
+    let sched = Arc::new(bibalak_scheduler::DefaultSchedulerSet);
+    let c = Collection::new(Box::new(storage), clock)
+        .unwrap()
+        .with_scheduler_set(sched);
+    let nt_id = c.add_stock_notetype(0).unwrap().id;
+    let deck = c.create_deck("Guard").unwrap();
+    add_new_cards(&c, deck.id, nt_id, 1, "G");
+    let card_id = c.deck_card_ids(deck.id, false).unwrap()[0];
+
+    c.suspend_cards(&[card_id]).unwrap();
+    assert!(c.answer_card(card_id, Rating::Good, 1000).is_err());
+
+    c.unsuspend_cards(&[card_id]).unwrap();
+    c.bury_cards(&[card_id]).unwrap();
+    assert!(c.answer_card(card_id, Rating::Good, 1000).is_err());
+}
+
+#[test]
+fn delete_deck_undo_restores_revlogs_day_limits_and_filtered_config() {
+    let (c, clock, nt_id) = setup();
+    let deck = c.create_deck("UndoDeck").unwrap();
+    add_new_cards(&c, deck.id, nt_id, 2, "UD");
+    c.increase_today_new_limit(deck.id, 5).unwrap();
+
+    let first = c.next_card(deck.id).unwrap().unwrap();
+    answer(&c, &clock, first.id, Rating::Easy);
+    assert_eq!(c.storage().revlogs_for_optimize(None).unwrap().len(), 1);
+
+    c.remove_deck(deck.id).unwrap();
+    assert!(c.storage().revlogs_for_optimize(None).unwrap().is_empty());
+
+    c.undo().unwrap();
+    assert_eq!(c.storage().revlogs_for_optimize(None).unwrap().len(), 1);
+    assert_eq!(c.get_today_extra_new(deck.id).unwrap(), 5);
+
+    // Filtered deck config and membership also restore on delete undo.
+    let cram = c
+        .create_filtered_deck("CramUndo", "deck:UndoDeck", 0, 50)
+        .unwrap();
+    assert!(!c.deck_card_ids(cram.id, false).unwrap().is_empty());
+    c.remove_deck(cram.id).unwrap();
+    c.undo().unwrap();
+    let cfg = c
+        .get_filtered_config(cram.id)
+        .unwrap()
+        .expect("filtered cfg restored");
+    assert_eq!(cfg.search, "deck:UndoDeck");
+    assert!(!c.deck_card_ids(cram.id, false).unwrap().is_empty());
+}
+
+#[test]
+fn undo_answer_restores_zero_ease_and_reposition_counts_only_new_cards() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let clock = Arc::new(TestClock::new(T0));
+    let sched = Arc::new(bibalak_scheduler::DefaultSchedulerSet);
+    let c = Collection::new(Box::new(storage), clock.clone())
+        .unwrap()
+        .with_scheduler_set(sched);
+    let nt_id = c.add_stock_notetype(0).unwrap().id;
+    let deck = c.create_deck("UndoEase").unwrap();
+    add_new_cards(&c, deck.id, nt_id, 2, "UE");
+    let ids = c.deck_card_ids(deck.id, false).unwrap();
+
+    assert_eq!(c.storage().card_raw_ease_factor(ids[0]).unwrap(), Some(0));
+    c.answer_card(ids[0], Rating::Again, 1000).unwrap();
+    c.undo().unwrap();
+    assert_eq!(
+        c.storage().card_raw_ease_factor(ids[0]).unwrap(),
+        Some(0),
+        "undoing first answer on a new card must restore ease_factor = 0"
+    );
+
+    // Make ids[1] a review card, then pass [ids[0], ids[1]] to reposition_new_cards.
+    c.answer_card(ids[1], Rating::Easy, 1000).unwrap();
+    c.reposition_new_cards(&ids, 10, 1, false, false).unwrap();
+    assert!(matches!(
+        c.undo_status(),
+        Some(bibalak_core::undo::UndoAction::RepositionCards { count: 1 })
+    ));
+}
+
+#[test]
+fn suspend_bury_move_options_limit_undo_and_delete_notes_clears_undo() {
+    let (c, _clock, nt_id) = setup();
+    let d1 = c.create_deck("D1").unwrap();
+    let d2 = c.create_deck("D2").unwrap();
+    add_new_cards(&c, d1.id, nt_id, 2, "U");
+    let ids = c.deck_card_ids(d1.id, false).unwrap();
+
+    // Suspend -> undo restores active queue
+    c.suspend_cards(&[ids[0]]).unwrap();
+    assert_eq!(c.storage().card_queue(ids[0]).unwrap(), Some(-1));
+    // Burying an already-suspended card must not overwrite queue = -1.
+    c.bury_cards(&[ids[0]]).unwrap();
+    assert_eq!(c.storage().card_queue(ids[0]).unwrap(), Some(-1));
+    c.undo().unwrap(); // undo bury (restores -1)
+    c.undo().unwrap(); // undo suspend (restores 0)
+    assert_eq!(c.storage().card_queue(ids[0]).unwrap(), Some(0));
+
+    // Bury -> undo restores active queue
+    c.bury_cards(&[ids[0]]).unwrap();
+    assert_eq!(c.storage().card_queue(ids[0]).unwrap(), Some(-2));
+    c.undo().unwrap();
+    assert_eq!(c.storage().card_queue(ids[0]).unwrap(), Some(0));
+
+    // Move deck -> undo restores original deck
+    c.move_cards_to_deck(&[ids[0]], d2.id).unwrap();
+    assert_eq!(c.study_card(ids[0]).unwrap().unwrap().deck_id, d2.id);
+    c.undo().unwrap();
+    assert_eq!(c.study_card(ids[0]).unwrap().unwrap().deck_id, d1.id);
+
+    // Increase today's limit -> undo restores prior extra
+    c.increase_today_new_limit(d1.id, 7).unwrap();
+    assert_eq!(c.get_today_extra_new(d1.id).unwrap(), 7);
+    c.undo().unwrap();
+    assert_eq!(c.get_today_extra_new(d1.id).unwrap(), 0);
+
+    // Deck options -> undo restores prior limits
+    c.set_deck_options(d1.id, 5, 50).unwrap();
+    assert_eq!(c.get_deck_options(d1.id).unwrap(), (5, 50));
+    c.undo().unwrap();
+    assert_eq!(c.get_deck_options(d1.id).unwrap(), (20, 200));
+
+    // Delete note -> clears undo history so stale undo cannot run
+    let note_id = c.study_card(ids[1]).unwrap().unwrap().note_id;
+    c.suspend_cards(&[ids[0]]).unwrap();
+    assert!(c.undo_status().is_some());
+    c.delete_notes(&[note_id]).unwrap();
+    assert!(c.undo_status().is_none());
+}
+
+#[test]
+fn filtered_deck_answers_do_not_consume_home_deck_daily_limits_either_way() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let clock = Arc::new(TestClock::new(T0));
+    let sched = Arc::new(bibalak_scheduler::DefaultSchedulerSet);
+    let c = Collection::new(Box::new(storage), clock.clone())
+        .unwrap()
+        .with_scheduler_set(sched);
+    let nt_id = c.add_stock_notetype(0).unwrap().id;
+    let home = c.create_deck("HomeLimits").unwrap();
+    let mut home_cfg = c.get_deck_config(home.id).unwrap();
+    home_cfg.new_per_day = 1;
+    home_cfg.review_per_day = 1;
+    home_cfg.algorithm = bibalak_core::model::Algorithm::Sm2;
+    c.set_deck_config(&home_cfg).unwrap();
+
+    // Seed 3 cards to graduate into due reviews (R0 tagged cram, R1 plain, R2 tagged pool2).
+    c.add_note(
+        nt_id,
+        home.id,
+        &["R0 Q".to_string(), "R0 A".to_string()],
+        &["cram".to_string()],
+    )
+    .unwrap();
+    c.add_note(
+        nt_id,
+        home.id,
+        &["R1 Q".to_string(), "R1 A".to_string()],
+        &[],
+    )
+    .unwrap();
+    c.add_note(
+        nt_id,
+        home.id,
+        &["R2 Q".to_string(), "R2 A".to_string()],
+        &["pool2".to_string()],
+    )
+    .unwrap();
+    for card_id in c.deck_card_ids(home.id, false).unwrap() {
+        c.answer_card(card_id, Rating::Easy, 1000).unwrap();
+        clock.set(clock.now_ms() + 1_000);
+    }
+
+    // Move forward 5 days so all 3 SM-2 Easy review cards (4d interval) are due today.
+    clock.advance_days(5);
+
+    // Seed 3 new cards (N0 tagged cram, N1 plain, N2 tagged pool2).
+    c.add_note(
+        nt_id,
+        home.id,
+        &["N0 Q".to_string(), "N0 A".to_string()],
+        &["cram".to_string()],
+    )
+    .unwrap();
+    c.add_note(
+        nt_id,
+        home.id,
+        &["N1 Q".to_string(), "N1 A".to_string()],
+        &[],
+    )
+    .unwrap();
+    c.add_note(
+        nt_id,
+        home.id,
+        &["N2 Q".to_string(), "N2 A".to_string()],
+        &["pool2".to_string()],
+    )
+    .unwrap();
+    assert_eq!(c.count_due_by_type(home.id).unwrap(), (1, 0, 1));
+
+    // Direction A: studying in a filtered deck must not consume the home deck's daily limits.
+    let cram = c
+        .create_filtered_deck("Cram", "deck:HomeLimits tag:cram", 0, 10)
+        .unwrap();
+    assert_eq!(c.count_due_by_type(cram.id).unwrap(), (1, 0, 1));
+
+    let cram_ids = c.deck_card_ids(cram.id, false).unwrap();
+    assert_eq!(cram_ids.len(), 2);
+    assert!(c.next_card(cram.id).unwrap().is_some());
+    let mut cram_phases = Vec::new();
+    for card_id in cram_ids {
+        let card = c.study_card(card_id).unwrap().expect("cram card exists");
+        cram_phases.push(card.state.phase);
+        c.answer_card(card_id, Rating::Easy, 1000).unwrap();
+        clock.set(clock.now_ms() + 1_000);
+    }
+    assert_eq!(cram_phases.len(), 2);
+    assert!(cram_phases.contains(&CardPhase::New));
+    assert!(cram_phases.contains(&CardPhase::Review));
+
+    assert_eq!(
+        c.count_due_by_type(home.id).unwrap(),
+        (1, 0, 1),
+        "answering cards in filtered deck must leave home deck daily limits untouched"
+    );
+    let list_counts: std::collections::HashMap<i64, (u32, u32, u32)> = c
+        .list_decks_with_counts()
+        .unwrap()
+        .into_iter()
+        .map(|(d, cts)| (d.id, cts))
+        .collect();
+    assert_eq!(list_counts[&home.id], (1, 0, 1));
+
+    // Exhaust the home deck's daily limits (1 new + 1 review).
+    let mut home_phases = Vec::new();
+    for _ in 0..2 {
+        let card = c.next_card(home.id).unwrap().expect("home card offered");
+        home_phases.push(card.state.phase);
+        c.answer_card(card.id, Rating::Easy, 1000).unwrap();
+        clock.set(clock.now_ms() + 1_000);
+    }
+    assert!(c.next_card(home.id).unwrap().is_none());
+    assert_eq!(home_phases.len(), 2);
+    assert!(home_phases.contains(&CardPhase::New));
+    assert!(home_phases.contains(&CardPhase::Review));
+    assert_eq!(c.count_due_by_type(home.id).unwrap(), (0, 0, 0));
+
+    // Direction B: exhausting the home deck's daily limits must not block a filtered deck.
+    // Home started with 2 new + 2 review; exhausting (1 new, 1 review) leaves 1 new + 3 review.
+    let cram2 = c
+        .create_filtered_deck("Cram2", "deck:HomeLimits", 0, 10)
+        .unwrap();
+    assert_eq!(c.count_due_by_type(cram2.id).unwrap(), (1, 0, 3));
+    assert!(c.next_card(cram2.id).unwrap().is_some());
+}

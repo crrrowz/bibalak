@@ -207,4 +207,15 @@ describe("StyleHud (14d)", () => {
     const goalLink = screen.getByRole("link", { name: /Today: 44 \/ 10 XP/i });
     expect(goalLink).toHaveAttribute("title", expect.stringMatching(/Daily goal/i));
   });
+
+  it("LOGIC1: does not force dir=ltr on Arabic xpIntoNext text containing من", async () => {
+    setLocale("ar");
+    useStyle.getState().setStyle("scholar");
+    vi.spyOn(ipcModule.ipc, "progressSummary").mockResolvedValue(SAMPLE_PROGRESS);
+
+    renderHud(false);
+
+    const xpText = await screen.findByText(/80 من 300 XP/);
+    expect(xpText).not.toHaveAttribute("dir", "ltr");
+  });
 });

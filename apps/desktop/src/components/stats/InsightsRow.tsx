@@ -45,7 +45,7 @@ function Insight({
     <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
       <Icon className="size-4 text-primary" />
       <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-sm font-semibold">{value}</span>
+      <span className="text-sm font-semibold tabular-nums">{value}</span>
     </div>
   );
 }

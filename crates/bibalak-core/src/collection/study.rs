@@ -69,6 +69,12 @@ impl StudySubtreePlan {
 
         let mut subtree_remaining = HashMap::with_capacity(decks.len());
         for d in &decks {
+            if d.is_filtered {
+                // Filtered decks are governed by their gather limit, never by
+                // Default (`config_id = 1`) daily new/review limits.
+                subtree_remaining.insert(d.id, (u32::MAX, u32::MAX));
+                continue;
+            }
             let (new_per_day, rev_per_day) =
                 all_limits.get(&d.config_id).copied().unwrap_or((20, 200));
             let extra = extra_new.get(&d.id).copied().unwrap_or(0);
@@ -390,9 +396,21 @@ impl Collection {
             self.storage.unbury_all(now_ms)?;
             self.last_unbury_day.store(today, Ordering::Relaxed);
             let _ = self.storage.set_last_unbury_day(today, now_ms);
+            self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
             return Ok(true);
         }
         Ok(false)
+    }
+
+    fn mark_bury_day_initialized(&self, now_ms: i64) {
+        let today = self.today();
+        if self
+            .last_unbury_day
+            .compare_exchange(i32::MIN, today, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            let _ = self.storage.set_last_unbury_day(today, now_ms);
+        }
     }
 
     /// Prepare a study session for `deck_id` (unburies only when the study day
@@ -408,12 +426,28 @@ impl Collection {
         for id in self.study_subtree(deck_id)? {
             self.storage.unbury_deck(id, now_ms)?;
         }
+        self.clear_undo();
+        self.events.emit(DomainEvent::DeckChanged { deck_id });
         Ok(())
     }
 
     /// Render inputs + scheduling state for a specific card.
     pub fn study_card(&self, card_id: i64) -> CoreResult<Option<StudyCard>> {
         self.storage.study_card(card_id)
+    }
+
+    /// Scheduling config for `card_id`, using its home deck (`original_deck_id`)
+    /// when the card is currently gathered in a filtered deck.
+    pub fn get_sched_config_for_card(
+        &self,
+        card_id: i64,
+        fallback_deck_id: i64,
+    ) -> CoreResult<crate::scheduling::SchedConfig> {
+        let deck_id = self
+            .storage
+            .card_home_deck_id(card_id)?
+            .unwrap_or(fallback_deck_id);
+        self.get_sched_config(deck_id)
     }
 
     /// Answer a card: load card + deck config, run the configured [`SchedulerSet`],
@@ -426,7 +460,13 @@ impl Collection {
         let card = self
             .study_card(card_id)?
             .ok_or_else(|| CoreError::NotFound(format!("card {card_id}")))?;
-        let config = self.get_sched_config(card.deck_id)?;
+        if self.storage.card_queue(card_id)?.is_some_and(|q| q < 0) {
+            return Err(CoreError::Invalid(
+                "cannot answer a suspended or buried card".into(),
+            ));
+        }
+        let raw_ease = self.storage.card_raw_ease_factor(card_id)?;
+        let config = self.get_sched_config_for_card(card_id, card.deck_id)?;
         let leech_threshold = config.leech_threshold;
         let algorithm = config.algorithm;
         let today = self.today();
@@ -457,10 +497,14 @@ impl Collection {
             taken_ms: time_ms.clamp(0, 60_000),
             review_kind,
         };
+        let mut prev_state = card.state;
+        if raw_ease == Some(0) {
+            prev_state.ease_milli = 0;
+        }
         self.apply_answer(
             card_id,
             card.note_id,
-            &card.state,
+            &prev_state,
             card.due,
             &outcome.next,
             due,
@@ -524,6 +568,9 @@ impl Collection {
         let granted = outcome.reward_granted;
         // Sibling bury: keep siblings off the queue for the rest of the session.
         let buried_siblings = self.storage.bury_siblings(note_id, card_id, now_ms)?;
+        if !buried_siblings.is_empty() {
+            self.mark_bury_day_initialized(now_ms);
+        }
         // Leech detection.
         let is_leech =
             leech_threshold > 0 && next.lapses > 0 && next.lapses.is_multiple_of(leech_threshold);
@@ -558,6 +605,7 @@ impl Collection {
                 undo_reward_key.as_deref(),
                 now,
             )?;
+            s.revoke_streak_freeze_if_inactive(answer_day, day_start_ms, day_end_ms, now)?;
             let undo_today =
                 crate::progress::day_index_for_ms(now, tz_offset, rollover, created_day) as i32;
             if crate::progress::is_habit_day_reward_eligible(answer_day, undo_today) {
@@ -663,68 +711,95 @@ impl Collection {
         )
     }
 
-    /// Suspend cards (sets `queue = -1`). Emits one event for the batch.
+    /// Suspend cards (sets `queue = -1`). Records one undo step and emits one event.
     pub fn suspend_cards(&self, card_ids: &[i64]) -> CoreResult<()> {
         if card_ids.is_empty() {
             return Ok(());
         }
         let now_ms = self.clock.now_ms();
+        let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage.suspend_cards(card_ids, now_ms)?;
-        self.events.emit(DomainEvent::CardAnswered {
-            card_id: card_ids[0],
-        });
+        if !prev.is_empty() {
+            let count = prev.len() as u32;
+            self.record_undo(UndoAction::SuspendCards { count }, move |s, now| {
+                s.restore_cards(&prev, now)
+            });
+        }
+        self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         Ok(())
     }
 
-    /// Unsuspend cards. Emits one event for the batch.
+    /// Unsuspend cards. Records one undo step and emits one event.
     pub fn unsuspend_cards(&self, card_ids: &[i64]) -> CoreResult<()> {
         if card_ids.is_empty() {
             return Ok(());
         }
         let now_ms = self.clock.now_ms();
+        let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage.unsuspend_cards(card_ids, now_ms)?;
-        self.events.emit(DomainEvent::CardAnswered {
-            card_id: card_ids[0],
-        });
+        if !prev.is_empty() {
+            let count = prev.len() as u32;
+            self.record_undo(UndoAction::UnsuspendCards { count }, move |s, now| {
+                s.restore_cards(&prev, now)
+            });
+        }
+        self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         Ok(())
     }
 
-    /// Manually bury cards (sets `queue = -2`). Emits one event for the batch.
+    /// Manually bury cards (sets `queue = -2`). Records one undo step and emits one event.
     pub fn bury_cards(&self, card_ids: &[i64]) -> CoreResult<()> {
         if card_ids.is_empty() {
             return Ok(());
         }
         let now_ms = self.clock.now_ms();
+        self.mark_bury_day_initialized(now_ms);
+        let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage.bury_cards(card_ids, now_ms)?;
-        self.events.emit(DomainEvent::CardAnswered {
-            card_id: card_ids[0],
-        });
+        if !prev.is_empty() {
+            let count = prev.len() as u32;
+            self.record_undo(UndoAction::BuryCards { count }, move |s, now| {
+                s.restore_cards(&prev, now)
+            });
+        }
+        self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         Ok(())
     }
 
-    /// Restore buried cards (`queue IN (-2, -3)`) to their natural queue. Emits one event for the batch.
+    /// Restore buried cards (`queue IN (-2, -3)`) to their natural queue.
+    /// Records one undo step and emits one event.
     pub fn unbury_cards(&self, card_ids: &[i64]) -> CoreResult<()> {
         if card_ids.is_empty() {
             return Ok(());
         }
         let now_ms = self.clock.now_ms();
+        let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage.unbury_cards(card_ids, now_ms)?;
-        self.events.emit(DomainEvent::CardAnswered {
-            card_id: card_ids[0],
-        });
+        if !prev.is_empty() {
+            let count = prev.len() as u32;
+            self.record_undo(UndoAction::UnburyCards { count }, move |s, now| {
+                s.restore_cards(&prev, now)
+            });
+        }
+        self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         Ok(())
     }
 
-    /// Set the flag (0–7) on a list of cards. Emits one event for the batch.
+    /// Set the flag (0–7) on a list of cards. Records one undo step and emits one event.
     pub fn set_card_flag(&self, card_ids: &[i64], flag: u8) -> CoreResult<()> {
         if card_ids.is_empty() {
             return Ok(());
         }
         let now_ms = self.clock.now_ms();
+        let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage.set_card_flag(card_ids, flag, now_ms)?;
-        self.events.emit(DomainEvent::CardAnswered {
-            card_id: card_ids[0],
-        });
+        if !prev.is_empty() {
+            let count = prev.len() as u32;
+            self.record_undo(UndoAction::SetCardFlag { count }, move |s, now| {
+                s.restore_cards(&prev, now)
+            });
+        }
+        self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         Ok(())
     }
 
@@ -736,15 +811,16 @@ impl Collection {
             return Ok(());
         }
         let now_ms = self.clock.now_ms();
-        let prev = self.storage.forget_cards(card_ids, reset_counts, now_ms)?;
+        let (prev, revlog_ids) =
+            self.storage
+                .forget_cards_with_revlog(card_ids, reset_counts, now_ms)?;
         if !prev.is_empty() {
             let count = prev.len() as u32;
             self.record_undo(UndoAction::ForgetCards { count }, move |s, now| {
-                s.restore_cards(&prev, now)
+                s.restore_cards(&prev, now)?;
+                s.delete_revlogs(&revlog_ids)
             });
-            self.events.emit(DomainEvent::CardAnswered {
-                card_id: card_ids[0],
-            });
+            self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         }
         Ok(())
     }
@@ -767,9 +843,7 @@ impl Collection {
             self.record_undo(UndoAction::SetDueDate { count }, move |s, now| {
                 s.restore_cards(&prev, now)
             });
-            self.events.emit(DomainEvent::CardAnswered {
-                card_id: card_ids[0],
-            });
+            self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         }
         Ok(())
     }
@@ -805,7 +879,8 @@ impl Collection {
             shift_existing,
             now_ms,
         )?;
-        let affected_count = card_ids.len() as u32;
+        let id_set: HashSet<i64> = card_ids.iter().copied().collect();
+        let affected_count = prev.iter().filter(|c| id_set.contains(&c.id)).count() as u32;
         if !prev.is_empty() {
             self.record_undo(
                 UndoAction::RepositionCards {
@@ -813,9 +888,7 @@ impl Collection {
                 },
                 move |s, now| s.restore_cards(&prev, now),
             );
-            self.events.emit(DomainEvent::CardAnswered {
-                card_id: card_ids[0],
-            });
+            self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         }
         Ok(())
     }

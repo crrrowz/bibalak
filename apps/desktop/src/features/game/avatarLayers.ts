@@ -39,9 +39,9 @@ export const AVATAR_LAYER_ORDER: ReadonlyArray<AvatarLayerSlot> = [
 ];
 
 export const DEFAULT_AVATAR_PROFILE: AvatarProfileDto = {
-  body_tone: "tone_1",
+  body_tone: "tone_2",
   hair_style: "hair_1",
-  hair_color: "black",
+  hair_color: "brown",
   starter_outfit: "tunic_slate",
   starter_accessory: "none",
 };

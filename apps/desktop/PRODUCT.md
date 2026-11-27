@@ -60,7 +60,7 @@ emoji.
 Bibalak includes local-first
 **Eisenhower Matrix**, **Habit Tracker**, and **Calendar** tools under the
 **Plan** sidebar group so learners can organize study reviews alongside tasks,
-routines, and schedules (`ADR-018`). External calendar sync (`CAL2`, `CAL3`) is
+routines, and schedules (`ADR-018`). External calendar sync (Stage 2) is
 planned for Stage 2.
 
 ## Accessibility & Inclusion

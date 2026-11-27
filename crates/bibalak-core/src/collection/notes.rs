@@ -41,6 +41,9 @@ impl Collection {
             tags,
             self.clock.now_ms(),
         )?;
+        self.record_undo(UndoAction::AddNote { count: 1 }, move |s, undo_now| {
+            s.delete_notes(&[note_id], undo_now)
+        });
         self.events.emit(DomainEvent::NoteAdded { note_id });
         Ok(AddNoteResult {
             note_id,
@@ -71,6 +74,11 @@ impl Collection {
         let (note_ids, cards_added) =
             self.storage
                 .add_notes_batch(notetype_id, deck_id, notes, self.clock.now_ms())?;
+        let undo_ids = note_ids.clone();
+        let count = u32::try_from(undo_ids.len()).unwrap_or(u32::MAX);
+        self.record_undo(UndoAction::AddNote { count }, move |s, undo_now| {
+            s.delete_notes(&undo_ids, undo_now)
+        });
         self.events.emit(DomainEvent::NotesUpdated {
             note_ids: note_ids.clone(),
         });
@@ -116,9 +124,10 @@ impl Collection {
         self.storage.notes_by_ids(ids)
     }
 
-    /// Delete notes (and their cards + revlogs). Emits SchemaChanged.
+    /// Delete notes (and their cards + revlogs). Clears undo history and emits SchemaChanged.
     pub fn delete_notes(&self, note_ids: &[i64]) -> CoreResult<()> {
         self.storage.delete_notes(note_ids, self.clock.now_ms())?;
+        self.clear_undo();
         self.events.emit(DomainEvent::SchemaChanged);
         Ok(())
     }
@@ -146,6 +155,7 @@ impl Collection {
         }
         let now = self.clock.now_ms();
         self.storage.bulk_add_tag(note_ids, tag, now)?;
+        self.clear_undo();
         self.events.emit(DomainEvent::NotesUpdated {
             note_ids: note_ids.to_vec(),
         });
@@ -159,6 +169,7 @@ impl Collection {
         }
         let now = self.clock.now_ms();
         self.storage.bulk_remove_tag(note_ids, tag, now)?;
+        self.clear_undo();
         self.events.emit(DomainEvent::NotesUpdated {
             note_ids: note_ids.to_vec(),
         });
@@ -177,12 +188,14 @@ impl Collection {
         let n = self
             .storage
             .rename_tag(old_tag, new_tag, self.clock.now_ms())?;
+        self.clear_undo();
         self.events.emit(DomainEvent::SchemaChanged);
         Ok(n)
     }
 
     pub fn delete_tag(&self, tag: &str) -> CoreResult<u32> {
         let n = self.storage.delete_tag(tag, self.clock.now_ms())?;
+        self.clear_undo();
         self.events.emit(DomainEvent::SchemaChanged);
         Ok(n)
     }
@@ -190,6 +203,7 @@ impl Collection {
     pub fn merge_tags(&self, sources: Vec<String>, target: &str) -> CoreResult<()> {
         self.storage
             .merge_tags(&sources, target, self.clock.now_ms())?;
+        self.clear_undo();
         self.events.emit(DomainEvent::SchemaChanged);
         Ok(())
     }
@@ -236,7 +250,7 @@ mod tests {
         let event_count = Arc::new(AtomicUsize::new(0));
         let count_clone = event_count.clone();
         col.events().subscribe(move |e| {
-            if matches!(e, DomainEvent::CardAnswered { .. }) {
+            if matches!(e, DomainEvent::DeckChanged { .. }) {
                 count_clone.fetch_add(1, Ordering::SeqCst);
             }
         });

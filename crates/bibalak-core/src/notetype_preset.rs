@@ -1130,11 +1130,12 @@ fn normalize_template_ws(s: &str) -> String {
         .replace("> {", ">{")
 }
 
-fn is_image_occlusion_config(config_json: &str) -> bool {
+pub fn is_image_occlusion_config(config_json: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(config_json)
         .ok()
         .and_then(|v| {
             v.get("kind")
+                .or_else(|| v.pointer("/extra_config/kind"))
                 .and_then(|k| k.as_str())
                 .map(|k| k == "image-occlusion")
         })

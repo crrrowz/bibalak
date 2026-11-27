@@ -157,6 +157,97 @@ describe("DeckBrowserScreen Undo & Empty failures", () => {
     expect(errorMsg).toBeInTheDocument();
   });
 
+  it("UX2 A4: empty Home shows Create a deck, Import from Anki (.apkg), and Add a sample deck", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
+    vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue(null);
+    const starterSpy = vi.spyOn(ipc.ipc, "completeOnboarding").mockResolvedValue();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DeckBrowserScreen />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: /create a deck/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /import from anki \(\.apkg\)/i }),
+    ).toBeInTheDocument();
+    const sampleBtn = screen.getByRole("button", { name: /add a sample deck/i });
+    expect(sampleBtn).toBeInTheDocument();
+
+    await userEvent.click(sampleBtn);
+    await waitFor(() => expect(starterSpy).toHaveBeenCalledWith(false, true, "en"));
+    expect(invalidateSpy).toHaveBeenCalled();
+  });
+
+  it("UX2 C2: renders import summary as a spaced dismissible card under the header, not glued under Level", async () => {
+    useStyle.getState().setStyle("default");
+    const { platform } = await import("@/lib/platform");
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
+      {
+        id: 1,
+        name: "Biology",
+        parent_id: null,
+        new_count: 5,
+        learning_count: 0,
+        review_count: 0,
+        is_filtered: false,
+        collapsed: false,
+      },
+    ]);
+    vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue(null);
+    vi.spyOn(ipc.ipc, "progressSummary").mockResolvedValue({
+      level: 4,
+      xp_into_level: 120,
+      xp_to_next_level: 250,
+      total_xp: 570,
+      gold_cents: 4750,
+      today_xp: 45,
+      today_gold_cents: 375,
+      tasks_rewarded_today: 0,
+      task_reward_daily_cap: 10,
+    });
+    vi.mocked(platform.pickPath).mockResolvedValue("/path/to/deck.apkg");
+    vi.spyOn(ipc.ipc, "importPackage").mockResolvedValue({
+      notes_added: 3,
+      cards_added: 6,
+      decks_added: 1,
+      media_imported: 0,
+      notes_updated: 0,
+      notetypes_added: 0,
+      revlog_added: 0,
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DeckBrowserScreen />
+      </QueryClientProvider>,
+    );
+
+    const importBtn = await screen.findByRole("button", { name: /^Import$/ });
+    await userEvent.click(importBtn);
+
+    const notice = await screen.findByTestId("import-summary-notice");
+    expect(notice.className).toContain("rounded-xl");
+    expect(notice.className).toContain("bg-card");
+
+    const levelText = await screen.findByText("Level 4");
+    expect(
+      notice.compareDocumentPosition(levelText) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await userEvent.click(within(notice).getByRole("button", { name: /close/i }));
+    expect(screen.queryByTestId("import-summary-notice")).not.toBeInTheDocument();
+  });
+
   it("hides child subdecks when parent deck is collapsed", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -310,6 +401,7 @@ describe("DeckBrowserScreen Undo & Empty failures", () => {
   });
 
   it("renders ProgressPanel on Home above the deck list", async () => {
+    useStyle.getState().setStyle("default");
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });

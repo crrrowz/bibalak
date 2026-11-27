@@ -18,14 +18,14 @@ data when you use the Bibalak desktop app.
 
 ## Data stored on your device
 
-| Data                                                       | Where                                    | Purpose                                             |
-| ---------------------------------------------------------- | ---------------------------------------- | --------------------------------------------------- |
-| Collection (decks, notes, cards, review history, settings) | App data folder (`com.keepsake.desktop`) | The app's core function                             |
-| Media (images, audio)                                      | `collection.media` in the same folder    | Showing and playing cards                           |
-| Backups                                                    | `backups` in the same folder             | Restoring your data                                 |
-| Installed plugins and their settings                       | `plugins` in the same folder             | Plugins you chose to install                        |
-| Interface preferences (theme, language, layout)            | Webview storage in the same folder       | Remembering your choices                            |
-| Logs and crash reports                                     | Your system's temp/log folders           | Troubleshooting; only shared if you send them to us |
+| Data                                                       | Where                                   | Purpose                                             |
+| ---------------------------------------------------------- | --------------------------------------- | --------------------------------------------------- |
+| Collection (decks, notes, cards, review history, settings) | App data folder (`com.bibalak.desktop`) | The app's core function                             |
+| Media (images, audio)                                      | `collection.media` in the same folder   | Showing and playing cards                           |
+| Backups                                                    | `backups` in the same folder            | Restoring your data                                 |
+| Installed plugins and their settings                       | `plugins` in the same folder            | Plugins you chose to install                        |
+| Interface preferences (theme, language, layout)            | Webview storage in the same folder      | Remembering your choices                            |
+| Logs and crash reports                                     | Your system's temp/log folders          | Troubleshooting; only shared if you send them to us |
 
 We cannot see this data. Deleting the app data folder deletes it.
 

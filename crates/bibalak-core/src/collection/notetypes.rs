@@ -5,7 +5,8 @@ use crate::ipc::{
 };
 use crate::model::Notetype;
 use crate::notetype_preset::{
-    compile_preset, lint_templates, EditorMode, NotetypePreset, TemplateLintHint,
+    compile_preset, is_image_occlusion_config, lint_templates, EditorMode, NotetypePreset,
+    TemplateLintHint,
 };
 use crate::Collection;
 
@@ -30,10 +31,13 @@ impl Collection {
         for nt in notetypes {
             let fields = self.storage.fields_for_notetype(nt.id)?;
             let note_count = self.storage.note_count_for_notetype(nt.id)?;
+            let is_image_occlusion =
+                (nt.kind == 1 && is_image_occlusion_config(&nt.config_json)).then_some(true);
             result.push(NotetypeSummary {
                 id: nt.id,
                 name: nt.name,
                 kind: nt.kind,
+                is_image_occlusion,
                 field_names: fields.into_iter().map(|f| f.name).collect(),
                 note_count,
             });
@@ -233,6 +237,7 @@ impl Collection {
         &self,
         notetype_id: i64,
         mut preset: NotetypePreset,
+        confirm_remove: bool,
     ) -> CoreResult<NotetypeDetail> {
         let detail = self
             .storage
@@ -240,6 +245,16 @@ impl Collection {
             .ok_or_else(|| CoreError::NotFound(format!("notetype {notetype_id}")))?;
         let compiled = if preset.mode == EditorMode::Simple {
             let out = compile_preset(&preset, &detail.fields)?;
+            if out.kind != detail.kind && self.storage.note_count_for_notetype(notetype_id)? > 0 {
+                return Err(CoreError::Invalid(
+                    "cannot change note type kind while notes exist".into(),
+                ));
+            }
+            if out.templates.len() < detail.templates.len() && !confirm_remove {
+                return Err(CoreError::Invalid(
+                    "removing card templates deletes existing cards; confirmation required".into(),
+                ));
+            }
             preset.compiled_digest = Some(out.compiled_digest.clone());
             Some(out)
         } else {
@@ -249,6 +264,7 @@ impl Collection {
             notetype_id,
             &preset,
             compiled.as_ref(),
+            confirm_remove,
             self.clock.now_ms(),
         )?;
         self.events.emit(DomainEvent::SchemaChanged);

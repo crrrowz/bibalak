@@ -32,7 +32,8 @@ export const mockNotetypeSummaries: NotetypeSummary[] = [
   {
     id: 4,
     name: "Image Occlusion",
-    kind: 2n,
+    kind: 1n,
+    is_image_occlusion: true,
     field_names: ["Image", "Occlusion", "Header", "Remarks"],
     note_count: 2,
   },
@@ -115,7 +116,8 @@ export const mockNotetypeDetails: Record<number, NotetypeDetail> = {
   4: {
     id: 4,
     name: "Image Occlusion",
-    kind: 2n,
+    kind: 1n,
+    is_image_occlusion: true,
     sort_field: 0n,
     fields: [
       { ord: 0n, name: "Image", options: DEFAULT_OPTS },

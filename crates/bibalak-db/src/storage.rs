@@ -158,19 +158,32 @@ impl SqliteStorage {
     }
 }
 
-/// Insert one deck row. Each deck gets its own options group (cloned from
-/// Default) so that per-deck limits like "new cards/day" don't silently apply
-/// to every other deck sharing config_id=1.
+/// Insert one deck row. Each deck gets its own options group (cloning shared
+/// non-algorithm fields from Default while defaulting new decks to FSRS) so
+/// per-deck limits stay independent and existing decks keep their algorithm.
 fn insert_deck_row(
     conn: &Connection,
     name: &str,
     parent_id: Option<i64>,
     now_ms: i64,
 ) -> CoreResult<i64> {
+    let base_json: String = conn
+        .query_row("SELECT config FROM deck_config WHERE id = 1", [], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(storage_err)?
+        .unwrap_or_else(|| "{}".to_string());
+    let mut base_val: serde_json::Value =
+        serde_json::from_str(&base_json).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(obj) = base_val.as_object_mut() {
+        obj.insert("algo".to_string(), serde_json::json!("fsrs"));
+    } else {
+        base_val = serde_json::json!({ "algo": "fsrs" });
+    }
     conn.execute(
-        r#"INSERT INTO deck_config (name, "mod", usn, config)
-           SELECT ?1, ?2, -1, config FROM deck_config WHERE id = 1"#,
-        params![name, now_ms],
+        r#"INSERT INTO deck_config (name, "mod", usn, config) VALUES (?1, ?2, -1, ?3)"#,
+        params![name, now_ms, base_val.to_string()],
     )
     .map_err(storage_err)?;
     let config_id = conn.last_insert_rowid();
@@ -381,17 +394,75 @@ impl DeckStore for SqliteStorage {
             ids.iter().filter_map(|i| by_id.remove(i)).collect()
         };
 
-        // All cards held by those decks, captured for undo.
+        // Capture per-deck common/filtered JSON and day_limit_overrides before deletion.
+        let deck_configs: Vec<(i64, String, Option<String>)> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, common, filtered FROM decks
+                     WHERE id IN (SELECT value FROM json_each(?1))",
+                )
+                .map_err(storage_err)?;
+            let rows = stmt
+                .query_map([&ids_json], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map_err(storage_err)?;
+            rows.collect::<rusqlite::Result<_>>().map_err(storage_err)?
+        };
+        let day_limit_overrides: Vec<(i64, i32, u32)> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT deck_id, day, extra_new FROM day_limit_overrides
+                     WHERE deck_id IN (SELECT value FROM json_each(?1))",
+                )
+                .map_err(storage_err)?;
+            let rows = stmt
+                .query_map([&ids_json], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map_err(storage_err)?;
+            rows.collect::<rusqlite::Result<_>>().map_err(storage_err)?
+        };
+
+        // All cards held by those decks (or borrowed from them into a filtered
+        // deck), captured for undo.
         let cards: Vec<Card> = {
             let mut stmt = tx
                 .prepare(&format!(
                     "SELECT {CARD_COLUMNS} FROM cards c
-                     WHERE c.deck_id IN (SELECT value FROM json_each(?1))"
+                     WHERE c.deck_id IN (SELECT value FROM json_each(?1))
+                        OR c.original_deck_id IN (SELECT value FROM json_each(?1))"
                 ))
                 .map_err(storage_err)?;
             let rows = stmt.query_map([&ids_json], map_card).map_err(storage_err)?;
             rows.collect::<rusqlite::Result<_>>().map_err(storage_err)?
         };
+
+        let mut revlogs: Vec<bibalak_core::model::Revlog> = Vec::new();
+        {
+            let mut rev_stmt = tx
+                .prepare(
+                    "SELECT id, card_id, usn, ease, interval, last_interval, ease_factor, taken_ms, review_kind
+                     FROM revlog WHERE card_id = ?1 ORDER BY id",
+                )
+                .map_err(storage_err)?;
+            for card in &cards {
+                let rows = rev_stmt
+                    .query_map([card.id], |r| {
+                        Ok(bibalak_core::model::Revlog {
+                            id: r.get(0)?,
+                            card_id: r.get(1)?,
+                            usn: r.get(2)?,
+                            ease: r.get(3)?,
+                            interval: r.get(4)?,
+                            last_interval: r.get(5)?,
+                            ease_factor: r.get(6)?,
+                            taken_ms: r.get(7)?,
+                            review_kind: r.get(8)?,
+                        })
+                    })
+                    .map_err(storage_err)?;
+                for rl in rows {
+                    revlogs.push(rl.map_err(storage_err)?);
+                }
+            }
+        }
 
         // Tombstone cards + decks (sync change-log), then delete bottom-up:
         // revlog → cards → decks (children before parents to honour parent_id).
@@ -409,9 +480,14 @@ impl DeckStore for SqliteStorage {
             tx.execute("DELETE FROM revlog WHERE card_id = ?1", [card.id])
                 .map_err(storage_err)?;
         }
+        tx.execute(
+            "DELETE FROM cards
+             WHERE deck_id IN (SELECT value FROM json_each(?1))
+                OR original_deck_id IN (SELECT value FROM json_each(?1))",
+            [&ids_json],
+        )
+        .map_err(storage_err)?;
         for deck in decks.iter().rev() {
-            tx.execute("DELETE FROM cards WHERE deck_id = ?1", [deck.id])
-                .map_err(storage_err)?;
             tx.execute(
                 "INSERT OR REPLACE INTO graves (oid, type, usn) VALUES (?1, ?2, -1)",
                 params![deck.id, grave_kind::DECK],
@@ -472,17 +548,26 @@ impl DeckStore for SqliteStorage {
             decks,
             cards,
             notes,
+            revlogs,
+            day_limit_overrides,
+            deck_configs,
         })
     }
 
     fn restore_deck(&self, removed: &RemovedDeck, now_ms: i64) -> CoreResult<()> {
         let mut conn = self.lock();
         let tx = conn.transaction().map_err(storage_err)?;
+        let config_map: HashMap<i64, (&str, Option<&str>)> = removed
+            .deck_configs
+            .iter()
+            .map(|(id, c, f)| (*id, (c.as_str(), f.as_deref())))
+            .collect();
         // Decks first (parent-first, as captured), then their cards.
         for deck in &removed.decks {
+            let (common, filtered) = config_map.get(&deck.id).copied().unwrap_or(("{}", None));
             tx.execute(
-                r#"INSERT INTO decks (id, name, parent_id, config_id, "mod", usn, collapsed, is_filtered)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
+                r#"INSERT INTO decks (id, name, parent_id, config_id, "mod", usn, collapsed, is_filtered, common, filtered)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"#,
                 params![
                     deck.id,
                     deck.name,
@@ -492,6 +577,8 @@ impl DeckStore for SqliteStorage {
                     -1,
                     deck.collapsed as i64,
                     deck.is_filtered as i64,
+                    common,
+                    filtered,
                 ],
             )
             .map_err(storage_err)?;
@@ -503,6 +590,13 @@ impl DeckStore for SqliteStorage {
             tx.execute(
                 "DELETE FROM grave_times WHERE oid = ?1 AND type = ?2",
                 params![deck.id, grave_kind::DECK],
+            )
+            .map_err(storage_err)?;
+        }
+        for &(deck_id, day, extra_new) in &removed.day_limit_overrides {
+            tx.execute(
+                "INSERT OR REPLACE INTO day_limit_overrides (deck_id, day, extra_new) VALUES (?1, ?2, ?3)",
+                params![deck_id, day, extra_new],
             )
             .map_err(storage_err)?;
         }
@@ -584,6 +678,24 @@ impl DeckStore for SqliteStorage {
             tx.execute(
                 "DELETE FROM grave_times WHERE oid = ?1 AND type = ?2",
                 params![card.id, grave_kind::CARD],
+            )
+            .map_err(storage_err)?;
+        }
+        for rl in &removed.revlogs {
+            tx.execute(
+                "INSERT OR IGNORE INTO revlog
+                 (id, card_id, usn, ease, interval, last_interval, ease_factor, taken_ms, review_kind)
+                 VALUES (?1, ?2, -1, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    rl.id,
+                    rl.card_id,
+                    rl.ease,
+                    rl.interval,
+                    rl.last_interval,
+                    rl.ease_factor,
+                    rl.taken_ms,
+                    rl.review_kind,
+                ],
             )
             .map_err(storage_err)?;
         }
@@ -860,11 +972,12 @@ impl NotetypeStore for SqliteStorage {
         notetype_id: i64,
         preset: &bibalak_core::notetype_preset::NotetypePreset,
         compiled: Option<&bibalak_core::notetype_preset::CompiledNotetype>,
+        confirm_remove: bool,
         now_ms: i64,
     ) -> CoreResult<()> {
         let mut conn = self.lock();
         let tx = conn.transaction().map_err(storage_err)?;
-        notetype::save_notetype_preset(&tx, notetype_id, preset, compiled, now_ms)?;
+        notetype::save_notetype_preset(&tx, notetype_id, preset, compiled, confirm_remove, now_ms)?;
         tx.commit().map_err(storage_err)?;
         Ok(())
     }
@@ -1274,6 +1387,92 @@ impl StudyStore for SqliteStorage {
         now_ms: i64,
     ) -> CoreResult<Vec<bibalak_core::model::Card>> {
         cards::forget_cards(&mut self.lock(), card_ids, reset_counts, now_ms)
+    }
+
+    fn forget_cards_with_revlog(
+        &self,
+        card_ids: &[i64],
+        reset_counts: bool,
+        now_ms: i64,
+    ) -> CoreResult<(Vec<bibalak_core::model::Card>, Vec<i64>)> {
+        cards::forget_cards_with_revlog(&mut self.lock(), card_ids, reset_counts, now_ms)
+    }
+
+    fn delete_revlogs(&self, revlog_ids: &[i64]) -> CoreResult<()> {
+        cards::delete_revlogs(&self.lock(), revlog_ids)
+    }
+
+    fn card_home_deck_id(&self, card_id: i64) -> CoreResult<Option<i64>> {
+        self.lock()
+            .query_row(
+                "SELECT CASE WHEN original_deck_id != 0 THEN original_deck_id ELSE deck_id END
+                 FROM cards WHERE id = ?1",
+                [card_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage_err)
+    }
+
+    fn card_queue(&self, card_id: i64) -> CoreResult<Option<i32>> {
+        self.lock()
+            .query_row("SELECT queue FROM cards WHERE id = ?1", [card_id], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(storage_err)
+    }
+
+    fn card_raw_ease_factor(&self, card_id: i64) -> CoreResult<Option<i64>> {
+        self.lock()
+            .query_row(
+                "SELECT ease_factor FROM cards WHERE id = ?1",
+                [card_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage_err)
+    }
+
+    fn revoke_streak_freeze_if_inactive(
+        &self,
+        day: i32,
+        day_start_ms: i64,
+        day_end_ms: i64,
+        now_ms: i64,
+    ) -> CoreResult<()> {
+        let conn = self.lock();
+        let has_active: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM progress_ledger
+                     WHERE user_id = ?1 AND deleted_at IS NULL
+                       AND created_at >= ?2 AND created_at < ?3
+                     LIMIT 1
+                 )",
+                params![
+                    bibalak_core::progress::NIL_USER_ID,
+                    day_start_ms,
+                    day_end_ms
+                ],
+                |r| r.get(0),
+            )
+            .map_err(storage_err)?;
+        if !has_active {
+            let key = format!("freeze_earn:streak:{day}");
+            conn.execute(
+                "UPDATE freeze_token_ledger
+                 SET deleted_at = ?1, updated_at = ?1, usn = -1
+                 WHERE user_id = ?2 AND source_key = ?3 AND deleted_at IS NULL",
+                params![now_ms, bibalak_core::progress::NIL_USER_ID, key],
+            )
+            .map_err(storage_err)?;
+        }
+        Ok(())
+    }
+
+    fn cards_by_ids(&self, card_ids: &[i64]) -> CoreResult<Vec<bibalak_core::model::Card>> {
+        cards::fetch_cards_by_ids(&self.lock(), card_ids)
     }
 
     fn set_due_date(

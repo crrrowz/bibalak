@@ -77,6 +77,7 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   const [tutorOpen, setTutorOpen] = useState(false);
   const [tutorSaveOpen, setTutorSaveOpen] = useState(false);
   const [sessionAnswered, setSessionAnswered] = useState(0);
+  const [sessionCompleted, setSessionCompleted] = useState(0);
   const [sessionXp, setSessionXp] = useState(0);
   const [sessionPassed, setSessionPassed] = useState(0);
   const [sessionTimeMs, setSessionTimeMs] = useState(0);
@@ -85,6 +86,8 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   const streakHistoryRef = useRef<number[]>([]);
   const passHistoryRef = useRef<boolean[]>([]);
   const timeHistoryRef = useRef<number[]>([]);
+  const completedHistoryRef = useRef<number[]>([]);
+  const currentRemainingRef = useRef(0);
   const rewardedCardIdsRef = useRef<Set<number>>(new Set());
   const xpHistoryRef = useRef<Array<{ cardId: number; xp: number }>>([]);
   const streakTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -126,6 +129,8 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   const cardQuery = useQuery({
     queryKey: queryKeys.queue(String(deckId)),
     queryFn: () => ipc.getNextCard(deckId),
+    staleTime: 0,
+    refetchOnMount: "always",
     refetchInterval: (query) => (query.state.data == null ? 15000 : false),
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
@@ -134,7 +139,14 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   const answerMut = useMutation({
     mutationFn: ({ cardId, rating }: { cardId: number; rating: RatingValue }) =>
       ipc.answerCard(cardId, rating, deckId, Date.now() - shownAtRef.current),
-    onSuccess: (next, variables) => {
+    onMutate: () => ({ prevRemaining: currentRemainingRef.current }),
+    onSuccess: (next, variables, context) => {
+      const prevRemaining = context?.prevRemaining ?? 0;
+      const nextRemaining = next ? next.new_count + next.learning_count + next.review_count : 0;
+      const completedDelta = Math.max(0, prevRemaining - nextRemaining);
+      completedHistoryRef.current.push(completedDelta);
+      setSessionCompleted((n) => n + completedDelta);
+
       queryClient.setQueryData(queryKeys.queue(String(deckId)), next ?? null);
       setRevealed(false);
       setSessionAnswered((n) => n + 1);
@@ -208,12 +220,18 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
     },
   });
 
+  const unburyMut = useMutation({
+    mutationFn: (cardId: number) => ipc.unburyCards([cardId]),
+    onSuccess: () => {
+      setActionToast(null);
+      void queryClient.refetchQueries({ queryKey: queryKeys.queue(String(deckId)) });
+    },
+  });
+
   const buryMut = useMutation({
     mutationFn: (cardId: number) => ipc.buryCards([cardId]),
-    onSuccess: () => {
-      // No per-card unbury IPC command exists yet (only whole-deck unbury) —
-      // confirm the action without offering undo until one is added.
-      showActionToast(t("study.toast.buried"));
+    onSuccess: (_data, cardId) => {
+      showActionToast(t("study.toast.buried"), () => unburyMut.mutate(cardId));
       void queryClient
         .refetchQueries({ queryKey: queryKeys.queue(String(deckId)) })
         .then(() => setRevealed(false));
@@ -228,6 +246,10 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
         if (undone.kind === "answer-card") {
           setRevealed(false);
           setSessionAnswered((n) => Math.max(0, n - 1));
+          const prevCompleted = completedHistoryRef.current.pop();
+          if (prevCompleted !== undefined) {
+            setSessionCompleted((n) => Math.max(0, n - prevCompleted));
+          }
           const prevXp = xpHistoryRef.current.pop();
           if (prevXp && prevXp.xp > 0) {
             rewardedCardIdsRef.current.delete(prevXp.cardId);
@@ -248,7 +270,7 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
           clearTimeout(streakTimerRef.current);
           setStreakBadgeCount(null);
         }
-        void queryClient.invalidateQueries({ queryKey: queryKeys.queue(String(deckId)) });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.queueAll });
         void invalidateTodayCounts(queryClient);
         void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
       }
@@ -262,7 +284,9 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   });
 
   const card = cardQuery.data ?? null;
-  const actionBusy = suspendMut.isPending || buryMut.isPending || flagMut.isPending;
+  currentRemainingRef.current = card ? card.new_count + card.learning_count + card.review_count : 0;
+  const actionBusy =
+    suspendMut.isPending || buryMut.isPending || unburyMut.isPending || flagMut.isPending;
 
   const night = useTheme((s) => s.resolved === "dark");
   const [frontQueue, setFrontQueue] = useState<QueueEntry[]>([]);
@@ -439,8 +463,8 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   const fadeDuration = prefersReduced ? 0 : dur.base;
 
   const sessionTotal = card
-    ? sessionAnswered + card.new_count + card.learning_count + card.review_count
-    : sessionAnswered;
+    ? sessionCompleted + card.new_count + card.learning_count + card.review_count
+    : sessionCompleted;
   const scaleLabel = t("study.textSize", { pct: formatNumber(Math.round(studyScale * 100)) });
 
   const zoomControls = card && (
@@ -541,7 +565,7 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
           className="relative z-20 flex min-h-[30px] shrink-0 items-center gap-2 border-b border-border/60 bg-background/80 px-4 py-1 sm:px-6"
         >
           <SessionProgressBar
-            done={sessionAnswered}
+            done={sessionCompleted}
             total={sessionTotal}
             className="min-w-0 flex-1 border-b-0 bg-transparent px-0 py-0 sm:px-0"
           />
@@ -759,6 +783,7 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
             {revealed && tutorOpen && (
               <TutorPanel
                 card={card}
+                sessionDeckId={deckId}
                 deckName={deckName ?? null}
                 typedAnswer={typedAnswer}
                 configured={aiConfigured}

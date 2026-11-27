@@ -1,4 +1,4 @@
-import { formatDate, t, tn } from "@/lib/i18n";
+import { formatDate, formatNumber, t, tn } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales/en";
 import type { CardRow } from "@bibalak/ipc-types";
 import { decodeEntities, stripTags } from "@/lib/htmlText";
@@ -50,7 +50,7 @@ export function formatDue(row: CardRow, today: number): string {
   const isLearning = row.card_type === 1 || row.card_type === 3 || row.due > 10000000000;
 
   if (isNew) {
-    return `#${row.due}`;
+    return `#${formatNumber(row.due)}`;
   }
 
   if (isLearning) {

@@ -63,4 +63,31 @@ describe("TodaySummary responsive & i18n", () => {
     expect(screen.getByText(/1,200 جديدة · 3 قيد التعلّم · 1,500 للمراجعة/)).toBeInTheDocument();
     expect(screen.getByText("2,703 مستحقة اليوم")).toBeInTheDocument();
   });
+
+  it("includes nested filtered subdecks in due totals", () => {
+    const decks: DeckSummary[] = [
+      {
+        id: 1,
+        name: "Parent",
+        parent_id: null,
+        new_count: 0,
+        learning_count: 0,
+        review_count: 0,
+        is_filtered: false,
+        collapsed: false,
+      },
+      {
+        id: 2,
+        name: "Parent::Cram",
+        parent_id: 1,
+        new_count: 5,
+        learning_count: 0,
+        review_count: 0,
+        is_filtered: true,
+        collapsed: false,
+      },
+    ];
+    render(<TodaySummary decks={decks} />);
+    expect(screen.getByText("5 due today")).toBeInTheDocument();
+  });
 });

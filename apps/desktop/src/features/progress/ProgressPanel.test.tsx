@@ -165,4 +165,14 @@ describe("ProgressPanel", () => {
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
     expect(screen.getByTestId("avatar-stage").style.width).toBe("64px");
   });
+
+  it("LOGIC1: does not force dir=ltr on Arabic xpIntoNext text containing من", async () => {
+    setLocale("ar");
+    vi.spyOn(ipcModule.ipc, "progressSummary").mockResolvedValue(makeProgress());
+
+    renderPanel();
+
+    const xpText = await screen.findByText(/120 من 250 XP/);
+    expect(xpText).not.toHaveAttribute("dir", "ltr");
+  });
 });

@@ -781,7 +781,7 @@ fn apkg_export_excludes_keepsake_preset_from_models() {
 
     let col = Collection::new(Box::new(storage), Arc::new(SystemClock)).unwrap();
     let preset = NotetypePreset::for_layout(LayoutId::LanguageCard);
-    let detail = col.save_notetype_preset(nt_id, preset).unwrap();
+    let detail = col.save_notetype_preset(nt_id, preset, false).unwrap();
     assert!(detail.preset.is_some());
 
     let model = col.dump_collection().unwrap();

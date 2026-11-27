@@ -18,6 +18,7 @@ export function CreateDeckForm({ onClose }: { onClose: () => void }) {
       setName("");
       onClose();
       void queryClient.invalidateQueries({ queryKey: queryKeys.decks });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.undoStatus });
     },
   });
 

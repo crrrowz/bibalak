@@ -29,14 +29,17 @@ export function DeleteDeckDialog({
             <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-destructive/10">
               <AlertTriangle className="size-5 text-destructive" aria-hidden="true" />
             </span>
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-semibold">{t("decks.delete.title")}</p>
               <p className="text-xs text-muted-foreground">
                 {deck.is_filtered ? t("decks.delete.filteredNote") : t("decks.delete.permanent")}
               </p>
             </div>
           </div>
-          <p className="mb-6 rounded-md bg-secondary/60 px-3 py-2 text-sm font-medium">
+          <p
+            dir="auto"
+            className="mb-6 min-w-0 rounded-md bg-secondary/60 px-3 py-2 text-sm font-medium [overflow-wrap:anywhere]"
+          >
             {deck.name}
           </p>
           <div className="flex justify-end gap-2">

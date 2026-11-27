@@ -26,7 +26,7 @@ export function matchingNotetypesForKind(
   const targetKind = noteKind === "cloze" ? 1 : 0;
   return notetypes.filter((nt) => {
     if (Number(nt.kind) !== targetKind) return false;
-    if (nt.field_names.includes("Image") && nt.field_names.includes("Occlusion")) return false;
+    if (nt.is_image_occlusion) return false;
     return true;
   });
 }

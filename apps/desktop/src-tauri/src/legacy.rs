@@ -1,8 +1,10 @@
-//! One-time move of data from the pre-rename app folder.
+//! One-time copy of data from an older app folder.
 //!
 //! The bundle identifier changed from `com.synapse.app` to
-//! `com.keepsake.desktop`, so the OS app-data folder changed with it. On the
-//! first launch after the rename, copy the old collection, media, backups and
+//! `com.keepsake.desktop` and later to `com.bibalak.desktop`, so the OS
+//! app-data folder changed with it. The second change is first tried as a
+//! plain rename (`app_id.rs`); this copy is the fallback for both. On the
+//! first launch after a change, copy the old collection, media, backups and
 //! plugins into the new folder. The old folder is left untouched (a copy, not
 //! a move) so nothing is lost if the copy is interrupted.
 
@@ -48,11 +50,22 @@ pub fn ensure_no_legacy_copy_pending(new_dir: &Path) -> Result<(), bibalak_core:
     Ok(())
 }
 
+/// File left in an old folder once its data was copied. An old folder with
+/// this file is never copied again, so deleting the new folder (or the decks
+/// in it) does not bring the old data back on the next launch.
+pub const COPIED_MARKER: &str = "copied-to-bibalak.txt";
+
+/// `true` when `legacy_dir` holds a collection that was never copied before.
+pub fn legacy_dir_usable(legacy_dir: &Path) -> bool {
+    legacy_dir.join(COLLECTION_DB).is_file() && !legacy_dir.join(COPIED_MARKER).exists()
+}
+
 /// Phase 1 (blocking, small): copy the collection DB, WAL/SHM, and `plugins/`
-/// into `new_dir`, writing [`LEGACY_MARKER`] before the DB rename.
+/// into `new_dir`, writing [`LEGACY_MARKER`] before the DB rename and
+/// [`COPIED_MARKER`] into `legacy_dir` after it.
 /// Returns `true` when a phase 1 migration happened.
 pub fn migrate_legacy_core(legacy_dir: &Path, new_dir: &Path) -> io::Result<bool> {
-    if new_dir.join(COLLECTION_DB).exists() || !legacy_dir.join(COLLECTION_DB).is_file() {
+    if new_dir.join(COLLECTION_DB).exists() || !legacy_dir_usable(legacy_dir) {
         return Ok(false);
     }
     std::fs::create_dir_all(new_dir)?;
@@ -81,6 +94,15 @@ pub fn migrate_legacy_core(legacy_dir: &Path, new_dir: &Path) -> io::Result<bool
         let _ = std::fs::remove_file(&marker);
         return Err(e);
     }
+    // Best effort: without it the next launch only skips because the new
+    // folder already has a collection.
+    let _ = std::fs::write(
+        legacy_dir.join(COPIED_MARKER),
+        format!(
+            "This folder was copied to {} by Bibalak.\nIt is not read again; you may delete it.\n",
+            new_dir.display()
+        ),
+    );
     Ok(true)
 }
 
@@ -97,6 +119,7 @@ pub fn copy_legacy_rest(legacy_dir: &Path, new_dir: &Path) -> io::Result<()> {
         let name = entry.file_name();
         if name == COLLECTION_DB
             || name == LEGACY_MARKER
+            || name == COPIED_MARKER
             || PHASE1_FILES.iter().any(|s| name == *s)
             || PHASE1_DIRS.iter().any(|s| name == *s)
             || SKIPPED.iter().any(|s| name == *s)
@@ -523,5 +546,23 @@ mod tests {
             None
         );
         assert_eq!(resolve_media_path("", &new_dir, &legacy, true), None);
+    }
+
+    #[test]
+    fn old_folder_is_copied_once_and_never_again_after_the_new_folder_is_deleted() {
+        let tmp = TempDir::new("once");
+        let legacy = legacy_fixture(&tmp.0);
+        let new_dir = tmp.0.join("com.bibalak.desktop");
+
+        assert!(migrate_legacy_core(&legacy, &new_dir).unwrap());
+        copy_legacy_rest(&legacy, &new_dir).unwrap();
+        assert!(legacy.join(COPIED_MARKER).is_file());
+        assert!(!new_dir.join(COPIED_MARKER).exists());
+        assert!(!legacy_dir_usable(&legacy));
+
+        // The owner deletes the new folder and starts the app again.
+        fs::remove_dir_all(&new_dir).unwrap();
+        assert!(!migrate_legacy_core(&legacy, &new_dir).unwrap());
+        assert!(!new_dir.join(COLLECTION_DB).exists());
     }
 }

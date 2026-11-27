@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use bibalak_core::error::{CoreError, CoreResult};
 use bibalak_core::model::Card;
-use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 
 pub const MS_PER_DAY: i64 = 86_400_000;
 pub const DEFAULT_ROLLOVER_HOUR: u8 = 4;
@@ -120,14 +120,15 @@ pub fn unsuspend_cards(conn: &Connection, card_ids: &[i64], now_ms: i64) -> Core
     Ok(())
 }
 
-/// Manually bury cards (queue = -2).
+/// Manually bury active cards (queue = -2). Suspended cards (`queue = -1`)
+/// stay suspended rather than being overwritten.
 pub fn bury_cards(conn: &Connection, card_ids: &[i64], now_ms: i64) -> CoreResult<()> {
     if card_ids.is_empty() {
         return Ok(());
     }
     let json = serde_json::to_string(card_ids).map_err(err)?;
     conn.execute(
-        r#"UPDATE cards SET queue = -2, "mod" = ?1, usn = -1 WHERE id IN (SELECT value FROM json_each(?2))"#,
+        r#"UPDATE cards SET queue = -2, "mod" = ?1, usn = -1 WHERE id IN (SELECT value FROM json_each(?2)) AND queue >= 0"#,
         params![now_ms, json],
     )
     .map_err(err)?;
@@ -272,7 +273,7 @@ fn dedup_preserve_order(ids: &[i64]) -> Vec<i64> {
     ids.iter().copied().filter(|id| seen.insert(*id)).collect()
 }
 
-fn fetch_cards_by_ids(tx: &Transaction<'_>, card_ids: &[i64]) -> CoreResult<Vec<Card>> {
+pub fn fetch_cards_by_ids(conn: &Connection, card_ids: &[i64]) -> CoreResult<Vec<Card>> {
     let unique = dedup_preserve_order(card_ids);
     if unique.is_empty() {
         return Ok(vec![]);
@@ -281,7 +282,7 @@ fn fetch_cards_by_ids(tx: &Transaction<'_>, card_ids: &[i64]) -> CoreResult<Vec<
     let sql = format!(
         "SELECT {CARD_SNAPSHOT_COLS} FROM cards WHERE id IN (SELECT value FROM json_each(?1))"
     );
-    let mut stmt = tx.prepare(&sql).map_err(err)?;
+    let mut stmt = conn.prepare(&sql).map_err(err)?;
     let mut by_id: HashMap<i64, Card> = stmt
         .query_map([json], row_to_card)
         .map_err(err)?
@@ -322,20 +323,22 @@ pub fn deck_card_ids(conn: &Connection, deck_ids: &[i64]) -> CoreResult<Vec<i64>
 /// Reset selected cards back to `type = 0, queue = 0` after existing new cards.
 /// Cards currently in a filtered deck (`original_deck_id != 0`) are returned to
 /// their home deck first in the same transaction so resetting never leaves
-/// reset cards stranded in a filtered deck.
-pub fn forget_cards(
+/// reset cards stranded in a filtered deck. Inserts a `review_kind = 4`
+/// manual-forget boundary row in `revlog` per card so future introductions count
+/// toward `new_per_day` (and returns those revlog IDs for undo).
+pub fn forget_cards_with_revlog(
     conn: &mut Connection,
     card_ids: &[i64],
     reset_counts: bool,
     now_ms: i64,
-) -> CoreResult<Vec<Card>> {
+) -> CoreResult<(Vec<Card>, Vec<i64>)> {
     if card_ids.is_empty() {
-        return Ok(vec![]);
+        return Ok((vec![], vec![]));
     }
     let tx = conn.transaction().map_err(err)?;
     let snapshots = fetch_cards_by_ids(&tx, card_ids)?;
     if snapshots.is_empty() {
-        return Ok(vec![]);
+        return Ok((vec![], vec![]));
     }
 
     let snapshot_ids: Vec<i64> = snapshots.iter().map(|c| c.id).collect();
@@ -362,6 +365,13 @@ pub fn forget_cards(
         )
         .map_err(err)?;
 
+    let max_revlog_id: Option<i64> = tx
+        .query_row("SELECT MAX(id) FROM revlog WHERE id >= ?1", [now_ms], |r| {
+            r.get(0)
+        })
+        .map_err(err)?;
+    let mut next_revlog_id = max_revlog_id.map_or(now_ms, |m| m.saturating_add(1));
+
     let mut stmt = tx
         .prepare(
             r#"UPDATE cards SET
@@ -373,6 +383,14 @@ pub fn forget_cards(
                WHERE id = ?1"#,
         )
         .map_err(err)?;
+    let mut revlog_stmt = tx
+        .prepare(
+            "INSERT INTO revlog
+             (id, card_id, usn, ease, interval, last_interval, ease_factor, taken_ms, review_kind)
+             VALUES (?1, ?2, -1, 0, 0, ?3, ?4, 0, 4)",
+        )
+        .map_err(err)?;
+    let mut revlog_ids = Vec::with_capacity(snapshots.len());
     for (idx, card) in snapshots.iter().enumerate() {
         let (reps, lapses) = if reset_counts {
             (0, 0)
@@ -387,10 +405,45 @@ pub fn forget_cards(
             now_ms
         ])
         .map_err(err)?;
+        revlog_stmt
+            .execute(params![
+                next_revlog_id,
+                card.id,
+                card.interval,
+                card.ease_factor
+            ])
+            .map_err(err)?;
+        revlog_ids.push(next_revlog_id);
+        next_revlog_id = next_revlog_id.saturating_add(1);
     }
+    drop(revlog_stmt);
     drop(stmt);
     tx.commit().map_err(err)?;
-    Ok(snapshots)
+    Ok((snapshots, revlog_ids))
+}
+
+/// Reset selected cards back to `type = 0, queue = 0` after existing new cards.
+pub fn forget_cards(
+    conn: &mut Connection,
+    card_ids: &[i64],
+    reset_counts: bool,
+    now_ms: i64,
+) -> CoreResult<Vec<Card>> {
+    forget_cards_with_revlog(conn, card_ids, reset_counts, now_ms).map(|(cards, _)| cards)
+}
+
+/// Delete revlog rows by ID (used when undoing `forget_cards`).
+pub fn delete_revlogs(conn: &Connection, revlog_ids: &[i64]) -> CoreResult<()> {
+    if revlog_ids.is_empty() {
+        return Ok(());
+    }
+    let json = serde_json::to_string(revlog_ids).map_err(err)?;
+    conn.execute(
+        "DELETE FROM revlog WHERE id IN (SELECT value FROM json_each(?1))",
+        [json],
+    )
+    .map_err(err)?;
+    Ok(())
 }
 
 /// Reschedule cards to `today + offset` where each card picks an offset in `min_days..=max_days`.
@@ -543,7 +596,7 @@ pub fn restore_cards(conn: &mut Connection, cards: &[Card], now_ms: i64) -> Core
                  interval = ?6, ease_factor = ?7, reps = ?8, lapses = ?9,
                  remaining = ?10, original_due = ?11, original_deck_id = ?12, flags = ?13,
                  fsrs_stability = ?14, fsrs_difficulty = ?15, fsrs_last_review = ?16,
-                 "mod" = ?17, usn = -1
+                 data = ?17, "mod" = ?18, usn = -1
                WHERE id = ?1"#,
         )
         .map_err(err)?;
@@ -565,6 +618,7 @@ pub fn restore_cards(conn: &mut Connection, cards: &[Card], now_ms: i64) -> Core
             c.fsrs_stability,
             c.fsrs_difficulty,
             c.fsrs_last_review,
+            c.data,
             now_ms,
         ])
         .map_err(err)?;
@@ -931,7 +985,7 @@ mod tests {
         let events = Arc::new(AtomicUsize::new(0));
         let events_c = events.clone();
         col.events().subscribe(move |ev| {
-            if matches!(ev, DomainEvent::CardAnswered { .. }) {
+            if matches!(ev, DomainEvent::DeckChanged { .. }) {
                 events_c.fetch_add(1, Ordering::SeqCst);
             }
         });
@@ -1023,7 +1077,7 @@ mod tests {
         let events = Arc::new(AtomicUsize::new(0));
         let events_c = events.clone();
         col.events().subscribe(move |ev| {
-            if matches!(ev, DomainEvent::CardAnswered { .. }) {
+            if matches!(ev, DomainEvent::DeckChanged { .. }) {
                 events_c.fetch_add(1, Ordering::SeqCst);
             }
         });
@@ -1131,7 +1185,7 @@ mod tests {
         let events = Arc::new(AtomicUsize::new(0));
         let events_c = events.clone();
         col.events().subscribe(move |ev| {
-            if matches!(ev, DomainEvent::CardAnswered { .. }) {
+            if matches!(ev, DomainEvent::DeckChanged { .. }) {
                 events_c.fetch_add(1, Ordering::SeqCst);
             }
         });

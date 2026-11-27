@@ -4,7 +4,11 @@ use std::sync::Mutex;
 
 use keyring::Entry;
 
-const SERVICE_NAME: &str = "com.keepsake.desktop";
+/// Keychain service name: the app id.
+const SERVICE_NAME: &str = "com.bibalak.desktop";
+/// Service name used by Bibalak 1.0 and 1.1; read once and moved to
+/// [`SERVICE_NAME`].
+const PREVIOUS_SERVICE_NAME: &str = "com.keepsake.desktop";
 const API_KEY_ACCOUNT: &str = "ai_provider_api_key";
 
 /// Port for storing the AI API key outside SQLite and config files.
@@ -20,8 +24,29 @@ pub struct KeyringSecretStore;
 
 impl KeyringSecretStore {
     fn entry() -> Result<Entry, String> {
-        Entry::new(SERVICE_NAME, API_KEY_ACCOUNT)
+        Self::entry_for(SERVICE_NAME)
+    }
+
+    fn entry_for(service: &str) -> Result<Entry, String> {
+        Entry::new(service, API_KEY_ACCOUNT)
             .map_err(|e| format!("failed to access OS credential store: {e}"))
+    }
+
+    /// Key saved under the 1.0/1.1 service name, moved to the current name.
+    /// Best effort: if the move fails the old entry stays and is read again.
+    fn take_previous_key() -> Option<String> {
+        let old = Self::entry_for(PREVIOUS_SERVICE_NAME).ok()?;
+        let secret = old.get_password().ok().filter(|s| !s.is_empty())?;
+        if Self::entry()
+            .and_then(|new| {
+                new.set_password(&secret)
+                    .map_err(|e| format!("failed to store API key in credential store: {e}"))
+            })
+            .is_ok()
+        {
+            let _ = old.delete_credential();
+        }
+        Some(secret)
     }
 }
 
@@ -29,12 +54,8 @@ impl SecretStore for KeyringSecretStore {
     fn get_api_key(&self) -> Result<Option<String>, String> {
         let entry = Self::entry()?;
         match entry.get_password() {
-            Ok(secret) => Ok(if secret.is_empty() {
-                None
-            } else {
-                Some(secret)
-            }),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Ok(secret) if !secret.is_empty() => Ok(Some(secret)),
+            Ok(_) | Err(keyring::Error::NoEntry) => Ok(Self::take_previous_key()),
             Err(e) => Err(format!("failed to read API key from credential store: {e}")),
         }
     }

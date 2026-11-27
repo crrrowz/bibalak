@@ -17,10 +17,28 @@ export function formatUndoAction(action: UndoAction): string {
       return tn("undo.action.setDueDate", action.count);
     case "reposition-cards":
       return tn("undo.action.repositionCards", action.count);
+    case "suspend-cards":
+      return tn("undo.action.suspendCards", action.count);
+    case "unsuspend-cards":
+      return tn("undo.action.unsuspendCards", action.count);
+    case "bury-cards":
+      return tn("undo.action.buryCards", action.count);
+    case "unbury-cards":
+      return tn("undo.action.unburyCards", action.count);
+    case "move-cards":
+      return tn("undo.action.moveCards", action.count);
+    case "set-card-flag":
+      return tn("undo.action.setCardFlag", action.count);
+    case "change-deck-options":
+      return t("undo.action.changeDeckOptions");
+    case "increase-today-limit":
+      return t("undo.action.increaseTodayLimit");
     case "find-replace":
       return tn("undo.action.findReplace", action.count);
     case "change-note-type":
       return tn("undo.action.changeNoteType", action.count);
+    case "add-note":
+      return tn("undo.action.addNote", action.count);
     case "edit-note":
       return t("undo.action.editNote");
     case "quality-fixes":

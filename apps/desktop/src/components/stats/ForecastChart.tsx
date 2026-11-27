@@ -47,7 +47,7 @@ export function ForecastChart({
       dayOffset: null as number | null,
     },
     ...Array.from({ length: FORECAST_DAYS + 1 }, (_, i) => ({
-      label: i === 0 ? t("stats.forecast.today") : `+${i}`,
+      label: i === 0 ? t("stats.forecast.today") : `+${formatNumber(i)}`,
       count: map.get(i) ?? 0,
       isBacklog: false,
       dayOffset: i,
@@ -61,7 +61,7 @@ export function ForecastChart({
       <div className="absolute end-0 top-0">
         <ExportButton filename="forecast" rows={data} />
       </div>
-      <p className="mb-2 text-xs text-muted-foreground">
+      <p className="mb-2 text-xs text-muted-foreground tabular-nums">
         {tn("stats.forecast.summary", dueTotal)}
         {backlogCount > 0 ? (
           <> {t("stats.forecast.overdue", { count: formatNumber(backlogCount) })}</>

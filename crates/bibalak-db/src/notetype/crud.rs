@@ -3,8 +3,8 @@ use bibalak_core::ipc::{
     parse_field_options, parse_notetype_sort_field, FieldSummary, NotetypeDetail, TemplateSummary,
 };
 use bibalak_core::notetype_preset::{
-    detect_stock_preset, parse_keepsake_preset, set_keepsake_preset_in_config, CompiledNotetype,
-    NotetypePreset,
+    detect_stock_preset, is_image_occlusion_config, parse_keepsake_preset,
+    set_keepsake_preset_in_config, CompiledNotetype, NotetypePreset,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
@@ -77,10 +77,13 @@ pub fn get_notetype_detail(
     let preset = parse_keepsake_preset(&config_json)
         .or_else(|| detect_stock_preset(kind, &fields, &templates, &css, &config_json));
 
+    let is_image_occlusion = (kind == 1 && is_image_occlusion_config(&config_json)).then_some(true);
+
     Ok(Some(NotetypeDetail {
         id,
         name,
         kind,
+        is_image_occlusion,
         fields,
         templates,
         css,
@@ -98,13 +101,14 @@ pub fn save_notetype_preset(
     notetype_id: i64,
     preset: &NotetypePreset,
     compiled: Option<&CompiledNotetype>,
+    confirm_remove: bool,
     now_ms: i64,
 ) -> CoreResult<()> {
-    let config_json: String = tx
+    let (existing_kind, config_json): (i64, String) = tx
         .query_row(
-            "SELECT config FROM notetypes WHERE id = ?1",
+            "SELECT kind, config FROM notetypes WHERE id = ?1",
             [notetype_id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()
         .map_err(err)?
@@ -113,6 +117,35 @@ pub fn save_notetype_preset(
     let mut updated_cfg = set_keepsake_preset_in_config(&config_json, Some(preset))?;
 
     if let Some(compiled) = compiled {
+        if compiled.kind != existing_kind {
+            let has_notes: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM notes WHERE notetype_id = ?1 LIMIT 1)",
+                    [notetype_id],
+                    |r| r.get(0),
+                )
+                .map_err(err)?;
+            if has_notes {
+                return Err(CoreError::Invalid(
+                    "cannot change note type kind while notes exist".into(),
+                ));
+            }
+        }
+
+        let existing_count: usize = tx
+            .query_row(
+                "SELECT COUNT(*) FROM templates WHERE notetype_id = ?1",
+                [notetype_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(err)? as usize;
+        let target_len = compiled.templates.len();
+        if existing_count > target_len && !confirm_remove {
+            return Err(CoreError::Invalid(
+                "removing card templates deletes existing cards; confirmation required".into(),
+            ));
+        }
+
         let mut map = match serde_json::from_str::<serde_json::Value>(&updated_cfg) {
             Ok(serde_json::Value::Object(m)) => m,
             _ => serde_json::Map::new(),
@@ -129,15 +162,6 @@ pub fn save_notetype_preset(
         )
         .map_err(err)?;
 
-        let existing_count: usize = tx
-            .query_row(
-                "SELECT COUNT(*) FROM templates WHERE notetype_id = ?1",
-                [notetype_id],
-                |r| r.get::<_, i64>(0),
-            )
-            .map_err(err)? as usize;
-
-        let target_len = compiled.templates.len();
         for (idx, tmpl) in compiled.templates.iter().enumerate() {
             if idx < existing_count {
                 tx.execute(
@@ -523,28 +547,88 @@ mod tests {
         let col = Collection::new(Box::new(s), Arc::new(SystemClock)).unwrap();
         let mut preset = NotetypePreset::for_layout(LayoutId::LanguageCard);
         assert_eq!(preset.style.align, StyleAlign::Auto);
-        let d1 = col.save_notetype_preset(nt_id, preset.clone()).unwrap();
+        let d1 = col
+            .save_notetype_preset(nt_id, preset.clone(), false)
+            .unwrap();
         assert_eq!(d1.templates.len(), 1);
         assert!(d1.preset.as_ref().unwrap().compiled_digest.is_some());
 
         // Turn reverse ON -> Card 2 created for existing note
         preset.options.include_reverse = true;
-        let d2 = col.save_notetype_preset(nt_id, preset.clone()).unwrap();
+        let d2 = col
+            .save_notetype_preset(nt_id, preset.clone(), false)
+            .unwrap();
         assert_eq!(d2.templates.len(), 2);
         assert_eq!(col.check_template_remove(nt_id, 1).unwrap(), 1);
 
-        // Turn reverse OFF -> Card 2 deleted
+        // Turn reverse OFF without confirm_remove -> refused, Card 2 kept
         preset.options.include_reverse = false;
-        let d3 = col.save_notetype_preset(nt_id, preset.clone()).unwrap();
+        assert!(col
+            .save_notetype_preset(nt_id, preset.clone(), false)
+            .is_err());
+        assert_eq!(col.check_template_remove(nt_id, 1).unwrap(), 1);
+
+        // Turn reverse OFF with confirm_remove=true -> Card 2 deleted
+        let d3 = col
+            .save_notetype_preset(nt_id, preset.clone(), true)
+            .unwrap();
         assert_eq!(d3.templates.len(), 1);
+
+        // Changing kind (standard -> cloze) when notes exist is refused even with confirm_remove=true
+        let mut cloze_preset = NotetypePreset::for_layout(LayoutId::Cloze);
+        cloze_preset.slots.insert("text".into(), "Word".into());
+        assert!(col
+            .save_notetype_preset(nt_id, cloze_preset.clone(), true)
+            .is_err());
+
+        // Changing kind succeeds when note type has zero notes
+        let empty_nt = col.create_notetype("Empty", 0).unwrap().id;
+        let mut empty_cloze = NotetypePreset::for_layout(LayoutId::Cloze);
+        empty_cloze.slots.insert("text".into(), "Front".into());
+        let after_kind = col
+            .save_notetype_preset(empty_nt, empty_cloze, false)
+            .unwrap();
+        assert_eq!(after_kind.kind, 1);
 
         // Switch to Advanced -> templates & css preserved
         let prev_qfmt = d3.templates[0].qfmt.clone();
         let prev_css = d3.css.clone();
         preset.mode = EditorMode::Advanced;
-        let d4 = col.save_notetype_preset(nt_id, preset).unwrap();
+        let d4 = col.save_notetype_preset(nt_id, preset, false).unwrap();
         assert_eq!(d4.preset.as_ref().unwrap().mode, EditorMode::Advanced);
         assert_eq!(d4.templates[0].qfmt, prev_qfmt);
         assert_eq!(d4.css, prev_css);
+    }
+
+    #[test]
+    fn nt_iokind_detects_image_occlusion_by_config_and_kind_1() {
+        use bibalak_core::{Collection, SystemClock};
+        use std::sync::Arc;
+
+        let s = SqliteStorage::open_in_memory().unwrap();
+        s.ensure_collection(1_000).unwrap();
+        let col = Collection::new(Box::new(s), Arc::new(SystemClock)).unwrap();
+
+        let list = col.list_notetypes().unwrap();
+        let stock_io = list.iter().find(|n| n.name == "Image Occlusion").unwrap();
+        assert_eq!(stock_io.kind, 1);
+        assert_eq!(stock_io.is_image_occlusion, Some(true));
+
+        // Renaming must preserve Image Occlusion detection via config, not name.
+        col.rename_notetype(stock_io.id, "Custom Diagram Mask")
+            .unwrap();
+        let renamed_summary = col
+            .list_notetypes()
+            .unwrap()
+            .into_iter()
+            .find(|n| n.id == stock_io.id)
+            .unwrap();
+        assert_eq!(renamed_summary.is_image_occlusion, Some(true));
+        let renamed_detail = col.get_notetype_detail(stock_io.id).unwrap().unwrap();
+        assert_eq!(renamed_detail.is_image_occlusion, Some(true));
+
+        // Standard note type named "Image Occlusion" (or kind != 1) must not be flagged.
+        let fake_io = col.create_notetype("Image Occlusion Fake", 0).unwrap();
+        assert_eq!(fake_io.is_image_occlusion, None);
     }
 }

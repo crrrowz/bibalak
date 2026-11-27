@@ -55,11 +55,11 @@ jobs:
     name: Web (lint, types, test, build, Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # Node 22 (oldest supported) and 26 (current); drop 22 when it reaches end of life
+    # Keep on current LTS (Node 26).
     strategy:
       fail-fast: false
       matrix:
-        node-version: [22, 26]
+        node-version: [26]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: No signing secrets in the repository

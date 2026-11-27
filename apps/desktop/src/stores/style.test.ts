@@ -9,8 +9,16 @@ describe("useStyle store", () => {
     vi.resetModules();
   });
 
-  it("defaults to 'default' and sets data-style='default' on <html>", async () => {
+  it("defaults to 'game' for a new user and sets data-style='game' on <html>", async () => {
     const { useStyle } = await import("./style");
+    expect(useStyle.getState().style).toBe("game");
+    expect(document.documentElement.getAttribute("data-style")).toBe("game");
+  });
+
+  it("never overwrites a stored 'default' style on initialization", async () => {
+    localStorage.setItem(STORAGE_KEY, "default");
+    const { useStyle } = await import("./style");
+
     expect(useStyle.getState().style).toBe("default");
     expect(document.documentElement.getAttribute("data-style")).toBe("default");
   });
@@ -40,11 +48,11 @@ describe("useStyle store", () => {
     expect(document.documentElement.getAttribute("data-style")).toBe("game");
   });
 
-  it("falls back to 'default' when localStorage holds an unknown value", async () => {
+  it("falls back to 'game' when localStorage holds an unknown value", async () => {
     localStorage.setItem(STORAGE_KEY, "unknown-style");
     const { useStyle } = await import("./style");
 
-    expect(useStyle.getState().style).toBe("default");
-    expect(document.documentElement.getAttribute("data-style")).toBe("default");
+    expect(useStyle.getState().style).toBe("game");
+    expect(document.documentElement.getAttribute("data-style")).toBe("game");
   });
 });

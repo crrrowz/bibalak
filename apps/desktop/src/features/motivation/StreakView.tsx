@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Flame, ShoppingBag, Trophy } from "lucide-react";
 import type { StreakCalendarDayDto } from "@bibalak/ipc-types";
 import { FrostShieldIcon } from "@/components/icons/game";
@@ -48,6 +48,14 @@ export function StreakView({ showTitle = true }: StreakViewProps = {}) {
   const motivationQuery = useMotivationState();
   const todayYm = splitIsoDate(motivationQuery.data?.today_date);
   const [period, setPeriod] = useState<{ year: number; month: number }>(() => todayYm);
+  const syncedTodayRef = useRef<string | undefined>(motivationQuery.data?.today_date);
+
+  useEffect(() => {
+    const loaded = motivationQuery.data?.today_date;
+    if (!loaded || syncedTodayRef.current === loaded) return;
+    syncedTodayRef.current = loaded;
+    setPeriod(splitIsoDate(loaded));
+  }, [motivationQuery.data?.today_date]);
 
   const calQuery = useStreakCalendar(period.year, period.month);
   const freezeMut = useFreezeStudyDay();

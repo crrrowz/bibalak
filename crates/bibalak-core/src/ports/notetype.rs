@@ -47,6 +47,7 @@ pub trait NotetypeStore: Send + Sync {
         notetype_id: i64,
         preset: &NotetypePreset,
         compiled: Option<&CompiledNotetype>,
+        confirm_remove: bool,
         now_ms: i64,
     ) -> CoreResult<()>;
 

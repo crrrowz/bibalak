@@ -2,8 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { StreakCalendarDto } from "@bibalak/ipc-types";
+import type { MotivationStateDto, StreakCalendarDto } from "@bibalak/ipc-types";
 import { StreakContent } from "./StreakContent";
+import { motivationMocks } from "@/dev/mocks/motivation";
 import { setLocale } from "@/lib/i18n";
 import * as ipcModule from "@/lib/ipc";
 import { useStyle } from "@/stores/style";
@@ -157,5 +158,36 @@ describe("StreakView (16e)", () => {
     expect(arView).toHaveTextContent("14 من 30 يومًا");
     const prevSvg = screen.getByRole("button", { name: "الشهر السابق" }).querySelector("svg");
     expect(prevSvg?.getAttribute("class")).toContain("rtl:-scale-x-100");
+  });
+
+  it("MOT-PERIOD: syncs period month/year once motivationQuery today_date loads", async () => {
+    let resolveMotivation!: (val: MotivationStateDto) => void;
+    vi.spyOn(ipcModule.ipc, "getMotivationState").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveMotivation = resolve;
+        }),
+    );
+    const calSpy = vi
+      .spyOn(ipcModule.ipc, "getStreakCalendar")
+      .mockImplementation(async (year, month) => makeCalendar(year, month));
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <StreakContent />
+      </QueryClientProvider>,
+    );
+
+    const baseState = (motivationMocks.get_motivation_state as () => MotivationStateDto)();
+    resolveMotivation({
+      ...baseState,
+      today_date: "2024-02-15",
+      today_day_index: 45,
+    });
+
+    await waitFor(() => {
+      expect(calSpy).toHaveBeenCalledWith(2024, 2);
+    });
   });
 });

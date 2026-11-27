@@ -38,11 +38,13 @@ import {
   computeWindowMs,
   dateAndMinutesToMs,
   forecastByDate,
+  isoDayDiff,
   localDateFromMs,
   localizedWeekdayOptions,
   MIN_DURATION_MINUTES,
   minutesToInputHm,
   parseIsoDateLocal,
+  startOfWeekIso,
   toIsoDateLocal,
   type CalendarViewMode,
 } from "./calendarHelpers";
@@ -131,6 +133,27 @@ export function CalendarScreen() {
     () => computeWindowMs(view, anchorDate, weekStart),
     [view, anchorDate, weekStart],
   );
+
+  const anchorWeekStart = useMemo(
+    () => startOfWeekIso(anchorDate, weekStart),
+    [anchorDate, weekStart],
+  );
+  const currentWeekStart = useMemo(
+    () => (habitQuery.data ? startOfWeekIso(habitQuery.data.today_date, weekStart) : null),
+    [habitQuery.data, weekStart],
+  );
+  const anchorWeekStartDay = useMemo(() => {
+    if (!habitQuery.data || !currentWeekStart || anchorWeekStart === currentWeekStart) return null;
+    return (
+      habitQuery.data.today_day_index + isoDayDiff(anchorWeekStart, habitQuery.data.today_date)
+    );
+  }, [habitQuery.data, currentWeekStart, anchorWeekStart]);
+
+  const habitWindowQuery = useQuery({
+    queryKey: [...queryKeys.habitsAll, anchorWeekStartDay, weekStart],
+    queryFn: () => ipc.getHabitBoard(anchorWeekStartDay, weekStart),
+    enabled: tauri && anchorWeekStartDay !== null,
+  });
 
   const occurrencesQuery = useQuery({
     queryKey: [...queryKeys.calendarAll, windowRange.windowStartMs, windowRange.windowEndMs],
@@ -238,7 +261,14 @@ export function CalendarScreen() {
   const occurrences = useMemo(() => occurrencesQuery.data ?? [], [occurrencesQuery.data]);
   const tasks = useMemo(() => matrixQuery.data?.tasks ?? [], [matrixQuery.data]);
   const habits = useMemo(() => habitQuery.data?.habits ?? [], [habitQuery.data]);
-  const habitLogs = useMemo(() => habitQuery.data?.logs ?? [], [habitQuery.data]);
+  const habitLogs = useMemo(() => {
+    const baseLogs = habitQuery.data?.logs ?? [];
+    const windowLogs = habitWindowQuery.data?.logs ?? [];
+    if (windowLogs.length === 0) return baseLogs;
+    const logKey = (l: (typeof windowLogs)[number]) => `${l.habit_id}:${l.day_index}`;
+    const seen = new Set(windowLogs.map(logKey));
+    return [...windowLogs, ...baseLogs.filter((l) => !seen.has(logKey(l)))];
+  }, [habitQuery.data, habitWindowQuery.data]);
   const todayDayIndex = habitQuery.data?.today_day_index ?? 0;
   const forecastMap = useMemo(() => forecastByDate(statsQuery.data), [statsQuery.data]);
   const undoAction = undoStatusQuery.data ?? null;

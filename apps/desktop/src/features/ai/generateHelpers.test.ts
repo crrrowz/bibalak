@@ -33,14 +33,25 @@ describe("generateHelpers & aiFormat (AI1)", () => {
       },
       {
         id: 3,
+        name: "My Diagram Mask",
+        kind: 1n,
+        is_image_occlusion: true,
+        field_names: ["Image", "Occlusion", "Header"],
+        note_count: 0,
+      },
+      {
+        id: 4,
         name: "Image Occlusion",
         kind: 1n,
-        field_names: ["Image", "Occlusion", "Header"],
+        field_names: ["Text", "Back Extra"],
         note_count: 0,
       },
     ];
     expect(matchingNotetypesForKind(list, "basic").map((n) => n.name)).toEqual(["Basic"]);
-    expect(matchingNotetypesForKind(list, "cloze").map((n) => n.name)).toEqual(["Cloze"]);
+    expect(matchingNotetypesForKind(list, "cloze").map((n) => n.name)).toEqual([
+      "Cloze",
+      "Image Occlusion",
+    ]);
   });
 
   it("builds Browse search queries with tag filter and escaped deck names", () => {

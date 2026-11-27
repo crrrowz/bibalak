@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Bibalak",
-  "version": "1.1.0",
-  "identifier": "com.keepsake.desktop",
+  "version": "1.1.1",
+  "identifier": "com.bibalak.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -59,6 +59,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Bibalak",
     "targets": "all",
     "icon": [
       "icons/32x32.png",

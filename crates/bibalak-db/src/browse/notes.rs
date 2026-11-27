@@ -727,7 +727,7 @@ mod tests {
                 "Front Q".into(),
                 "Original Back<br><br>Appended tutor note".into(),
             ],
-            &["tag1".into()],
+            &["tag1".into(), "added-tag".into()],
         )
         .unwrap();
 
@@ -740,12 +740,72 @@ mod tests {
             edited.fields[1].value,
             "Original Back<br><br>Appended tutor note"
         );
+        assert_eq!(edited.tags, vec!["tag1", "added-tag"]);
 
         let undone = col.undo().unwrap();
         assert_eq!(undone, Some(bibalak_core::undo::UndoAction::EditNote));
 
         let restored = col.note_detail(note_id).unwrap().unwrap();
         assert_eq!(restored.fields[1].value, "Original Back");
+        assert_eq!(restored.tags, vec!["tag1"]);
+    }
+
+    #[test]
+    fn add_note_records_undo_and_removes_note_and_cards() {
+        use bibalak_core::ipc::BatchNoteInput;
+        use bibalak_core::ports::FixedClock;
+        use bibalak_core::Collection;
+        use std::sync::Arc;
+
+        let s = SqliteStorage::open_in_memory().unwrap();
+        s.ensure_collection(1_000).unwrap();
+        let basic_id = s.add_stock_notetype(0, 1_000).unwrap();
+
+        let col = Collection::new(Box::new(s), Arc::new(FixedClock(2_000))).unwrap();
+        let added = col
+            .add_note(basic_id, 1, &["Q1".into(), "A1".into()], &["added".into()])
+            .unwrap();
+        assert_eq!(added.cards_added, 1);
+        assert_eq!(
+            col.undo_status(),
+            Some(bibalak_core::undo::UndoAction::AddNote { count: 1 })
+        );
+        assert!(col.note_detail(added.note_id).unwrap().is_some());
+        assert_eq!(col.deck_card_ids(1, false).unwrap().len(), 1);
+
+        let undone = col.undo().unwrap();
+        assert_eq!(
+            undone,
+            Some(bibalak_core::undo::UndoAction::AddNote { count: 1 })
+        );
+        assert!(col.note_detail(added.note_id).unwrap().is_none());
+        assert!(col.deck_card_ids(1, false).unwrap().is_empty());
+
+        let batch = col
+            .add_notes_batch(
+                basic_id,
+                1,
+                &[
+                    BatchNoteInput {
+                        fields: vec!["B1".into(), "A1".into()],
+                        tags: vec![],
+                    },
+                    BatchNoteInput {
+                        fields: vec!["B2".into(), "A2".into()],
+                        tags: vec![],
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            col.undo_status(),
+            Some(bibalak_core::undo::UndoAction::AddNote { count: 2 })
+        );
+        assert_eq!(col.deck_card_ids(1, false).unwrap().len(), 2);
+
+        col.undo().unwrap();
+        assert!(col.deck_card_ids(1, false).unwrap().is_empty());
+        assert!(col.note_detail(batch.note_ids[0]).unwrap().is_none());
     }
 
     #[test]

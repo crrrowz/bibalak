@@ -593,4 +593,24 @@ fn bw2_25_import_reports_reading_and_media_stages_and_cancels_cleanly() {
     .unwrap_err();
     assert!(matches!(err2, CoreError::Cancelled));
     assert!(cancel_store2.list_sizes().unwrap().is_empty());
+
+    // Cancel right after the last media file is copied deletes newly_added too.
+    let cancel_store3 = FsMediaStore::new(dir.path().join("cancel3.media"));
+    let cancel3 = AtomicBool::new(false);
+    let err3 = read_package_with_progress(
+        &pkg,
+        Some(&cancel_store3),
+        &cancel3,
+        &mut |stage, done, total| {
+            if stage == ImportStage::CopyingMedia && total > 0 && done == total {
+                cancel3.store(true, Ordering::Relaxed);
+            }
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err3, CoreError::Cancelled));
+    assert!(
+        cancel_store3.list_sizes().unwrap().is_empty(),
+        "cancelling after final media file must remove all newly added media"
+    );
 }

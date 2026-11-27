@@ -47,7 +47,7 @@ The project's decisions establish that:
 - `tauriCsp.test.ts` enforces the tighter `connect-src` allowlist without GitHub domains.
 - `THIRD_PARTY_NOTICES.md` is regenerated (`node scripts/licenses/generate-notices.mjs --write`) to cover the two Tauri plugins and their transitive crates.
 
-## Update source: GitHub Releases until the website exists (2026-11-26, UPD1)
+## Update source: GitHub Releases until the website exists (2026-11-26)
 
 changes item 2 above: updates no longer wait for a
 download website.

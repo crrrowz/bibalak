@@ -53,7 +53,7 @@ reservation is dropped, leave the number unused rather than reusing it.
 | 015 | Opt-in crash reporting (payload rules, SDK choice) — Stage 3                                    | `C3`    | owner OK for SDK       |
 | 016 | Google Drive storage: OAuth PKCE loopback, keychain tokens, `CloudStore` adapter                | `S3`    | Stage 2, after ADR-017 |
 | 017 | Server stack for Stage 2 (own API server; Supabase/Postgres behind it or not), auth, sync       | `SUPA1` | first step of Stage 2  |
-| 020 | External calendar providers (Google / Graph / CalDAV) adapter crate                             | `CAL2`  | Stage 2, after ADR-017 |
+| 020 | External calendar providers (Google / Graph / CalDAV) adapter crate                             | Stage 2 | Stage 2, after ADR-017 |
 | 024 | Mobile: form factors, `MobileShell`, density tokens, platform capabilities, data path, keystore | `MOB1`  | after Stage 1          |
 
 ## Schema version rule

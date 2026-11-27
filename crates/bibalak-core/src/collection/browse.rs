@@ -217,10 +217,20 @@ impl Collection {
         Ok(count)
     }
 
-    /// Reassign cards to another deck. Emits DeckChanged for the target deck.
+    /// Reassign cards to another deck. Records one undo step and emits DeckChanged.
     pub fn move_cards_to_deck(&self, card_ids: &[i64], deck_id: i64) -> CoreResult<()> {
+        if card_ids.is_empty() {
+            return Ok(());
+        }
+        let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage
             .move_cards_to_deck(card_ids, deck_id, self.clock.now_ms())?;
+        if !prev.is_empty() {
+            let count = prev.len() as u32;
+            self.record_undo(UndoAction::MoveCards { count }, move |s, now| {
+                s.restore_cards(&prev, now)
+            });
+        }
         self.events.emit(DomainEvent::DeckChanged { deck_id });
         Ok(())
     }

@@ -41,9 +41,9 @@ decision is [ADR-003](../architecture/adr/003-plugin-worker-sandbox.md).
 
 ## Where plugins live
 
-In the app's data folder (`%APPDATA%\com.keepsake.desktop` on Windows,
-`~/Library/Application Support/com.keepsake.desktop` on macOS,
-`~/.local/share/com.keepsake.desktop` on Linux; in portable mode, next to
+In the app's data folder (`%APPDATA%\com.bibalak.desktop` on Windows,
+`~/Library/Application Support/com.bibalak.desktop` on macOS,
+`~/.local/share/com.bibalak.desktop` on Linux; in portable mode, next to
 the app; see [the install guide](../guides/install.md)):
 
 ```text

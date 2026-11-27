@@ -105,7 +105,16 @@ pub fn change_note_type(
         let old_fields: Vec<String> = fields_blob.split(FIELD_SEP).map(str::to_string).collect();
         let tags = split_tags(&tags_blob);
         let cards = load_note_cards(&tx, note_id)?;
-        let default_deck_id = cards.first().map(|c| c.deck_id).unwrap_or(1);
+        let default_deck_id = cards
+            .first()
+            .map(|c| {
+                if c.original_deck_id != 0 {
+                    c.original_deck_id
+                } else {
+                    c.deck_id
+                }
+            })
+            .unwrap_or(1);
 
         snapshots.push(NoteTypeChangeSnapshot {
             note_id,

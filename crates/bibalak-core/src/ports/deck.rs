@@ -10,6 +10,9 @@ pub struct RemovedDeck {
     pub decks: Vec<Deck>,
     pub cards: Vec<Card>,
     pub notes: Vec<Note>,
+    pub revlogs: Vec<crate::model::Revlog>,
+    pub day_limit_overrides: Vec<(i64, i32, u32)>,
+    pub deck_configs: Vec<(i64, String, Option<String>)>,
 }
 
 /// Deck CRUD and filtered-deck persistence.

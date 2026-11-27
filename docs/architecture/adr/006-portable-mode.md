@@ -7,7 +7,7 @@
 
 Users asked for a Windows copy that runs without installing and can travel on
 a USB stick. The exe already runs without an installer, but every path came
-from `app_data_dir()` (`%APPDATA%\com.keepsake.desktop`) and the WebView2
+from `app_data_dir()` (`%APPDATA%\com.bibalak.desktop`) and the WebView2
 profile (language and layout in `localStorage`) went to `%LOCALAPPDATA%`, so
 the data stayed behind on the first computer.
 

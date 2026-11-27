@@ -187,4 +187,36 @@ describe("DeckRow collapse/expand", () => {
     // Real tree depth is 0 because parent_id is null; padding should be 2rem (not 3.25rem)
     expect(row!.style.paddingInlineStart).toBe("2rem");
   });
+
+  it("LOGIC1: formats multi-digit deck counts with formatNumber and aligns inline-end padding and w-11 shrink-0 columns", () => {
+    const bigDeck: DeckSummary = {
+      ...dummyDeck,
+      new_count: 1200,
+      learning_count: 0,
+      review_count: 1500,
+    };
+
+    const { container } = render(
+      <DeckRow
+        deck={bigDeck}
+        hasChildren={false}
+        onStudy={vi.fn()}
+        onRename={vi.fn()}
+        onOptions={vi.fn()}
+        onDelete={vi.fn()}
+        onRebuild={vi.fn()}
+        onEmpty={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("1,200")).toBeInTheDocument();
+    expect(screen.getByText("1,500")).toBeInTheDocument();
+
+    const row = container.querySelector<HTMLDivElement>('div[style*="padding-inline-start"]');
+    expect(row?.className).toContain("pe-4");
+    expect(row?.className).toContain("sm:pe-6");
+    expect(row?.className).toContain("lg:pe-8");
+    expect(screen.getByText("1,200").className).toContain("w-11");
+    expect(screen.getByText("1,200").className).toContain("shrink-0");
+  });
 });

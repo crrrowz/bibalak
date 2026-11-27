@@ -120,4 +120,14 @@ describe("AvatarStage & resolveAvatarLayers (14d)", () => {
     expect(container.querySelector('[data-layer="pet"]')).toBeNull();
     expect(screen.getByTestId("avatar-stage").querySelectorAll("svg").length).toBeGreaterThan(1);
   });
+
+  it("GAME-AVATAR: DEFAULT_AVATAR_PROFILE matches Rust AvatarProfileDto::default()", () => {
+    expect(DEFAULT_AVATAR_PROFILE).toEqual({
+      body_tone: "tone_2",
+      hair_style: "hair_1",
+      hair_color: "brown",
+      starter_outfit: "tunic_slate",
+      starter_accessory: "none",
+    });
+  });
 });

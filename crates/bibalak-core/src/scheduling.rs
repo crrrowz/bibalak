@@ -84,7 +84,7 @@ pub struct RatingPreviews {
 }
 
 /// Per-deck scheduling configuration. Defaults match Anki's out-of-the-box deck
-/// options and the published FSRS-5 default weights.
+/// options with FSRS-6 as the default algorithm for new decks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchedConfig {
     pub algorithm: Algorithm,
@@ -119,7 +119,7 @@ pub const FSRS6_DEFAULT_WEIGHTS: [f64; 21] = [
 impl Default for SchedConfig {
     fn default() -> Self {
         Self {
-            algorithm: Algorithm::Sm2,
+            algorithm: Algorithm::Fsrs,
             new_per_day: 20,
             review_per_day: 200,
             learning_steps_min: vec![1, 10],

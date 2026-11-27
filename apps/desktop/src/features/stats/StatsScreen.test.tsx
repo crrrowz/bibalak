@@ -5,6 +5,7 @@ import type { StatsDto } from "@bibalak/ipc-types";
 import { StatsScreen } from "./StatsScreen";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as ipc from "@/lib/ipc";
+import { useStyle } from "@/stores/style";
 
 const navigateMock = vi.fn();
 
@@ -63,6 +64,7 @@ function makeStats(overrides?: Partial<StatsDto>): StatsDto {
 describe("StatsScreen error state, retry, and coach cards", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    useStyle.getState().setStyle("default");
     navigateMock.mockReset();
   });
 
@@ -94,6 +96,46 @@ describe("StatsScreen error state, retry, and coach cards", () => {
 
     await userEvent.click(retryBtn);
     expect(getStatsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("STATS-FILT: excludes filtered decks from the StatsFilters deck selector", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
+      {
+        id: 1,
+        name: "Anatomy",
+        parent_id: null,
+        new_count: 3,
+        learning_count: 0,
+        review_count: 2,
+        is_filtered: false,
+        collapsed: false,
+      },
+      {
+        id: 2,
+        name: "Filtered Cram",
+        parent_id: null,
+        new_count: 0,
+        learning_count: 0,
+        review_count: 5,
+        is_filtered: true,
+        collapsed: false,
+      },
+    ]);
+    vi.spyOn(ipc.ipc, "getStats").mockResolvedValue(makeStats());
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <StatsScreen />
+      </QueryClientProvider>,
+    );
+
+    const select = await screen.findByRole("combobox", { name: /All decks/i });
+    await screen.findByText("Anatomy");
+    expect(select).toHaveTextContent("Anatomy");
+    expect(select).not.toHaveTextContent("Filtered Cram");
   });
 
   it("stays quiet when leech_count and overdue_count are zero", async () => {

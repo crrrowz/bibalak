@@ -4,6 +4,7 @@
 //! collection at startup, registers the IPC command surface, and bridges core
 //! [`DomainEvent`]s to the webview. All real work lives in `bibalak-core`.
 
+mod app_id;
 mod commands;
 mod data_dir;
 mod legacy;
@@ -25,6 +26,37 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use commands::app::{StartupErrorInfo, StartupErrorState};
+
+fn open_startup_note_index(
+    create: impl FnOnce() -> bibalak_core::error::CoreResult<NoteIndex>,
+) -> Result<NoteIndex, StartupErrorInfo> {
+    match create() {
+        Ok(index) => Ok(index),
+        Err(e) => {
+            tracing::error!("failed to create search index: {e}");
+            Err(StartupErrorInfo::from_core(&e))
+        }
+    }
+}
+
+fn rebuild_search_index(handle: &tauri::AppHandle) {
+    if let Some(state) = handle.try_state::<SearchState>() {
+        if let Some(collection) = handle.try_state::<Collection>() {
+            match collection.index_rows() {
+                Ok(rows) => {
+                    let idx = state.0.lock().unwrap_or_else(|p| {
+                        tracing::warn!("search mutex poisoned; recovering");
+                        p.into_inner()
+                    });
+                    if let Err(e) = idx.rebuild(&rows) {
+                        tracing::warn!("failed to rebuild search index: {e}");
+                    }
+                }
+                Err(e) => tracing::warn!("failed to load index rows for search rebuild: {e}"),
+            }
+        }
+    }
+}
 
 fn mime_for(filename: &str) -> &'static str {
     let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
@@ -93,6 +125,12 @@ pub fn run() {
         let path = std::env::temp_dir().join("bibalak-crash.txt");
         let _ = std::fs::write(&path, format!("{msg}\n"));
     }));
+
+    // First launch after the app id change: rename the old OS folders
+    // before the window and webview open them. Portable copies keep `./data`.
+    if data_dir::portable_data_dir().is_none() {
+        app_id::adopt_previous_dirs();
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -170,12 +208,26 @@ pub fn run() {
             ));
             window_state::init(&win, &dir, window_config.width, window_config.height);
             let portable = data_dir::portable_data_dir().is_some();
+            // Older app folders, newest first: the 1.0/1.1 id (when the
+            // rename in `app_id` could not happen) and the Synapse id.
             let legacy_dir = (!portable)
-                .then(|| dir.parent().map(|p| p.join(legacy::LEGACY_IDENTIFIER)))
-                .flatten();
-            // First launch after the Synapse → Bibalak rename: copy only the
-            // DB + WAL/SHM + plugins synchronously so the window stays responsive;
-            // media and backups copy on a background thread after setup.
+                .then(|| dir.parent().map(std::path::Path::to_path_buf))
+                .flatten()
+                .and_then(|parent| {
+                    [app_id::PREVIOUS_IDENTIFIER, legacy::LEGACY_IDENTIFIER]
+                        .into_iter()
+                        .map(|id| parent.join(id))
+                        // A folder already copied once is skipped, unless
+                        // its media copy (phase 2) is still pending.
+                        .find(|d| {
+                            legacy::legacy_dir_usable(d)
+                                || (legacy::legacy_copy_pending(&dir)
+                                    && d.join("collection.sqlite").is_file())
+                        })
+                });
+            // First launch after a rename: copy only the DB + WAL/SHM + plugins
+            // synchronously so the window stays responsive; media and backups
+            // copy on a background thread after setup.
             if let Some(ref legacy_dir) = legacy_dir {
                 match legacy::migrate_legacy_core(legacy_dir, &dir) {
                     Ok(true) => tracing::info!("migrated core data from {}", legacy_dir.display()),
@@ -215,11 +267,16 @@ pub fn run() {
                     return Ok(());
                 }
             };
-            app.manage(StartupErrorState(Mutex::new(None)));
-
             // Manage an empty index immediately so `SearchState` exists for any
             // early command; the real index is built in the background below.
-            let index = NoteIndex::new().expect("failed to create search index");
+            let index = match open_startup_note_index(NoteIndex::new) {
+                Ok(index) => index,
+                Err(info) => {
+                    app.manage(StartupErrorState(Mutex::new(Some(info))));
+                    return Ok(());
+                }
+            };
+            app.manage(StartupErrorState(Mutex::new(None)));
             app.manage(SearchState(Mutex::new(index)));
 
             // Bridge domain events → webview + rebuild search index on mutations.
@@ -277,24 +334,10 @@ pub fn run() {
                     DomainEvent::CollectionOpened
                     | DomainEvent::SchemaChanged
                     | DomainEvent::NoteRemoved { .. } => {
-                        if let Some(state) = handle.try_state::<SearchState>() {
-                            if let Some(collection) = handle.try_state::<Collection>() {
-                                match collection.index_rows() {
-                                    Ok(rows) => {
-                                        let idx = state.0.lock().unwrap_or_else(|p| {
-                                            tracing::warn!("search mutex poisoned; recovering");
-                                            p.into_inner()
-                                        });
-                                        if let Err(e) = idx.rebuild(&rows) {
-                                            tracing::warn!("failed to rebuild search index: {e}");
-                                        }
-                                    }
-                                    Err(e) => tracing::warn!(
-                                        "failed to load index rows for search rebuild: {e}"
-                                    ),
-                                }
-                            }
-                        }
+                        rebuild_search_index(&handle);
+                    }
+                    DomainEvent::DeckChanged { deck_id } if *deck_id != 0 => {
+                        rebuild_search_index(&handle);
                     }
                     _ => {}
                 }
@@ -614,41 +657,8 @@ mod tests {
     fn quick_add_window_cannot_call_admin_commands() {
         use tauri::ipc::Origin;
 
-        let mut ctx = super::app_context();
-        let auth = ctx.runtime_authority_mut();
-
-        for denied in [
-            "delete_backup",
-            "restore_backup",
-            "export_package",
-            "get_export_estimate",
-            "cancel_export",
-            "import_package",
-            "cancel_import",
-            "install_plugin",
-            "delete_notes",
-            "delete_deck",
-            "optimize_db",
-            "ai_set_config",
-            "ai_run_action",
-            "pick_open_path",
-            "pick_save_path",
-            "save_notetype_preset",
-            "lint_notetype",
-        ] {
-            assert!(
-                auth.resolve_access(denied, "quick-add", "quick-add", &Origin::Local)
-                    .is_none(),
-                "quick-add window must not be allowed to invoke '{denied}'"
-            );
-            assert!(
-                auth.resolve_access(denied, "main", "main", &Origin::Local)
-                    .is_some(),
-                "main window must be allowed to invoke '{denied}'"
-            );
-        }
-
-        for allowed in [
+        const ALLOWED_QUICK_ADD: &[&str] = &[
+            "get_startup_error",
             "set_local_offset",
             "get_quick_add_config",
             "remember_quick_add_target",
@@ -660,12 +670,68 @@ mod tests {
             "check_duplicate",
             "add_note",
             "save_media",
-        ] {
+        ];
+
+        let build_rs = include_str!("../build.rs");
+        let start = build_rs.find("const APP_COMMANDS").expect("APP_COMMANDS");
+        let body = &build_rs[start..];
+        let open = body.find("&[").expect("APP_COMMANDS slice start") + 2;
+        let close = body[open..].find("];").expect("APP_COMMANDS slice end");
+        let all_commands: Vec<&str> = body[open..open + close]
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim().trim_end_matches(',');
+                trimmed.strip_prefix('"')?.strip_suffix('"')
+            })
+            .collect();
+        assert!(
+            all_commands.len() > 100,
+            "expected full APP_COMMANDS manifest in build.rs, got {}",
+            all_commands.len()
+        );
+        for explicit_denied in ["get_export_estimate", "cancel_export", "cancel_import"] {
             assert!(
-                auth.resolve_access(allowed, "quick-add", "quick-add", &Origin::Local)
-                    .is_some(),
-                "quick-add window must be allowed to invoke '{allowed}'"
+                all_commands.contains(&explicit_denied)
+                    && !ALLOWED_QUICK_ADD.contains(&explicit_denied),
+                "expected '{explicit_denied}' in APP_COMMANDS and denied on quick-add"
             );
         }
+
+        let mut ctx = super::app_context();
+        let auth = ctx.runtime_authority_mut();
+
+        for &cmd in &all_commands {
+            assert!(
+                auth.resolve_access(cmd, "main", "main", &Origin::Local)
+                    .is_some(),
+                "main window must be allowed to invoke '{cmd}'"
+            );
+            if ALLOWED_QUICK_ADD.contains(&cmd) {
+                assert!(
+                    auth.resolve_access(cmd, "quick-add", "quick-add", &Origin::Local)
+                        .is_some(),
+                    "quick-add window must be allowed to invoke '{cmd}'"
+                );
+            } else {
+                assert!(
+                    auth.resolve_access(cmd, "quick-add", "quick-add", &Origin::Local)
+                        .is_none(),
+                    "quick-add window must not be allowed to invoke '{cmd}'"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn note_index_startup_failure_produces_startup_error_info_without_panicking() {
+        let Err(info) = super::open_startup_note_index(|| {
+            Err(bibalak_core::CoreError::Storage("fts5 unavailable".into()))
+        }) else {
+            panic!("expected startup error when NoteIndex creation fails");
+        };
+        assert_eq!(info.kind, "open_failed");
+        assert!(info.message.contains("fts5 unavailable"));
+
+        assert!(super::open_startup_note_index(super::NoteIndex::new).is_ok());
     }
 }

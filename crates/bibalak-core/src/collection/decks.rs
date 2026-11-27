@@ -33,6 +33,7 @@ impl Collection {
     /// report only their own counts in isolation.
     #[allow(clippy::type_complexity)]
     pub fn list_decks_with_counts(&self) -> CoreResult<Vec<(Deck, (u32, u32, u32))>> {
+        self.maybe_unbury_day_rollover()?;
         let decks = self.list_decks()?;
         let raw_counts =
             self.storage
@@ -77,8 +78,15 @@ impl Collection {
             .storage
             .deck_by_id(deck_id)?
             .ok_or_else(|| CoreError::NotFound(format!("deck {deck_id}")))?;
+        let (prev_new, prev_rev) = self.storage.deck_limits(deck.config_id)?;
+        let config_id = deck.config_id;
         self.storage
-            .set_deck_limits(deck.config_id, new_per_day, rev_per_day, self.now_ms())
+            .set_deck_limits(config_id, new_per_day, rev_per_day, self.now_ms())?;
+        self.record_undo(UndoAction::ChangeDeckOptions, move |s, now| {
+            s.set_deck_limits(config_id, prev_new, prev_rev, now)
+        });
+        self.events.emit(DomainEvent::DeckChanged { deck_id });
+        Ok(())
     }
 
     /// Current extra new-card allowance for `deck_id` for today, if any.
@@ -95,11 +103,19 @@ impl Collection {
     pub fn increase_today_new_limit(&self, deck_id: i64, extra_new: u32) -> CoreResult<()> {
         let subtree = self.study_subtree(deck_id)?;
         let today = self.today();
-        for sub_id in subtree {
+        let mut prev = Vec::with_capacity(subtree.len());
+        for &sub_id in &subtree {
             let current = self.storage.day_extra_new(sub_id, today)?;
+            prev.push((sub_id, current));
             self.storage
                 .set_day_extra_new(sub_id, today, current.saturating_add(extra_new))?;
         }
+        self.record_undo(UndoAction::IncreaseTodayLimit, move |s, _| {
+            for (sub_id, prev_extra) in prev {
+                s.set_day_extra_new(sub_id, today, prev_extra)?;
+            }
+            Ok(())
+        });
         self.events.emit(DomainEvent::DeckChanged { deck_id });
         Ok(())
     }
@@ -201,8 +217,13 @@ impl Collection {
             fsrs_weights: arr,
             desired_retention: cfg.desired_retention,
         };
+        let config_id = deck.config_id;
+        let prev_sched = self.storage.get_deck_config(config_id)?;
         self.storage
-            .set_deck_config(deck.config_id, &sched, self.now_ms())?;
+            .set_deck_config(config_id, &sched, self.now_ms())?;
+        self.record_undo(UndoAction::ChangeDeckOptions, move |s, now| {
+            s.set_deck_config(config_id, &prev_sched, now)
+        });
         self.events.emit(DomainEvent::DeckChanged {
             deck_id: cfg.deck_id,
         });
@@ -237,6 +258,7 @@ impl Collection {
             self.clock.now_ms(),
         )?;
         let id = deck.id;
+        self.clear_undo();
         for deck_id in self.ids_by_name(&missing)?.into_iter().chain([id]) {
             self.events.emit(DomainEvent::DeckChanged { deck_id });
         }
@@ -247,12 +269,14 @@ impl Collection {
         let n = self
             .storage
             .rebuild_filtered(deck_id, self.today(), self.clock.now_ms())?;
+        self.clear_undo();
         self.events.emit(DomainEvent::DeckChanged { deck_id });
         Ok(n)
     }
 
     pub fn empty_filtered(&self, deck_id: i64) -> CoreResult<()> {
         self.storage.empty_filtered(deck_id, self.clock.now_ms())?;
+        self.clear_undo();
         self.events.emit(DomainEvent::DeckChanged { deck_id });
         Ok(())
     }
@@ -368,14 +392,29 @@ impl Collection {
             .storage
             .deck_by_id(id)?
             .ok_or_else(|| CoreError::NotFound(format!("deck {id}")))?;
-        // Return gathered cards before deleting a filtered deck.
-        if deck.is_filtered {
-            self.storage.empty_filtered(id, self.clock.now_ms())?;
+        // Return gathered cards before deleting any filtered deck in the subtree.
+        let now_ms = self.clock.now_ms();
+        let today = self.today();
+        let sub_ids = self.deck_and_descendants(id)?;
+        let filtered_ids: Vec<i64> = self
+            .storage
+            .list_decks()?
+            .into_iter()
+            .filter(|d| d.is_filtered && sub_ids.contains(&d.id))
+            .map(|d| d.id)
+            .collect();
+        for fid in &filtered_ids {
+            self.storage.empty_filtered(*fid, now_ms)?;
         }
         // Cascades to sub-decks + their cards; the returned snapshot drives undo.
-        let removed = self.storage.remove_deck(id, self.clock.now_ms())?;
+        let removed = self.storage.remove_deck(id, now_ms)?;
+        let is_filtered = deck.is_filtered;
         self.record_undo(UndoAction::DeleteDeck { name: deck.name }, move |s, now| {
-            s.restore_deck(&removed, now)
+            s.restore_deck(&removed, now)?;
+            if is_filtered {
+                let _ = s.rebuild_filtered(id, today, now)?;
+            }
+            Ok(())
         });
         self.events.emit(DomainEvent::DeckChanged { deck_id: id });
         Ok(())

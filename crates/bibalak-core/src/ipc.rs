@@ -594,6 +594,9 @@ pub struct NotetypeSummary {
     pub name: String,
     /// 0 = standard, 1 = cloze.
     pub kind: i64,
+    #[serde(default)]
+    #[ts(optional)]
+    pub is_image_occlusion: Option<bool>,
     pub field_names: Vec<String>,
     pub note_count: u32,
 }
@@ -627,6 +630,9 @@ pub struct NotetypeDetail {
     pub name: String,
     /// 0 = standard, 1 = cloze.
     pub kind: i64,
+    #[serde(default)]
+    #[ts(optional)]
+    pub is_image_occlusion: Option<bool>,
     pub fields: Vec<FieldSummary>,
     pub templates: Vec<TemplateSummary>,
     /// Custom card CSS (`Notetype.config_json.css`), user-editable.

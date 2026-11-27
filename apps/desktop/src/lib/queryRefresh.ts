@@ -9,6 +9,8 @@ import { queryKeys } from "./queryKeys";
 export function invalidateTodayCounts(queryClient: QueryClient): Promise<void[]> {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.decks }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.deckCardIdsAll }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.cardsAll }),
     queryClient.invalidateQueries({ queryKey: queryKeys.motivationState }),
     queryClient.invalidateQueries({ queryKey: queryKeys.progressSummary }),
     queryClient.invalidateQueries({ queryKey: queryKeys.statsAll }),
@@ -17,5 +19,8 @@ export function invalidateTodayCounts(queryClient: QueryClient): Promise<void[]>
     queryClient.invalidateQueries({ queryKey: queryKeys.studyDaysAll }),
     queryClient.invalidateQueries({ queryKey: queryKeys.progressByDeck }),
     queryClient.invalidateQueries({ queryKey: queryKeys.streakCalendarAll }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.matrixAll }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.calendarAll }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.yesterdaySummary }),
   ]);
 }

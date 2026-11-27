@@ -32,7 +32,7 @@ Run each plugin in a **browser Web Worker** created from a `Blob` URL. Before ex
 - Audio/DOM rendering extensions must go through the bridge API; direct DOM manipulation from plugins is not possible.
 - If a Wasm runtime becomes available (v1.1+), the bridge API surface is stable and the sandbox can be swapped without changing plugin manifests.
 
-## Update — API 0.2.0 (PLG1, 2026-11-26)
+## Update — API 0.2.0 (2026-11-26)
 
 - Host and SDK share API `0.2.0`. Data reads go Worker → host (permission
   check and rate limit) → Rust IPC (`plugin_read_decks`, `plugin_read_notes`,

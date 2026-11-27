@@ -60,7 +60,7 @@ export function TodayCard({ decks, onStudy }: TodayCardProps) {
   }, [goalMenuOpen]);
 
   const dueTotals = useMemo(() => {
-    const topLevel = decks.filter((d) => d.parent_id === null);
+    const topLevel = decks.filter((d) => d.parent_id === null || d.is_filtered);
     const source = topLevel.length > 0 ? topLevel : decks;
     return source.reduce(
       (acc, d) => ({

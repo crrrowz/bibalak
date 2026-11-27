@@ -1,3 +1,5 @@
+import { formatNumber } from "@/lib/i18n";
+
 function CountBadge({
   count,
   color,
@@ -17,7 +19,7 @@ function CountBadge({
     <span
       className={`rounded px-1.5 py-0.5 text-center text-xs font-semibold tabular-nums ${color} ${columnWidth ?? ""}`}
     >
-      {count}
+      {formatNumber(count)}
     </span>
   );
 }

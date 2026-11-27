@@ -286,7 +286,12 @@ pub fn init<R: Runtime>(
             reset_to_centered_default(win, default_width, default_height);
             snapshot_window(win)
         }
-        RestoreDecision::NoSavedState => snapshot_window(win),
+        // First launch: open maximized; the 1200×800 default stays the
+        // size it returns to when the user un-maximizes.
+        RestoreDecision::NoSavedState => {
+            let _ = win.maximize();
+            snapshot_window(win)
+        }
     };
 
     let state = Arc::new(Mutex::new(initial));

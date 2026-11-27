@@ -501,6 +501,53 @@ describe("AddScreen 16j shared toolbar", () => {
     });
   });
 
+  it("NT-IOKIND: detects Image Occlusion via extra_config (kind 1) rather than name or kind 2", async () => {
+    (
+      ipc.listNotetypes as unknown as { mockResolvedValueOnce: (v: unknown) => void }
+    ).mockResolvedValueOnce([
+      {
+        id: 3,
+        name: "Custom Diagram",
+        kind: 1n,
+        is_image_occlusion: true,
+        field_names: ["Image", "Occlusion"],
+        note_count: 0,
+      },
+    ]);
+    (
+      ipc.getNotetype as unknown as { mockResolvedValueOnce: (v: unknown) => void }
+    ).mockResolvedValueOnce({
+      id: 3,
+      name: "Custom Diagram",
+      kind: 1n,
+      is_image_occlusion: true,
+      sort_field: 0n,
+      fields: [
+        {
+          ord: 0n,
+          name: "Image",
+          options: { direction: "auto", font: "", size: 0, description: "" },
+        },
+        {
+          ord: 1n,
+          name: "Occlusion",
+          options: { direction: "auto", font: "", size: 0, description: "" },
+        },
+      ],
+      templates: [],
+      css: "",
+      preset: null,
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AddScreen />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: /Choose image/i })).toBeInTheDocument();
+  });
+
   it("keeps field label, Suggest back, and compact field padding", async () => {
     (
       ipc.listNotetypes as unknown as { mockResolvedValueOnce: (v: unknown) => void }

@@ -140,6 +140,9 @@ impl DeckStore for FakeStorage {
             decks: removed,
             cards: vec![],
             notes: vec![],
+            revlogs: vec![],
+            day_limit_overrides: vec![],
+            deck_configs: vec![],
         })
     }
 
@@ -382,6 +385,7 @@ impl NotetypeStore for FakeStorage {
         _notetype_id: i64,
         _preset: &crate::notetype_preset::NotetypePreset,
         _compiled: Option<&crate::notetype_preset::CompiledNotetype>,
+        _confirm_remove: bool,
         _now_ms: i64,
     ) -> CoreResult<()> {
         Ok(())

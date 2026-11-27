@@ -18,7 +18,7 @@ impl Collection {
         tz_offset_minutes: i32,
     ) -> CoreResult<StatsDto> {
         let deck_ids = match deck_id {
-            Some(root) => Some(self.deck_and_descendants(root)?),
+            Some(root) => Some(self.study_subtree(root)?),
             None => None,
         };
         let (fsrs_weights, retention_goal_pct) = match deck_id {
@@ -43,7 +43,7 @@ impl Collection {
 
     /// Card states and recent pacing for simulating workload across `deck_id` and subdecks.
     pub fn workload_snapshot(&self, deck_id: i64) -> CoreResult<WorkloadSnapshot> {
-        let deck_ids = self.deck_and_descendants(deck_id)?;
+        let deck_ids = self.study_subtree(deck_id)?;
         self.storage.workload_snapshot(&deck_ids)
     }
 }

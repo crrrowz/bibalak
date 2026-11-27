@@ -49,7 +49,7 @@ Shared TypeScript packages live under `packages/`:
 
 ## 4. Data & portable mode ([ADR-006](docs/architecture/adr/006-portable-mode.md))
 
-- **Standard install:** Stores `collection.sqlite`, `collection.media/`, `backups/`, and `plugins/` in the OS application data directory (`com.keepsake.desktop` resolved via `data_dir::data_dir`).
+- **Standard install:** Stores `collection.sqlite`, `collection.media/`, `backups/`, and `plugins/` in the OS application data directory (`com.bibalak.desktop` resolved via `data_dir::data_dir`).
 - **Portable mode (Windows):** Placing an empty `portable.txt` file beside `Bibalak.exe` redirects `data_dir` to `./data/` next to the executable so nothing is written to `%APPDATA%`.
 - **Automatic backups:** Daily startup backups plus automatic pre-migration `.pre-v<N>.sqlite` snapshots before schema upgrades.
 

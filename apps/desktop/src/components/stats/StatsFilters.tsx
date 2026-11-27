@@ -44,12 +44,14 @@ export function StatsFilters({
         onChange={(e) => onDeckChange(e.target.value === "all" ? null : Number(e.target.value))}
       >
         <option value="all">{t("stats.allDecks")}</option>
-        {decks.map((d) => (
-          <option key={d.id} value={d.id}>
-            {"  ".repeat(deckDepth(d.name))}
-            {deckLabel(d.name)}
-          </option>
-        ))}
+        {decks
+          .filter((d) => !d.is_filtered)
+          .map((d) => (
+            <option key={d.id} value={d.id}>
+              {"  ".repeat(deckDepth(d.name))}
+              {deckLabel(d.name)}
+            </option>
+          ))}
       </Select>
 
       <div className="flex items-center gap-1 rounded-md border border-border bg-secondary/50 p-1">

@@ -253,6 +253,55 @@ pub trait StudyStore: Send + Sync {
         now_ms: i64,
     ) -> CoreResult<Vec<Card>>;
 
+    /// Reset `card_ids` and return both prior card rows and any inserted
+    /// `review_kind = 4` revlog marker IDs so undo can remove those markers.
+    fn forget_cards_with_revlog(
+        &self,
+        card_ids: &[i64],
+        reset_counts: bool,
+        now_ms: i64,
+    ) -> CoreResult<(Vec<Card>, Vec<i64>)> {
+        Ok((self.forget_cards(card_ids, reset_counts, now_ms)?, vec![]))
+    }
+
+    /// Delete revlog rows by ID (used when undoing `forget_cards`).
+    fn delete_revlogs(&self, _revlog_ids: &[i64]) -> CoreResult<()> {
+        Ok(())
+    }
+
+    /// Home deck ID for `card_id` (`original_deck_id` when inside a filtered
+    /// deck, otherwise `deck_id`).
+    fn card_home_deck_id(&self, _card_id: i64) -> CoreResult<Option<i64>> {
+        Ok(None)
+    }
+
+    /// Raw queue value for `card_id` (negative when suspended or buried).
+    fn card_queue(&self, _card_id: i64) -> CoreResult<Option<i32>> {
+        Ok(None)
+    }
+
+    /// Raw `ease_factor` column for `card_id` (0 on unstudied new cards).
+    fn card_raw_ease_factor(&self, _card_id: i64) -> CoreResult<Option<i64>> {
+        Ok(None)
+    }
+
+    /// Soft-delete `freeze_earn:streak:<day>` if no active `progress_ledger`
+    /// rows remain on `day` after an answer undo.
+    fn revoke_streak_freeze_if_inactive(
+        &self,
+        _day: i32,
+        _day_start_ms: i64,
+        _day_end_ms: i64,
+        _now_ms: i64,
+    ) -> CoreResult<()> {
+        Ok(())
+    }
+
+    /// Load full `Card` snapshots for `card_ids` (used to record undo steps).
+    fn cards_by_ids(&self, _card_ids: &[i64]) -> CoreResult<Vec<Card>> {
+        Ok(vec![])
+    }
+
     /// Reschedule `card_ids` to `(today + offset_days)` for an inclusive offset in
     /// `[min_days, max_days]`. Review cards keep their interval; non-review cards become
     /// reviews. Returns prior card rows for undo.

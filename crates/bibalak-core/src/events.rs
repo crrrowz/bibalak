@@ -5,7 +5,7 @@
 //! cache invalidator, the plugin host, and a Tauri bridge that re-emits events
 //! to the webview so the UI can invalidate its query cache.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, Once};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -99,15 +99,28 @@ impl EventBus {
         Self::default()
     }
 
+    fn lock_listeners(&self) -> MutexGuard<'_, Vec<Listener>> {
+        match self.listeners.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                static LOGGED_EVENT_POISON: Once = Once::new();
+                LOGGED_EVENT_POISON.call_once(|| {
+                    eprintln!("bibalak: event bus mutex poisoned; recovering inner listeners");
+                });
+                poisoned.into_inner()
+            }
+        }
+    }
+
     /// Register a listener for all events.
     pub fn subscribe(&self, listener: impl Fn(&DomainEvent) + Send + Sync + 'static) {
-        self.listeners.lock().unwrap().push(Box::new(listener));
+        self.lock_listeners().push(Box::new(listener));
     }
 }
 
 impl EventSink for EventBus {
     fn emit(&self, event: DomainEvent) {
-        let listeners = self.listeners.lock().unwrap();
+        let listeners = self.lock_listeners();
         for listener in listeners.iter() {
             listener(&event);
         }
@@ -133,6 +146,29 @@ mod tests {
         bus.emit(DomainEvent::CollectionOpened);
         bus.emit(DomainEvent::DeckChanged { deck_id: 1 });
         assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn recovers_from_poisoned_mutex_in_subscribe_and_emit() {
+        let bus = EventBus::new();
+        bus.subscribe(|event| {
+            if matches!(event, DomainEvent::CollectionOpened) {
+                panic!("simulated listener panic");
+            }
+        });
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            bus.emit(DomainEvent::CollectionOpened);
+        }));
+        assert!(panicked.is_err());
+
+        let count = Arc::new(AtomicUsize::new(0));
+        let c = count.clone();
+        bus.subscribe(move |_| {
+            c.fetch_add(1, Ordering::SeqCst);
+        });
+        bus.emit(DomainEvent::DeckChanged { deck_id: 1 });
+        assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 
     #[test]

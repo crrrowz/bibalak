@@ -39,14 +39,16 @@ export function CoachPanel({
     lines.push("");
     lines.push(`${t("ai.coach.adviceHeading")}:`);
     report.advice.forEach((item, idx) => {
-      const deckLabel = item.deck_id ? ` (${deckMap.get(item.deck_id) ?? `#${item.deck_id}`})` : "";
-      lines.push(`${idx + 1}. ${item.title}${deckLabel}: ${item.detail}`);
+      const deckLabel = item.deck_id
+        ? ` (${deckMap.get(item.deck_id) ?? `#${formatNumber(item.deck_id)}`})`
+        : "";
+      lines.push(`${formatNumber(idx + 1)}. ${item.title}${deckLabel}: ${item.detail}`);
     });
     lines.push("");
     lines.push(`${t("ai.coach.planHeading")}:`);
     report.plan.forEach((day) => {
       lines.push(
-        `${t("ai.coach.dayLabel", { day: day.day })}: ${formatNumber(day.reviews)} ${t(
+        `${t("ai.coach.dayLabel", { day: formatNumber(day.day) })}: ${formatNumber(day.reviews)} ${t(
           "ai.coach.reviewsLabel",
         )}, ${formatNumber(day.new_cards)} ${t("ai.coach.newCardsLabel")} — ${day.focus}`,
       );

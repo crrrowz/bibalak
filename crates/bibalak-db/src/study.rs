@@ -46,21 +46,38 @@ pub fn all_deck_limits(conn: &Connection) -> CoreResult<HashMap<i64, (u32, u32)>
 /// Cards studied today in one deck, `(new, review)`. `CROSS JOIN` keeps the
 /// review log as the outer loop: it starts from today's reviews (revlog's
 /// primary key is the timestamp) instead of every card in the deck (ADR-005).
-/// Carryover learning cards first answered before `today_start_ms` are excluded
-/// from `new` so finishing yesterday's learning steps does not consume today's
-/// new-card quota.
+/// Carryover learning cards first answered before `today_start_ms` (without an
+/// intervening `review_kind = 4` forget boundary) are excluded from `new` so
+/// finishing yesterday's learning steps does not consume today's new-card quota,
+/// while cards reset via `forget_cards` (`review_kind = 4`) count per reset epoch.
+/// Matches Anki (`rslib/src/scheduler/answering/mod.rs` `update_deck_stats_from_answer`):
+/// answers in a filtered deck record against the filtered deck (`c.deck_id`),
+/// not the card's home deck (`original_deck_id`), so studying in a filtered deck
+/// does not consume the home deck's daily new/review limits.
 pub(crate) const TODAY_STUDIED_SQL: &str = "SELECT
        COUNT(DISTINCT CASE
            WHEN r.review_kind = 0
             AND NOT EXISTS (
                 SELECT 1 FROM revlog prev
-                WHERE prev.card_id = r.card_id AND prev.id < ?2
+                WHERE prev.card_id = r.card_id
+                  AND prev.review_kind != 4
+                  AND prev.id < ?2
+                  AND prev.id > COALESCE(
+                      (SELECT MAX(f.id) FROM revlog f
+                       WHERE f.card_id = r.card_id AND f.review_kind = 4 AND f.id <= r.id),
+                      -1
+                  )
             )
-           THEN r.card_id
+           THEN r.card_id || ':' || COALESCE(
+               (SELECT MAX(f.id) FROM revlog f
+                WHERE f.card_id = r.card_id AND f.review_kind = 4 AND f.id <= r.id),
+               -1
+           )
        END),
        COUNT(DISTINCT CASE WHEN r.review_kind = 1 THEN r.card_id END)
      FROM revlog r CROSS JOIN cards c ON c.id = r.card_id
-     WHERE c.deck_id = ?1 AND r.id >= ?2";
+     WHERE c.deck_id = ?1
+       AND r.id >= ?2";
 
 pub fn today_studied(
     conn: &Connection,
@@ -84,9 +101,20 @@ pub fn all_today_studied(
                    WHEN r.review_kind = 0
                     AND NOT EXISTS (
                         SELECT 1 FROM revlog prev
-                        WHERE prev.card_id = r.card_id AND prev.id < ?1
+                        WHERE prev.card_id = r.card_id
+                          AND prev.review_kind != 4
+                          AND prev.id < ?1
+                          AND prev.id > COALESCE(
+                              (SELECT MAX(f.id) FROM revlog f
+                               WHERE f.card_id = r.card_id AND f.review_kind = 4 AND f.id <= r.id),
+                              -1
+                          )
                     )
-                   THEN r.card_id
+                   THEN r.card_id || ':' || COALESCE(
+                       (SELECT MAX(f.id) FROM revlog f
+                        WHERE f.card_id = r.card_id AND f.review_kind = 4 AND f.id <= r.id),
+                       -1
+                   )
                END),
                COUNT(DISTINCT CASE WHEN r.review_kind = 1 THEN r.card_id END)
              FROM revlog r JOIN cards c ON c.id = r.card_id
@@ -420,15 +448,33 @@ pub fn study_queue(
     new_limit: u32,
     review_limit: u32,
 ) -> CoreResult<bibalak_core::ports::StudyQueue> {
+    let is_filtered: bool = conn
+        .query_row(
+            "SELECT is_filtered != 0 FROM decks WHERE id = ?1",
+            [deck_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?
+        .unwrap_or(false);
+
     // 1. Learning/relearning that is due now — time-critical, no cap, by due.
+    //    Day-learning cards (`queue = 3`) store a day number in `due` rather
+    //    than epoch milliseconds, so they compare against `today`. Filtered
+    //    decks surface all active gathered learning cards regardless of due.
     let mut stmt = conn
         .prepare(
             "SELECT id FROM cards WHERE deck_id = ?1 AND queue NOT IN (-1,-2,-3)
-             AND type IN (1, 3) AND due <= ?2 ORDER BY due",
+             AND type IN (1, 3)
+             AND (?4 != 0 OR (queue = 3 AND due <= ?3) OR (queue != 3 AND due <= ?2))
+             ORDER BY CASE WHEN queue = 3 THEN 0 ELSE due END, due",
         )
         .map_err(err)?;
     let learning: Vec<i64> = stmt
-        .query_map(params![deck_id, now_ms], |r| r.get(0))
+        .query_map(
+            params![deck_id, now_ms, today, i64::from(is_filtered)],
+            |r| r.get(0),
+        )
         .map_err(err)?
         .collect::<rusqlite::Result<_>>()
         .map_err(err)?;
@@ -464,17 +510,20 @@ pub fn study_queue(
             .map_err(err)?;
     }
 
-    // 3. Reviews — random order within today's due set.
+    // 3. Reviews — random order within today's due set (or all reviews in a filtered deck).
     let mut review: Vec<i64> = Vec::new();
     if review_limit > 0 {
         let mut stmt = conn
             .prepare(
                 "SELECT id FROM cards WHERE deck_id = ?1 AND queue NOT IN (-1,-2,-3)
-                 AND type = 2 AND due <= ?2 ORDER BY RANDOM() LIMIT ?3",
+                 AND type = 2 AND (?4 != 0 OR due <= ?2) ORDER BY RANDOM() LIMIT ?3",
             )
             .map_err(err)?;
         review = stmt
-            .query_map(params![deck_id, today, review_limit], |r| r.get(0))
+            .query_map(
+                params![deck_id, today, review_limit, i64::from(is_filtered)],
+                |r| r.get(0),
+            )
             .map_err(err)?
             .collect::<rusqlite::Result<_>>()
             .map_err(err)?;
@@ -488,7 +537,7 @@ pub fn study_queue(
     let mut stmt = conn
         .prepare(
             "SELECT id FROM cards WHERE deck_id = ?1 AND queue NOT IN (-1,-2,-3)
-             AND type IN (1, 3) AND due > ?2 AND due < ?3 ORDER BY due",
+             AND type IN (1, 3) AND queue != 3 AND due > ?2 AND due < ?3 ORDER BY due",
         )
         .map_err(err)?;
     let learning_ahead: Vec<i64> = stmt
@@ -514,11 +563,22 @@ pub fn count_due_by_type(
     new_limit: u32,
     review_limit: u32,
 ) -> CoreResult<(u32, u32, u32)> {
+    let is_filtered: bool = conn
+        .query_row(
+            "SELECT is_filtered != 0 FROM decks WHERE id = ?1",
+            [deck_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?
+        .unwrap_or(false);
+    let filt = i64::from(is_filtered);
     let learning: u32 = conn
         .query_row(
             "SELECT COUNT(*) FROM cards WHERE deck_id = ?1 AND queue NOT IN (-1,-2,-3)
-             AND type IN (1, 3) AND due < ?2",
-            params![deck_id, today_end_ms],
+             AND type IN (1, 3)
+             AND (?4 != 0 OR (queue = 3 AND due <= ?2) OR (queue != 3 AND due < ?3))",
+            params![deck_id, today, today_end_ms, filt],
             |r| r.get(0),
         )
         .map_err(err)?;
@@ -533,8 +593,8 @@ pub fn count_due_by_type(
     let review_total: u32 = conn
         .query_row(
             "SELECT COUNT(*) FROM cards WHERE deck_id = ?1 AND queue NOT IN (-1,-2,-3)
-             AND type = 2 AND due <= ?2",
-            params![deck_id, today],
+             AND type = 2 AND (?3 != 0 OR due <= ?2)",
+            params![deck_id, today, filt],
             |r| r.get(0),
         )
         .map_err(err)?;
@@ -575,13 +635,14 @@ pub fn deck_due_counts(
     let _ = now_ms; // kept for API symmetry; learning gate now uses today_end_ms
     let mut stmt = conn
         .prepare(
-            "SELECT deck_id,
-                    SUM(CASE WHEN type = 0 THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN type IN (1, 3) AND due < ?2 THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN type = 2 AND due <= ?1 THEN 1 ELSE 0 END)
-             FROM cards
-             WHERE queue NOT IN (-1, -2, -3)
-             GROUP BY deck_id",
+            "SELECT c.deck_id,
+                    SUM(CASE WHEN c.type = 0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN c.type IN (1, 3) AND (d.is_filtered != 0 OR (c.queue = 3 AND c.due <= ?1) OR (c.queue != 3 AND c.due < ?2)) THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN c.type = 2 AND (d.is_filtered != 0 OR c.due <= ?1) THEN 1 ELSE 0 END)
+             FROM cards c
+             JOIN decks d ON d.id = c.deck_id
+             WHERE c.queue NOT IN (-1, -2, -3)
+             GROUP BY c.deck_id",
         )
         .map_err(err)?;
     let mut map = HashMap::new();
@@ -974,26 +1035,15 @@ pub fn undo_answer(
     tx.execute("DELETE FROM revlog WHERE id = ?1", [revlog_id])
         .map_err(err)?;
 
-    let card_has_reviews: bool = tx
-        .query_row(
-            "SELECT EXISTS(
-                 SELECT 1 FROM revlog
-                 WHERE card_id = ?1 AND review_kind IN (0, 1, 2, 3)
-                 LIMIT 1
-             )",
-            [card_id],
-            |r| r.get(0),
-        )
-        .map_err(err)?;
-    if !card_has_reviews {
-        crate::game_depth::invalidate_studied_top_decks_tx(&tx)?;
-    }
+    crate::game_depth::invalidate_studied_top_decks_tx(&tx)?;
 
     if !buried_siblings.is_empty() {
         let json = serde_json::to_string(buried_siblings).map_err(err)?;
         tx.execute(
-            "UPDATE cards SET queue = CASE WHEN type = 3 THEN 1 ELSE type END WHERE id IN (SELECT value FROM json_each(?1)) AND queue = -3",
-            params![json],
+            r#"UPDATE cards
+               SET queue = CASE WHEN type = 3 THEN 1 ELSE type END, "mod" = ?2, usn = -1
+               WHERE id IN (SELECT value FROM json_each(?1)) AND queue = -3"#,
+            params![json, now_ms],
         )
         .map_err(err)?;
     }
@@ -2983,5 +3033,79 @@ mod tests {
             after.state.stability.is_some() && after.state.difficulty.is_some(),
             "answering after switching to FSRS must immediately populate FSRS stability/difficulty"
         );
+    }
+
+    #[test]
+    fn day_learning_queue_3_compares_day_index_not_millisecond_cutoff() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let now_ms = 1_794_601_800_000_i64;
+        let today_end_ms = now_ms + 86_400_000;
+        storage.ensure_collection(now_ms).unwrap();
+        storage
+            .import(
+                &model_with_cards(vec![card(1, 0, 0, 0), card(2, 0, 0, 0)]),
+                now_ms,
+            )
+            .unwrap();
+
+        {
+            let conn = storage.lock();
+            // Card 1: day-learning due on day 5 (future when today = 0).
+            conn.execute(
+                "UPDATE cards SET type = 1, queue = 3, due = 5 WHERE id = 1",
+                [],
+            )
+            .unwrap();
+            // Card 2: day-learning due today (day 0).
+            conn.execute(
+                "UPDATE cards SET type = 1, queue = 3, due = 0 WHERE id = 2",
+                [],
+            )
+            .unwrap();
+
+            let q = crate::study::study_queue(&conn, 1, 0, now_ms, today_end_ms, 20, 200).unwrap();
+            assert_eq!(q.learning, vec![2]);
+            assert!(
+                q.learning_ahead.is_empty(),
+                "future queue=3 card must not be treated as learn-ahead"
+            );
+            assert_eq!(
+                crate::study::count_due_by_type(&conn, 1, 0, now_ms, today_end_ms, 20, 200)
+                    .unwrap(),
+                (0, 1, 0)
+            );
+            let counts = crate::study::deck_due_counts(&conn, 0, now_ms, today_end_ms).unwrap();
+            assert_eq!(counts.get(&1).copied(), Some((0, 1, 0)));
+
+            let learn_hits =
+                crate::search::search_cards(&conn, "is:learn", 0, now_ms, 50, 0, None, true)
+                    .unwrap();
+            assert_eq!(learn_hits.len(), 2);
+            let due_hits =
+                crate::search::search_cards(&conn, "is:due", 0, now_ms, 50, 0, None, true).unwrap();
+            assert_eq!(
+                due_hits.iter().map(|r| r.card_id).collect::<Vec<_>>(),
+                vec![2]
+            );
+        }
+    }
+
+    #[test]
+    fn new_decks_default_to_fsrs_while_existing_empty_config_keeps_sm2() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let clock = std::sync::Arc::new(bibalak_core::ports::FixedClock(1_794_601_800_000));
+        let col = bibalak_core::Collection::new(Box::new(storage), clock).unwrap();
+
+        // Existing default config seeded as '{}' stays SM-2.
+        let legacy_default = col.get_deck_config(1).unwrap();
+        assert_eq!(
+            legacy_default.algorithm,
+            bibalak_core::model::Algorithm::Sm2
+        );
+
+        // Brand-new deck gets FSRS by default.
+        let created = col.create_deck("Japanese").unwrap();
+        let created_cfg = col.get_deck_config(created.id).unwrap();
+        assert_eq!(created_cfg.algorithm, bibalak_core::model::Algorithm::Fsrs);
     }
 }

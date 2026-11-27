@@ -21,12 +21,35 @@ import { exportMocks } from "./mocks/export";
 import { pluginMocks } from "./mocks/plugins";
 import { pluginHost } from "@/lib/pluginHost";
 
+import { DECK_CONFIG_DEFAULTS } from "@/lib/schedulingConstants";
+
 const DAY = 86_400_000;
 // Stats days are offsets from `day0_ms` (collection creation day).
 const day0 = Math.floor(Date.now() / DAY) - 365;
 const today = 365;
 
-const decks: DeckSummary[] = mockDecks;
+const previewSearch = typeof location !== "undefined" ? new URLSearchParams(location.search) : null;
+const decks: DeckSummary[] =
+  previewSearch?.get("empty") === "1"
+    ? []
+    : [
+        ...mockDecks,
+        ...(previewSearch?.get("long") === "1"
+          ? [
+              {
+                id: 99,
+                name: "Audio_English_sentences_with_Arabic_translations",
+                parent_id: null,
+                new_count: 8,
+                learning_count: 2,
+                review_count: 14,
+                is_filtered: false,
+                collapsed: false,
+              },
+            ]
+          : []),
+      ];
+const previewDeckConfigs = new Map<number, Record<string, unknown>>();
 
 /** Deterministic pseudo-random so screenshots are stable between runs. */
 function wave(i: number, base: number, amp: number) {
@@ -157,7 +180,48 @@ const responses: Record<string, unknown> = {
     tauri_version: "2",
     media_dir: "/preview/collection.media",
   },
-  list_decks: decks,
+  list_decks: () => decks,
+  create_deck: (args: { name?: string }) => {
+    const id = decks.reduce((m, d) => Math.max(m, d.id), 0) + 1;
+    const created: DeckSummary = {
+      id,
+      name: args?.name?.trim() || `Deck ${id}`,
+      parent_id: null,
+      new_count: 10,
+      learning_count: 0,
+      review_count: 0,
+      is_filtered: false,
+      collapsed: false,
+    };
+    decks.push(created);
+    return created;
+  },
+  get_deck_config: (args: { deckId?: number }) => {
+    const deckId = args?.deckId ?? 1;
+    const existing = previewDeckConfigs.get(deckId);
+    if (existing) return existing;
+    const algo =
+      previewSearch?.get("algo") === "sm2"
+        ? "sm2"
+        : deckId === 1
+          ? "sm2"
+          : DECK_CONFIG_DEFAULTS.algorithm;
+    const cfg = {
+      deck_id: deckId,
+      config_id: deckId,
+      ...DECK_CONFIG_DEFAULTS,
+      algorithm: algo,
+    };
+    previewDeckConfigs.set(deckId, cfg);
+    return cfg;
+  },
+  set_deck_config: (args: { config?: { deck_id?: number } & Record<string, unknown> }) => {
+    if (args?.config?.deck_id) {
+      previewDeckConfigs.set(args.config.deck_id, args.config);
+    }
+    return null;
+  },
+  "plugin:dialog|open": () => "/preview/English_Grammar.apkg",
   get_collection_prefs: { rollover_hour: 4 },
   get_today_extra_new: 0,
   deck_card_ids: (args: { deckId?: number; includeSubdecks?: boolean }) => {

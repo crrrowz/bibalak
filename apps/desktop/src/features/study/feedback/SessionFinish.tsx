@@ -201,7 +201,7 @@ export function SessionFinish({
               )}
             >
               {skin && <XpIcon className="size-3.5 shrink-0" aria-hidden="true" />}
-              <span>+{formatNumber(sessionXp)} XP</span>
+              <span>{t("study.feedback.xpGain", { xp: formatNumber(sessionXp) })}</span>
             </p>
           </div>
 

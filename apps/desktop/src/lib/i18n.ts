@@ -40,9 +40,18 @@ function initialLocale(): Locale {
   } catch {
     // storage unavailable: fall through to the system language
   }
-  return typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("ar")
-    ? "ar"
-    : "en";
+  if (typeof navigator !== "undefined") {
+    const langs =
+      Array.isArray(navigator.languages) && navigator.languages.length > 0
+        ? navigator.languages
+        : navigator.language
+          ? [navigator.language]
+          : [];
+    if (langs.some((lang) => lang.toLowerCase().startsWith("ar"))) {
+      return "ar";
+    }
+  }
+  return "en";
 }
 
 function applyToDocument(locale: Locale) {

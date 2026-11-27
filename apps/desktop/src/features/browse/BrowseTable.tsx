@@ -83,29 +83,32 @@ function renderCardCell(colId: CardColumnId, row: CardRow, today: number) {
       const known = QUEUE_LABELS[row.queue];
       const qInfo = known
         ? { text: t(known.text), cls: known.cls }
-        : { text: String(row.queue), cls: "" };
+        : { text: formatNumber(row.queue), cls: "" };
       return (
         <td key={colId} className={`whitespace-nowrap px-3 py-1.5 font-medium ${qInfo.cls}`}>
           {qInfo.text}
         </td>
       );
     }
-    case "due":
+    case "due": {
+      const isNew = row.card_type === 0 || (row.queue === 0 && row.due < 1000000);
+      const dueText = formatDue(row, today);
       return (
         <td
           key={colId}
           className="whitespace-nowrap px-3 py-1.5 text-muted-foreground tabular-nums"
         >
-          {formatDue(row, today)}
+          {isNew ? <span dir="ltr">{dueText}</span> : dueText}
         </td>
       );
+    }
     case "interval":
       return (
         <td
           key={colId}
           className="whitespace-nowrap px-3 py-1.5 text-muted-foreground tabular-nums"
         >
-          {row.interval > 0 ? t("browse.intervalDays", { n: row.interval }) : "—"}
+          {row.interval > 0 ? t("browse.intervalDays", { n: formatNumber(row.interval) }) : "—"}
         </td>
       );
     case "lapses":
@@ -114,7 +117,7 @@ function renderCardCell(colId: CardColumnId, row: CardRow, today: number) {
           key={colId}
           className="whitespace-nowrap px-3 py-1.5 text-muted-foreground tabular-nums"
         >
-          {row.lapses}
+          {formatNumber(row.lapses)}
         </td>
       );
     case "reps":
@@ -123,7 +126,7 @@ function renderCardCell(colId: CardColumnId, row: CardRow, today: number) {
           key={colId}
           className="whitespace-nowrap px-3 py-1.5 text-muted-foreground tabular-nums"
         >
-          {row.reps}
+          {formatNumber(row.reps)}
         </td>
       );
     case "tags":
@@ -161,7 +164,7 @@ function renderNoteCell(colId: NoteColumnId, row: NoteRow) {
           key={colId}
           className="whitespace-nowrap px-3 py-1.5 text-muted-foreground tabular-nums"
         >
-          {row.card_count}
+          {formatNumber(row.card_count)}
         </td>
       );
     case "tags":
@@ -380,7 +383,7 @@ export function BrowseTable({
               >
                 {pageSizes.map((sz) => (
                   <option key={sz} value={sz}>
-                    {sz}
+                    {formatNumber(sz)}
                   </option>
                 ))}
               </Select>

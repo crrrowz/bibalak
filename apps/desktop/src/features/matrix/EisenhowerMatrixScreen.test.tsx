@@ -13,6 +13,7 @@ import type {
 import { EisenhowerMatrixScreen } from "./EisenhowerMatrixScreen";
 import * as ipcModule from "@/lib/ipc";
 import { setLocale } from "@/lib/i18n";
+import { useStyle } from "@/stores/style";
 
 const navigateMock = vi.fn();
 
@@ -214,6 +215,7 @@ describe("EisenhowerMatrixScreen (M2)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     setLocale("en");
+    useStyle.getState().setStyle("default");
     navigateMock.mockReset();
     vi.spyOn(ipcModule.ipc, "listDecks").mockResolvedValue(sampleDecks);
     vi.spyOn(ipcModule.ipc, "listTaskLists").mockResolvedValue(sampleLists);
@@ -757,6 +759,7 @@ describe("EisenhowerMatrixScreen (PLN2)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     setLocale("en");
+    useStyle.getState().setStyle("default");
     navigateMock.mockReset();
     vi.spyOn(ipcModule.ipc, "listDecks").mockResolvedValue(sampleDecks);
     vi.spyOn(ipcModule.ipc, "listTaskLists").mockResolvedValue(sampleLists);

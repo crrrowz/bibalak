@@ -268,6 +268,64 @@ describe("CalendarScreen (CAL1)", () => {
     expect(within(agenda).getByText("Study group")).toBeInTheDocument();
   });
 
+  it("CAL-AGND: renders scheduled habits in Agenda view even when a day has no events or tasks", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(ipcModule.ipc, "listCalendarOccurrences").mockResolvedValue([]);
+    vi.spyOn(ipcModule.ipc, "getMatrixBoard").mockResolvedValue({
+      today_date: todayDate,
+      quadrants: [],
+      tasks: [],
+      deck_due_items: [],
+    });
+    vi.spyOn(ipcModule.ipc, "getStats").mockResolvedValue({
+      ...makeStats(todayDate, tomorrowDate),
+      forecast: [],
+    });
+
+    renderCalendar();
+    await screen.findByTestId("calendar-time-grid");
+
+    await user.click(screen.getByRole("button", { name: /^Agenda$/i }));
+    const agenda = await screen.findByTestId("calendar-agenda-view");
+    expect(within(agenda).getAllByText("Morning review").length).toBeGreaterThan(0);
+  });
+
+  it("CAL-HLOG: loads habit logs for the navigated anchorDate window", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(ipcModule.ipc, "listCalendarOccurrences").mockResolvedValue([]);
+    const habitSpy = vi
+      .spyOn(ipcModule.ipc, "getHabitBoard")
+      .mockImplementation(async (weekStartDay) => {
+        const base = makeHabitBoard(todayDate);
+        if (weekStartDay === null || weekStartDay === undefined) return base;
+        return {
+          ...base,
+          logs: [
+            {
+              habit_id: "h-1",
+              day_index: weekStartDay,
+              date: base.today_date,
+              logged_value: 1,
+              goal_target: 1,
+              completed: true,
+              status: "logged" as const,
+              mood: null,
+              note: "",
+            },
+          ],
+        };
+      });
+
+    renderCalendar();
+    await screen.findByTestId("calendar-time-grid");
+
+    await user.click(screen.getByRole("button", { name: "Previous period" }));
+    await waitFor(() => {
+      const nonNullCalls = habitSpy.mock.calls.filter(([day]) => day !== null && day !== undefined);
+      expect(nonNullCalls.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   it("creates a weekly recurring event and deletes a single occurrence", async () => {
     const user = userEvent.setup();
     let occurrences: CalendarOccurrenceDto[] = [];

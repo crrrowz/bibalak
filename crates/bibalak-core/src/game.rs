@@ -937,4 +937,14 @@ mod tests {
         assert_eq!(study_streak_from_days(&days, 4), (3, false));
         assert_eq!(study_streak_from_days(&days, 5), (0, false));
     }
+
+    #[test]
+    fn default_avatar_profile_matches_canonical_defaults() {
+        let profile = AvatarProfileDto::default();
+        assert_eq!(profile.body_tone, "tone_2");
+        assert_eq!(profile.hair_style, "hair_1");
+        assert_eq!(profile.hair_color, "brown");
+        assert_eq!(profile.starter_outfit, "tunic_slate");
+        assert_eq!(profile.starter_accessory, "none");
+    }
 }

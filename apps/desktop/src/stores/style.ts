@@ -13,12 +13,12 @@ function applyStyle(style: Style): Style {
 }
 
 function readStored(): Style {
-  if (typeof localStorage === "undefined") return "default";
+  if (typeof localStorage === "undefined") return "game";
   try {
     const value = localStorage.getItem(STORAGE_KEY);
-    return value === "default" || value === "scholar" || value === "game" ? value : "default";
+    return value === "default" || value === "scholar" || value === "game" ? value : "game";
   } catch {
-    return "default";
+    return "game";
   }
 }
 

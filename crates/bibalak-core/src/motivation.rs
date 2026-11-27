@@ -20,7 +20,7 @@ use crate::productivity::{
 pub const DAILY_GOAL_XP_CHOICES: [u32; 4] = [10, 20, 30, 50];
 
 /// Default daily XP goal for new and upgraded collections.
-pub const DEFAULT_DAILY_GOAL_XP: u32 = 20;
+pub const DEFAULT_DAILY_GOAL_XP: u32 = 10;
 
 /// Gold reward (`gold_cents`) for completing a daily quest (`2.00` gold).
 pub const DAILY_QUEST_GOLD_CENTS: u64 = 200;

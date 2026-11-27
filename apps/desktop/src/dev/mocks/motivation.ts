@@ -50,8 +50,8 @@ function createInitialStore(): PreviewMotivationStore {
   const showOnboarding = searchFlag("onboarding") === "1";
   const showComeback = searchFlag("comeback") === "1";
   return {
-    dailyGoalXp: 20,
-    todayXp: incompleteGoal ? 12 : 45,
+    dailyGoalXp: 10,
+    todayXp: incompleteGoal ? 5 : 45,
     onboardingCompleted: !showOnboarding,
     comebackDismissed: false,
     comebackActive: showComeback,

@@ -158,8 +158,14 @@ fn seed_motivation_settings(tx: &rusqlite::Transaction<'_>) -> CoreResult<()> {
     tx.execute(
         "INSERT OR IGNORE INTO motivation_settings
          (id, user_id, daily_goal_xp, onboarding_completed_at, created_at, updated_at, deleted_at, usn)
-         VALUES (?1, ?2, 20, ?3, ?4, ?4, NULL, 0)",
-        rusqlite::params![id, user_id, onboarding_completed_at, created],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5, NULL, 0)",
+        rusqlite::params![
+            id,
+            user_id,
+            i64::from(bibalak_core::motivation::DEFAULT_DAILY_GOAL_XP),
+            onboarding_completed_at,
+            created
+        ],
     )
     .map_err(map_err)?;
     Ok(())
@@ -579,7 +585,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(id, expected_id);
-        assert_eq!(goal, 20);
+        assert_eq!(goal, 10);
         assert_eq!(usn, 0);
     }
 

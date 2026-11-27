@@ -15,21 +15,14 @@ import {
   DAILY_GOAL_OPTIONS,
   useOnboardingDraft,
   type DailyGoalXp,
-  type OnboardingStep,
+  type OnboardingStepContext,
+  type OnboardingStepDef,
 } from "./onboardingDraft";
 import { StylePreview } from "./StylePreview";
 
-const TOTAL_STEPS = 4;
 const LOCALE_OPTIONS: readonly Locale[] = ["en", "ar"];
 const STYLE_OPTIONS: readonly Style[] = ["default", "scholar", "game"];
-const STARTER_OPTIONS: readonly boolean[] = [true, false];
-
-const STEP_TITLE_KEYS: Record<OnboardingStep, LocaleKey> = {
-  0: "motivation.onboarding.langTitle",
-  1: "motivation.onboarding.styleTitle",
-  2: "motivation.onboarding.goalTitle",
-  3: "motivation.onboarding.deckTitle",
-};
+const STARTER_OPTIONS: readonly boolean[] = [false, true];
 
 const STYLE_META: Record<Style, { labelKey: LocaleKey; descKey: LocaleKey }> = {
   default: {
@@ -78,12 +71,188 @@ const radioCardClass = (checked: boolean) =>
       : "border-border bg-background hover:bg-accent/50",
   );
 
+const ONBOARDING_STEPS: readonly OnboardingStepDef[] = [
+  {
+    id: "language",
+    titleKey: "motivation.onboarding.langTitle",
+    isValid: () => true,
+    render: (ctx) => (
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">{t("settings.language.description")}</p>
+        <div
+          role="radiogroup"
+          aria-labelledby={ctx.headingId}
+          className="grid grid-cols-1 gap-2.5 sm:grid-cols-2"
+        >
+          {LOCALE_OPTIONS.map((option, idx) => {
+            const checked = ctx.locale === option;
+            return (
+              <button
+                key={option}
+                type="button"
+                lang={option}
+                data-onboarding-lang={option}
+                role="radio"
+                aria-checked={checked}
+                tabIndex={checked ? 0 : -1}
+                disabled={ctx.isSubmitting}
+                className={radioCardClass(checked)}
+                onClick={() => ctx.handleSelectLocale(option)}
+                onKeyDown={(e) =>
+                  handleRadioGroupKeyDown(e, LOCALE_OPTIONS, idx, ctx.handleSelectLocale)
+                }
+              >
+                <span className="text-sm font-medium text-foreground">{LOCALE_NAMES[option]}</span>
+                <RadioIndicator checked={checked} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "style",
+    titleKey: "motivation.onboarding.styleTitle",
+    isValid: () => true,
+    render: (ctx) => (
+      <div
+        role="radiogroup"
+        aria-labelledby={ctx.headingId}
+        className="grid grid-cols-1 gap-2.5 sm:grid-cols-3"
+      >
+        {STYLE_OPTIONS.map((option, idx) => {
+          const checked = ctx.style === option;
+          const meta = STYLE_META[option];
+          return (
+            <button
+              key={option}
+              type="button"
+              role="radio"
+              aria-checked={checked}
+              tabIndex={checked ? 0 : -1}
+              disabled={ctx.isSubmitting}
+              className={cn(
+                radioCardClass(checked),
+                "flex-col items-stretch justify-start gap-2.5 p-3",
+              )}
+              onClick={() => ctx.setStyle(option)}
+              onKeyDown={(e) => handleRadioGroupKeyDown(e, STYLE_OPTIONS, idx, ctx.setStyle)}
+            >
+              <StylePreview style={option} />
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="text-sm font-medium text-foreground">{t(meta.labelKey)}</div>
+                  <div className="text-xs leading-snug text-muted-foreground">
+                    {t(meta.descKey)}
+                  </div>
+                </div>
+                <RadioIndicator checked={checked} />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    ),
+  },
+  {
+    id: "goal",
+    titleKey: "motivation.onboarding.goalTitle",
+    isValid: (ctx) => DAILY_GOAL_OPTIONS.includes(ctx.goalXp),
+    apply: async (ctx) => {
+      await ipc.setDailyGoal(ctx.goalXp);
+    },
+    render: (ctx) => (
+      <div
+        role="radiogroup"
+        aria-labelledby={ctx.headingId}
+        className="grid grid-cols-1 gap-2.5 sm:grid-cols-2"
+      >
+        {DAILY_GOAL_OPTIONS.map((goal, idx) => {
+          const checked = ctx.goalXp === goal;
+          return (
+            <button
+              key={goal}
+              type="button"
+              role="radio"
+              aria-checked={checked}
+              tabIndex={checked ? 0 : -1}
+              disabled={ctx.isSubmitting}
+              className={radioCardClass(checked)}
+              onClick={() => ctx.setGoalXp(goal)}
+              onKeyDown={(e) => handleRadioGroupKeyDown(e, DAILY_GOAL_OPTIONS, idx, ctx.setGoalXp)}
+            >
+              <div className="min-w-0 space-y-0.5">
+                <div className="text-sm font-medium text-foreground tabular-nums">
+                  {t("motivation.goal.option", { xp: formatNumber(goal) })}
+                </div>
+                <div className="text-xs text-muted-foreground">{t(GOAL_HINT_KEYS[goal])}</div>
+              </div>
+              <RadioIndicator checked={checked} />
+            </button>
+          );
+        })}
+      </div>
+    ),
+  },
+  {
+    id: "starter",
+    titleKey: "motivation.onboarding.deckTitle",
+    isValid: () => true,
+    apply: async (ctx) => {
+      await ipc.completeOnboarding(false, ctx.createStarter, ctx.locale);
+    },
+    render: (ctx) => (
+      <div
+        role="radiogroup"
+        aria-labelledby={ctx.headingId}
+        className="grid grid-cols-1 gap-2.5 sm:grid-cols-2"
+      >
+        {STARTER_OPTIONS.map((option, idx) => {
+          const checked = ctx.createStarter === option;
+          const Icon = option ? Sparkles : Layers;
+          return (
+            <button
+              key={String(option)}
+              type="button"
+              role="radio"
+              aria-checked={checked}
+              tabIndex={checked ? 0 : -1}
+              disabled={ctx.isSubmitting}
+              className={radioCardClass(checked)}
+              onClick={() => ctx.setCreateStarter(option)}
+              onKeyDown={(e) =>
+                handleRadioGroupKeyDown(e, STARTER_OPTIONS, idx, ctx.setCreateStarter)
+              }
+            >
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Icon
+                  className={cn(
+                    "size-4 shrink-0",
+                    option ? "text-primary" : "text-muted-foreground",
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="text-sm font-medium text-foreground">
+                  {t(
+                    option
+                      ? "motivation.onboarding.createStarter"
+                      : "motivation.onboarding.startEmpty",
+                  )}
+                </span>
+              </div>
+              <RadioIndicator checked={checked} />
+            </button>
+          );
+        })}
+      </div>
+    ),
+  },
+];
+
 /**
- * Four-step first-run setup dialog for new collections:
- * 1) Language (switches immediately),
- * 2) Presentation style (Default, Scholar, Game with visual previews),
- * 3) Daily XP goal (10/20/30/50, default 20),
- * 4) Starter deck yes/no, then finish.
+ * Data-driven first-run setup dialog for new collections.
+ * Step order, validation, rendering, and persistence live in `ONBOARDING_STEPS`.
  */
 export function OnboardingModal() {
   const headingId = useId();
@@ -105,20 +274,37 @@ export function OnboardingModal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const stepIndex = Math.min(Math.max(step, 0), ONBOARDING_STEPS.length - 1);
+  const currentStep = ONBOARDING_STEPS[stepIndex];
+  const isLastStep = stepIndex === ONBOARDING_STEPS.length - 1;
+
   useEffect(() => {
-    if (step !== 0 || !refocusLangRadio) return;
+    if (currentStep.id !== "language" || !refocusLangRadio) return;
     const radio = document.querySelector<HTMLElement>(
       `[data-onboarding-lang="${refocusLangRadio}"]`,
     );
     radio?.focus();
     setRefocusLangRadio(null);
-  }, [step, refocusLangRadio, setRefocusLangRadio]);
+  }, [currentStep.id, refocusLangRadio, setRefocusLangRadio]);
 
   function handleSelectLocale(next: Locale) {
     if (next === locale) return;
     setRefocusLangRadio(next);
     setLocale(next);
   }
+
+  const stepCtx: OnboardingStepContext = {
+    locale,
+    style,
+    goalXp,
+    createStarter,
+    isSubmitting,
+    headingId,
+    handleSelectLocale,
+    setStyle,
+    setGoalXp,
+    setCreateStarter,
+  };
 
   async function handleSkip() {
     if (isSubmitting) return;
@@ -138,12 +324,15 @@ export function OnboardingModal() {
   }
 
   async function handleFinish() {
-    if (isSubmitting) return;
+    if (isSubmitting || !currentStep.isValid(stepCtx)) return;
     setError(null);
     setIsSubmitting(true);
     try {
-      await ipc.setDailyGoal(goalXp);
-      await ipc.completeOnboarding(false, createStarter, locale);
+      for (const s of ONBOARDING_STEPS) {
+        if (s.apply) {
+          await s.apply(stepCtx);
+        }
+      }
       if (queryClient) {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: queryKeys.motivationState }),
@@ -159,16 +348,16 @@ export function OnboardingModal() {
   }
 
   function goBack() {
-    if (step > 0 && !isSubmitting) {
+    if (stepIndex > 0 && !isSubmitting) {
       setError(null);
-      setStep((step - 1) as OnboardingStep);
+      setStep(stepIndex - 1);
     }
   }
 
   function goNext() {
-    if (step < 3 && !isSubmitting) {
+    if (!isLastStep && !isSubmitting && currentStep.isValid(stepCtx)) {
       setError(null);
-      setStep((step + 1) as OnboardingStep);
+      setStep(stepIndex + 1);
     }
   }
 
@@ -188,8 +377,8 @@ export function OnboardingModal() {
             <Logo size={20} showWordmark={false} />
             <span className="text-xs font-medium text-muted-foreground tabular-nums">
               {t("motivation.onboarding.stepOf", {
-                step: formatNumber(step + 1),
-                total: formatNumber(TOTAL_STEPS),
+                step: formatNumber(stepIndex + 1),
+                total: formatNumber(ONBOARDING_STEPS.length),
               })}
             </span>
           </div>
@@ -205,13 +394,13 @@ export function OnboardingModal() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-4 gap-1.5" aria-hidden="true">
-          {Array.from({ length: TOTAL_STEPS }, (_, idx) => (
+        <div className="flex gap-1.5" aria-hidden="true">
+          {ONBOARDING_STEPS.map((s, idx) => (
             <div
-              key={idx}
+              key={s.id}
               className={cn(
-                "h-1.5 rounded-full transition-colors motion-reduce:transition-none",
-                idx <= step ? "bg-primary" : "bg-muted",
+                "h-1.5 flex-1 rounded-full transition-colors motion-reduce:transition-none",
+                idx <= stepIndex ? "bg-primary" : "bg-muted",
               )}
             />
           ))}
@@ -219,168 +408,9 @@ export function OnboardingModal() {
 
         <div className="space-y-3">
           <h2 id={headingId} className="text-lg font-semibold text-foreground">
-            {t(STEP_TITLE_KEYS[step])}
+            {t(currentStep.titleKey)}
           </h2>
-
-          {step === 0 && (
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">{t("settings.language.description")}</p>
-              <div
-                role="radiogroup"
-                aria-labelledby={headingId}
-                className="grid grid-cols-1 gap-2.5 sm:grid-cols-2"
-              >
-                {LOCALE_OPTIONS.map((option, idx) => {
-                  const checked = locale === option;
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      lang={option}
-                      data-onboarding-lang={option}
-                      role="radio"
-                      aria-checked={checked}
-                      tabIndex={checked ? 0 : -1}
-                      disabled={isSubmitting}
-                      className={radioCardClass(checked)}
-                      onClick={() => handleSelectLocale(option)}
-                      onKeyDown={(e) =>
-                        handleRadioGroupKeyDown(e, LOCALE_OPTIONS, idx, handleSelectLocale)
-                      }
-                    >
-                      <span className="text-sm font-medium text-foreground">
-                        {LOCALE_NAMES[option]}
-                      </span>
-                      <RadioIndicator checked={checked} />
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {step === 1 && (
-            <div
-              role="radiogroup"
-              aria-labelledby={headingId}
-              className="grid grid-cols-1 gap-2.5 sm:grid-cols-3"
-            >
-              {STYLE_OPTIONS.map((option, idx) => {
-                const checked = style === option;
-                const meta = STYLE_META[option];
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    role="radio"
-                    aria-checked={checked}
-                    tabIndex={checked ? 0 : -1}
-                    disabled={isSubmitting}
-                    className={cn(
-                      radioCardClass(checked),
-                      "flex-col items-stretch justify-start gap-2.5 p-3",
-                    )}
-                    onClick={() => setStyle(option)}
-                    onKeyDown={(e) => handleRadioGroupKeyDown(e, STYLE_OPTIONS, idx, setStyle)}
-                  >
-                    <StylePreview style={option} />
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 space-y-0.5">
-                        <div className="text-sm font-medium text-foreground">
-                          {t(meta.labelKey)}
-                        </div>
-                        <div className="text-xs leading-snug text-muted-foreground">
-                          {t(meta.descKey)}
-                        </div>
-                      </div>
-                      <RadioIndicator checked={checked} />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {step === 2 && (
-            <div
-              role="radiogroup"
-              aria-labelledby={headingId}
-              className="grid grid-cols-1 gap-2.5 sm:grid-cols-2"
-            >
-              {DAILY_GOAL_OPTIONS.map((goal, idx) => {
-                const checked = goalXp === goal;
-                return (
-                  <button
-                    key={goal}
-                    type="button"
-                    role="radio"
-                    aria-checked={checked}
-                    tabIndex={checked ? 0 : -1}
-                    disabled={isSubmitting}
-                    className={radioCardClass(checked)}
-                    onClick={() => setGoalXp(goal)}
-                    onKeyDown={(e) =>
-                      handleRadioGroupKeyDown(e, DAILY_GOAL_OPTIONS, idx, setGoalXp)
-                    }
-                  >
-                    <div className="min-w-0 space-y-0.5">
-                      <div className="text-sm font-medium text-foreground tabular-nums">
-                        {t("motivation.goal.option", { xp: formatNumber(goal) })}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{t(GOAL_HINT_KEYS[goal])}</div>
-                    </div>
-                    <RadioIndicator checked={checked} />
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {step === 3 && (
-            <div
-              role="radiogroup"
-              aria-labelledby={headingId}
-              className="grid grid-cols-1 gap-2.5 sm:grid-cols-2"
-            >
-              {STARTER_OPTIONS.map((option, idx) => {
-                const checked = createStarter === option;
-                const Icon = option ? Sparkles : Layers;
-                return (
-                  <button
-                    key={String(option)}
-                    type="button"
-                    role="radio"
-                    aria-checked={checked}
-                    tabIndex={checked ? 0 : -1}
-                    disabled={isSubmitting}
-                    className={radioCardClass(checked)}
-                    onClick={() => setCreateStarter(option)}
-                    onKeyDown={(e) =>
-                      handleRadioGroupKeyDown(e, STARTER_OPTIONS, idx, setCreateStarter)
-                    }
-                  >
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <Icon
-                        className={cn(
-                          "size-4 shrink-0",
-                          option ? "text-primary" : "text-muted-foreground",
-                        )}
-                        aria-hidden="true"
-                      />
-                      <span className="text-sm font-medium text-foreground">
-                        {t(
-                          option
-                            ? "motivation.onboarding.createStarter"
-                            : "motivation.onboarding.startEmpty",
-                        )}
-                      </span>
-                    </div>
-                    <RadioIndicator checked={checked} />
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          {currentStep.render(stepCtx)}
         </div>
 
         {error && (
@@ -393,7 +423,7 @@ export function OnboardingModal() {
         )}
 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          {step > 0 ? (
+          {stepIndex > 0 ? (
             <Button type="button" variant="outline" disabled={isSubmitting} onClick={goBack}>
               <ChevronLeft className="size-4 rtl:-scale-x-100" aria-hidden="true" />
               <span>{t("motivation.onboarding.back")}</span>
@@ -402,13 +432,21 @@ export function OnboardingModal() {
             <span aria-hidden="true" />
           )}
 
-          {step < 3 ? (
-            <Button type="button" disabled={isSubmitting} onClick={goNext}>
+          {!isLastStep ? (
+            <Button
+              type="button"
+              disabled={isSubmitting || !currentStep.isValid(stepCtx)}
+              onClick={goNext}
+            >
               <span>{t("motivation.onboarding.next")}</span>
               <ChevronRight className="size-4 rtl:-scale-x-100" aria-hidden="true" />
             </Button>
           ) : (
-            <Button type="button" disabled={isSubmitting} onClick={() => void handleFinish()}>
+            <Button
+              type="button"
+              disabled={isSubmitting || !currentStep.isValid(stepCtx)}
+              onClick={() => void handleFinish()}
+            >
               {isSubmitting ? t("common.saving") : t("motivation.onboarding.finish")}
             </Button>
           )}

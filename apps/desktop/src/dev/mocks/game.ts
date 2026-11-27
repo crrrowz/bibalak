@@ -225,9 +225,9 @@ const ALL_SLOTS: EquipmentSlot[] = [
 ];
 
 let avatar: AvatarProfileDto = {
-  body_tone: "tone_1",
+  body_tone: "tone_2",
   hair_style: "hair_1",
-  hair_color: "black",
+  hair_color: "brown",
   starter_outfit: "tunic_slate",
   starter_accessory: "none",
 };

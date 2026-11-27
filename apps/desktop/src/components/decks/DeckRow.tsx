@@ -81,7 +81,7 @@ export function DeckRow({
   return (
     <div className="border-b border-border last:border-0">
       <div
-        className="group flex items-center gap-3 px-8 py-3 hover:bg-accent/40"
+        className="group flex items-center gap-3 py-3 pe-4 sm:pe-6 lg:pe-8 hover:bg-accent/40"
         style={{ paddingInlineStart: `${2 + depth * 1.25}rem` }}
       >
         {hasChildren ? (
@@ -143,7 +143,7 @@ export function DeckRow({
           newCount={deck.new_count}
           learningCount={deck.learning_count}
           reviewCount={deck.review_count}
-          columnWidth="w-9"
+          columnWidth="w-11 shrink-0"
         />
 
         <div className="flex w-36 shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">

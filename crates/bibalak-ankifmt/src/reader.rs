@@ -121,12 +121,14 @@ fn read_package_inner(
     let media_count = if let Some(store) = media_store {
         extract_media_to_store(&mut archive, &mut model, store, cancel, on_progress)?
     } else if let Some(target) = media_dir {
-        extract_media(&mut archive, target)?
+        let count = extract_media(&mut archive, target)?;
+        check_cancelled(cancel)?;
+        count
     } else {
+        check_cancelled(cancel)?;
         0
     };
 
-    check_cancelled(cancel)?;
     Ok((model, media_count))
 }
 
@@ -491,19 +493,32 @@ fn extract_media_to_store(
         .into_iter()
         .map(|(name, _)| name)
         .collect();
-    let mut newly_added: Vec<String> = Vec::new();
+    struct NewlyAddedGuard<'a> {
+        store: &'a dyn bibalak_core::ports::MediaStore,
+        names: Vec<String>,
+        armed: bool,
+    }
+
+    impl Drop for NewlyAddedGuard<'_> {
+        fn drop(&mut self) {
+            if self.armed && !self.names.is_empty() {
+                let _ = self.store.delete(&self.names);
+            }
+        }
+    }
+
+    let mut newly_added = NewlyAddedGuard {
+        store,
+        names: Vec::new(),
+        armed: true,
+    };
     let mut count = 0u32;
     let mut processed = 0u32;
     let mut renames: Vec<(String, String)> = Vec::new();
     let mut last_emit = Instant::now();
 
     for (entry_name, filename) in mapping {
-        if cancel.load(Ordering::Relaxed) {
-            if !newly_added.is_empty() {
-                let _ = store.delete(&newly_added);
-            }
-            return Err(CoreError::Cancelled);
-        }
+        check_cancelled(cancel)?;
         processed += 1;
         let Some(safe) = Path::new(&filename).file_name().and_then(|n| n.to_str()) else {
             continue;
@@ -515,15 +530,10 @@ fn extract_media_to_store(
         let stored_name = match store.add(safe, &decoded) {
             Ok(name) => name,
             Err(CoreError::Invalid(_)) => continue,
-            Err(e) => {
-                if !newly_added.is_empty() {
-                    let _ = store.delete(&newly_added);
-                }
-                return Err(e);
-            }
+            Err(e) => return Err(e),
         };
         if !existing_before.contains(&stored_name) {
-            newly_added.push(stored_name.clone());
+            newly_added.names.push(stored_name.clone());
         }
         if stored_name != safe {
             renames.push((safe.to_string(), stored_name));
@@ -541,6 +551,8 @@ fn extract_media_to_store(
     if processed != total {
         on_progress(ImportStage::CopyingMedia, total, total);
     }
+
+    check_cancelled(cancel)?;
 
     if !renames.is_empty() {
         let rename_map: std::collections::HashMap<&str, &str> = renames
@@ -579,6 +591,8 @@ fn extract_media_to_store(
         }
     }
 
+    check_cancelled(cancel)?;
+    newly_added.armed = false;
     Ok(count)
 }
 

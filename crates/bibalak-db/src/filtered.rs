@@ -86,7 +86,7 @@ pub fn create_filtered_deck(
         params![id, name, parent_id, now_ms, cfg_json],
     )
     .map_err(err)?;
-    gather_cards(conn, id, search_query, limit, today, now_ms)?;
+    gather_cards(conn, id, search_query, order, limit, today, now_ms)?;
     Ok(Deck {
         id,
         name: name.to_string(),
@@ -109,7 +109,15 @@ pub fn rebuild_filtered(
     let (_, cfg) = read_config(conn, deck_id)?
         .ok_or_else(|| CoreError::NotFound(format!("filtered deck {deck_id}")))?;
     empty_filtered(conn, deck_id, now_ms)?;
-    gather_cards(conn, deck_id, &cfg.search, cfg.limit, today, now_ms)
+    gather_cards(
+        conn,
+        deck_id,
+        &cfg.search,
+        cfg.order,
+        cfg.limit,
+        today,
+        now_ms,
+    )
 }
 
 /// Return all cards in a filtered deck to their original decks.
@@ -137,25 +145,37 @@ fn gather_cards(
     conn: &Connection,
     filtered_deck_id: i64,
     search_query: &str,
+    order: u8,
     limit: u32,
     today: i32,
     now_ms: i64,
 ) -> CoreResult<u32> {
+    let (sort_key, sort_asc) = match order {
+        1 => (Some("due"), true),
+        2 => (None, true),
+        3 => (Some("interval"), true),
+        4 => (Some("lapses"), false),
+        _ => (None, true),
+    };
     let rows = search::search_cards(
         conn,
         search_query,
         today,
         now_ms,
-        limit as i64,
+        i64::MAX,
         0,
-        None,
-        true,
+        sort_key,
+        sort_asc,
     )?;
-    let card_ids: Vec<i64> = rows
+    let mut card_ids: Vec<i64> = rows
         .iter()
-        .filter(|r| r.queue >= 0) // exclude suspended / buried
+        .filter(|r| r.queue >= 0) // exclude suspended / buried before applying limit
         .map(|r| r.card_id)
         .collect();
+    if order == 0 {
+        fastrand::shuffle(&mut card_ids);
+    }
+    card_ids.truncate(limit as usize);
     if card_ids.is_empty() {
         return Ok(0);
     }
@@ -311,5 +331,60 @@ mod tests {
         // Note: search may filter it via queue check in gather_cards.
         // The card's deck_id should still be the original deck.
         assert_ne!(deck_id, fdeck.id, "suspended card should not be gathered");
+    }
+
+    #[test]
+    fn gather_applies_limit_after_excluding_suspended_and_respects_order() {
+        let s = setup();
+        let deck = s.create_deck("Spanish", 1_000).unwrap();
+        {
+            let conn = s.lock();
+            conn.execute(
+                r#"INSERT INTO notetypes (id, name, kind, "mod", usn) VALUES (1, 'Basic', 0, 0, -1)
+                   ON CONFLICT DO NOTHING"#,
+                [],
+            )
+            .unwrap();
+            for i in 1..=3_i64 {
+                let nid = 100 + i;
+                let cid = 200 + i;
+                conn.execute(
+                    r#"INSERT INTO notes (id, guid, notetype_id, "mod", usn, tags, fields)
+                       VALUES (?1, ?2, 1, 0, -1, ' ', 'F\x1fB')"#,
+                    params![nid, format!("g{i}")],
+                )
+                .unwrap();
+                // Card 201 suspended; 202 has interval=20; 203 has interval=5.
+                let queue = if i == 1 { -1 } else { 2 };
+                let ivl = match i {
+                    2 => 20,
+                    3 => 5,
+                    _ => 1,
+                };
+                conn.execute(
+                    r#"INSERT INTO cards
+                       (id, note_id, deck_id, ord, "mod", usn, type, queue, due, interval,
+                        ease_factor, reps, lapses, remaining, original_due, original_deck_id, flags)
+                       VALUES (?1, ?2, ?3, 0, 0, -1, 2, ?4, 10, ?5, 2500, 1, 0, 0, 0, 0, 0)"#,
+                    params![cid, nid, deck.id, queue, ivl],
+                )
+                .unwrap();
+            }
+        }
+        let now_ms = 1_700_000_000_000i64;
+        // Order 3 = Interval ascending, limit 1 -> skips suspended 201 and picks 203 (ivl=5).
+        let fdeck = {
+            let conn = s.lock();
+            create_filtered_deck(&conn, "Cram", "deck:Spanish", 3, 1, 0, now_ms).unwrap()
+        };
+        let gathered: Vec<i64> = s
+            .lock()
+            .prepare("SELECT id FROM cards WHERE deck_id = ?1")
+            .unwrap()
+            .query_map([fdeck.id], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(gathered, vec![203]);
     }
 }

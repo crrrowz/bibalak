@@ -1,4 +1,4 @@
-import { formatDate, t } from "@/lib/i18n";
+import { formatDate, formatNumber, t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales/en";
 
 const PERMISSION_LABELS: Record<string, LocaleKey> = {
@@ -24,9 +24,11 @@ export function permissionLabel(perm: string): string {
 }
 
 export function fmt_size(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024) return `${formatNumber(bytes)} B`;
+  if (bytes < 1024 * 1024) {
+    return `${formatNumber(bytes / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KB`;
+  }
+  return `${formatNumber(bytes / (1024 * 1024), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`;
 }
 
 export function fmt_date(ms: number): string {

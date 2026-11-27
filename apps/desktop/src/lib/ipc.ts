@@ -208,8 +208,8 @@ export const ipc = {
       qfmt: qfmt ?? null,
       afmt: afmt ?? null,
     }),
-  saveNotetypePreset: (notetypeId: number, preset: NotetypePreset) =>
-    invoke<NotetypeDetail>("save_notetype_preset", { notetypeId, preset }),
+  saveNotetypePreset: (notetypeId: number, preset: NotetypePreset, confirmRemove = false) =>
+    invoke<NotetypeDetail>("save_notetype_preset", { notetypeId, preset, confirmRemove }),
   lintNotetype: (notetypeId: number, qfmt?: string, afmt?: string, css?: string) =>
     invoke<TemplateLintHint[]>("lint_notetype", {
       notetypeId,

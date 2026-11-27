@@ -24,8 +24,17 @@ pub enum UndoAction {
     ForgetCards { count: u32 },
     SetDueDate { count: u32 },
     RepositionCards { count: u32 },
+    SuspendCards { count: u32 },
+    UnsuspendCards { count: u32 },
+    BuryCards { count: u32 },
+    UnburyCards { count: u32 },
+    MoveCards { count: u32 },
+    SetCardFlag { count: u32 },
+    ChangeDeckOptions,
+    IncreaseTodayLimit,
     FindReplace { count: u32 },
     ChangeNoteType { count: u32 },
+    AddNote { count: u32 },
     EditNote,
     QualityFixes { count: u32 },
     CompleteTask { title: String },
@@ -77,5 +86,9 @@ impl UndoLog {
 
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.steps.clear();
     }
 }

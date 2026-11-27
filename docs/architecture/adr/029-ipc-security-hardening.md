@@ -1,6 +1,6 @@
 # ADR-029: IPC path guards, Rust-mediated file dialogs, and per-window command capabilities (H1)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-24
 
 ## Context
@@ -18,7 +18,7 @@ The pre-beta architecture and security review (H1 / F1) identified three defence
    - `pick_open_path` and `pick_save_path` invoke `tauri_plugin_dialog` on the Rust side (with `#[cfg(desktop)]` `set_parent` / folder support for cross-platform compatibility) and record picked paths in `PickedPathsState` (bounded to 64 entries per kind, rejecting `..`, UNC/device prefixes, and anything inside `data_dir`).
    - `apps/desktop/src/lib/platform/desktop.ts` delegates `pickPath` / `pickSavePath` to those commands while keeping every screen and `ipc.ts` wrapper signature unchanged (`export_package`, `import_package`, `preview_text_import`, `import_text`, `save_media_from_path`, `install_plugin`).
    - Raw `"dialog:default"` is removed from `capabilities/default.json` so the webview cannot open dialogs outside `PickedPathsState`.
-3. **Per-window capabilities (`AppManifest::commands`):** `build.rs` enumerates all registered app commands; `capabilities/default.json` grants them to `main`, while `capabilities/quick-add.json` grants only the 11 commands needed by Quick Add (`set_local_offset`, `get_quick_add_config`, `remember_quick_add_target`, `hide_quick_add`, `list_notetypes`, `list_decks`, `list_tags`, `get_notetype`, `check_duplicate`, `add_note`, `save_media`).
+3. **Per-window capabilities (`AppManifest::commands`):** `build.rs` enumerates all registered app commands; `capabilities/default.json` grants them to `main`, while `capabilities/quick-add.json` grants only the 12 commands needed by Quick Add (`get_startup_error`, `set_local_offset`, `get_quick_add_config`, `remember_quick_add_target`, `hide_quick_add`, `list_notetypes`, `list_decks`, `list_tags`, `get_notetype`, `check_duplicate`, `add_note`, `save_media`).
 4. **CSP tightening:** Remove `'unsafe-eval'` from `tauri.conf.json`; retain `'unsafe-inline'` and `dangerousDisableAssetCspModification` per the ADR-004 CSP addendum until `CardFace` moves to a dedicated custom-protocol origin.
 
 ## Consequences

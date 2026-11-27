@@ -1225,4 +1225,87 @@ describe("StudySessionScreen feedback (16b)", () => {
       vi.restoreAllMocks();
     }
   });
+
+  it("LOGIC1: does not inflate sessionTotal on Again, offers Undo on Bury, and refetches on re-mount even with staleTime 30s", async () => {
+    setLocale("en");
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+    });
+
+    const card1 = {
+      card_id: 401,
+      note_id: 51,
+      deck_id: 2, // child subdeck while studying parent deckId = 1
+      question: "<b>Q401</b>",
+      answer: "<i>A401</i>",
+      again: "1m",
+      hard: "6m",
+      good: "10m",
+      easy: "4d",
+      new_count: 16,
+      learning_count: 0,
+      review_count: 0,
+      card_phase: "new",
+      algorithm: "sm2" as const,
+      css: "",
+    };
+    const card2AfterAgain = {
+      ...card1,
+      card_id: 402,
+      note_id: 52,
+      question: "<b>Q402</b>",
+      answer: "<i>A402</i>",
+      new_count: 15,
+      learning_count: 1,
+      review_count: 0,
+    };
+
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
+    vi.spyOn(ipc.ipc, "aiGetConfig").mockResolvedValue(null as never);
+    const nextSpy = vi
+      .spyOn(ipc.ipc, "getNextCard")
+      .mockResolvedValueOnce(card1)
+      .mockResolvedValue(card2AfterAgain);
+    vi.spyOn(ipc.ipc, "answerCard").mockResolvedValueOnce(card2AfterAgain);
+    vi.spyOn(ipc.ipc, "buryCards").mockResolvedValueOnce();
+    const unburySpy = vi.spyOn(ipc.ipc, "unburyCards").mockResolvedValueOnce();
+
+    try {
+      const { unmount } = render(
+        <QueryClientProvider client={queryClient}>
+          <StudySessionScreen />
+        </QueryClientProvider>,
+      );
+
+      const bar = await screen.findByRole("progressbar", { name: /Session progress/i });
+      expect(screen.getByText("0 of 16")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /Show Answer/i }));
+      await user.click(await screen.findByRole("button", { name: /Again/i }));
+
+      // Total must stay 16 (not inflate to 1 of 17) when card moves New -> Learn.
+      await vi.waitFor(() => expect(bar).toHaveAttribute("aria-valuemax", "16"));
+      expect(screen.getByText("0 of 16")).toBeInTheDocument();
+
+      // Bury shows toast with Undo that calls ipc.unburyCards([402]).
+      await user.click(screen.getByRole("button", { name: /Bury/i }));
+      const undoToastBtn = await screen.findByRole("button", { name: /^Undo$/i });
+      await user.click(undoToastBtn);
+      await vi.waitFor(() => expect(unburySpy).toHaveBeenCalledWith([402]));
+
+      // Unmount and re-mount immediately (within 30s staleTime) -> must call getNextCard fresh.
+      const callsBeforeRemount = nextSpy.mock.calls.length;
+      unmount();
+      render(
+        <QueryClientProvider client={queryClient}>
+          <StudySessionScreen />
+        </QueryClientProvider>,
+      );
+      await vi.waitFor(() => expect(nextSpy.mock.calls.length).toBeGreaterThan(callsBeforeRemount));
+    } finally {
+      setLocale("en");
+      vi.restoreAllMocks();
+    }
+  });
 });

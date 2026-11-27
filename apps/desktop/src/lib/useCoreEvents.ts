@@ -5,6 +5,7 @@ import { ipc, isTauri } from "@/lib/ipc";
 import { platform } from "@/lib/platform";
 import { pluginHost } from "@/lib/pluginHost";
 import { queryKeys } from "@/lib/queryKeys";
+import { invalidateTodayCounts } from "@/lib/queryRefresh";
 
 /**
  * Subscribe to core domain events (re-emitted by the Tauri shell) and map them
@@ -16,10 +17,20 @@ export function useCoreEvents() {
 
   useEffect(() => {
     if (!isTauri()) return;
+    let cancelled = false;
     // Rust core has no OS timezone access; the day-rollover boundary is
     // evaluated in local time using this offset, sent once per session.
-    void ipc.setLocalOffset(-new Date().getTimezoneOffset());
-  }, []);
+    // Re-invalidate day-boundary queries once set so initial startup fetches
+    // never stay stuck on UTC (0).
+    void Promise.resolve(ipc.setLocalOffset(-new Date().getTimezoneOffset())).then(() => {
+      if (cancelled) return;
+      void invalidateTodayCounts(queryClient);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.habitsAll });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [queryClient]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -29,9 +40,18 @@ export function useCoreEvents() {
       if (
         payload === "deck-changed" ||
         payload === "schema-changed" ||
-        payload === "card-answered"
+        payload === "card-answered" ||
+        payload === "notes-changed"
       ) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.decks });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.deckCardIdsAll });
+      }
+      if (
+        payload === "deck-changed" ||
+        payload === "schema-changed" ||
+        payload === "notes-changed"
+      ) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.queueAll });
       }
       if (
         payload === "deck-changed" ||
@@ -51,6 +71,8 @@ export function useCoreEvents() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.taskListsAll });
         void queryClient.invalidateQueries({ queryKey: queryKeys.matrixAll });
         void queryClient.invalidateQueries({ queryKey: queryKeys.habitsAll });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.habitHistoryAll });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.archivedHabits });
         void queryClient.invalidateQueries({ queryKey: queryKeys.calendarAll });
       }
       if (
@@ -63,13 +85,23 @@ export function useCoreEvents() {
       }
       if (payload === "card-answered") {
         void queryClient.invalidateQueries({ queryKey: queryKeys.habitsAll });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.habitHistoryAll });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.archivedHabits });
       }
-      if (payload === "notes-changed" || payload === "schema-changed") {
+      if (
+        payload === "notes-changed" ||
+        payload === "schema-changed" ||
+        payload === "deck-changed"
+      ) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
         void queryClient.invalidateQueries({ queryKey: queryKeys.notetypesAll });
         void queryClient.invalidateQueries({ queryKey: queryKeys.tags });
       }
-      if (payload === "notes-changed" || payload === "media-changed") {
+      if (
+        payload === "notes-changed" ||
+        payload === "media-changed" ||
+        payload === "schema-changed"
+      ) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.mediaLibraryAll });
       }
       if (payload === "media-changed") {
@@ -78,7 +110,8 @@ export function useCoreEvents() {
       if (
         payload === "card-answered" ||
         payload === "notes-changed" ||
-        payload === "schema-changed"
+        payload === "schema-changed" ||
+        payload === "deck-changed"
       ) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.statsAll });
         void queryClient.invalidateQueries({ queryKey: queryKeys.cardsAll });

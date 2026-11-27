@@ -179,6 +179,9 @@ export function StatsScreen() {
             ) : statsQuery.data ? (
               <Dashboard
                 stats={statsQuery.data}
+                filteredDeckIds={
+                  decksQuery.data?.filter((d) => d.is_filtered).map((d) => d.id) ?? []
+                }
                 onSelectDeck={setDeckId}
                 onDrill={drill}
                 deckName={deckName}
@@ -214,6 +217,7 @@ export function StatsScreen() {
 
 function Dashboard({
   stats,
+  filteredDeckIds,
   onSelectDeck,
   onDrill,
   deckName,
@@ -226,6 +230,7 @@ function Dashboard({
   onClearCoachReport,
 }: {
   stats: StatsDto;
+  filteredDeckIds: number[];
   onSelectDeck: (deckId: number) => void;
   onDrill: (query: string) => void;
   deckName: string | null;
@@ -365,7 +370,11 @@ function Dashboard({
       {stats.deck_stats.length > 0 ? (
         <motion.div variants={listItem}>
           <Panel title={t("nav.decks")}>
-            <DeckTable deckStats={stats.deck_stats} onSelectDeck={onSelectDeck} />
+            <DeckTable
+              deckStats={stats.deck_stats}
+              filteredDeckIds={filteredDeckIds}
+              onSelectDeck={onSelectDeck}
+            />
           </Panel>
         </motion.div>
       ) : null}

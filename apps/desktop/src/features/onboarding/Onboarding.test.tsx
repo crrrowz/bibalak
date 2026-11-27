@@ -166,10 +166,10 @@ describe("Onboarding wizard (16f)", () => {
 
     await user.click(screen.getByRole("button", { name: ar["motivation.onboarding.next"] }));
 
-    // Step 3: Daily goal (10/20/30/50, default 20).
+    // Step 3: Daily goal (10/20/30/50, default 10).
     expect(await screen.findByText(ar["motivation.onboarding.goalTitle"])).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /20 XP/ })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("radio", { name: /10 XP/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /10 XP/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: /20 XP/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /30 XP/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /50 XP/ })).toBeInTheDocument();
 
@@ -288,22 +288,21 @@ describe("Onboarding wizard (16f)", () => {
     expect(useStyle.getState().style).toBe("game");
     await user.click(screen.getByRole("button", { name: ar["motivation.onboarding.next"] }));
 
-    // Step 3: move from 20 XP -> 50 XP via ArrowLeft x2 in RTL.
-    const goal20 = await screen.findByRole("radio", { name: /20 XP/ });
-    goal20.focus();
-    await user.keyboard("{ArrowLeft}{ArrowLeft}");
+    // Step 3: move from 10 XP -> 50 XP via ArrowLeft x3 in RTL.
+    const goal10 = await screen.findByRole("radio", { name: /10 XP/ });
+    goal10.focus();
+    await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowLeft}");
     expect(screen.getByRole("radio", { name: /50 XP/ })).toHaveAttribute("aria-checked", "true");
     await user.click(screen.getByRole("button", { name: ar["motivation.onboarding.next"] }));
 
-    // Step 4: toggle from starter deck (true) -> empty workspace (false) via ArrowLeft in RTL, then Esc skips?
-    // Test finishing via Enter first, or test Esc skip separately.
-    const starterYes = await screen.findByRole("radio", {
-      name: new RegExp(ar["motivation.onboarding.createStarter"]),
+    // Step 4: toggle from empty workspace (false) -> sample deck (true) via ArrowLeft in RTL, then Esc skips.
+    const starterEmpty = await screen.findByRole("radio", {
+      name: new RegExp(ar["motivation.onboarding.startEmpty"]),
     });
-    starterYes.focus();
+    starterEmpty.focus();
     await user.keyboard("{ArrowLeft}");
     expect(
-      screen.getByRole("radio", { name: new RegExp(ar["motivation.onboarding.startEmpty"]) }),
+      screen.getByRole("radio", { name: new RegExp(ar["motivation.onboarding.createStarter"]) }),
     ).toHaveAttribute("aria-checked", "true");
 
     // Verify Escape skips from any step.
@@ -311,5 +310,41 @@ describe("Onboarding wizard (16f)", () => {
     await waitFor(() => expect(completeSpy).toHaveBeenCalledWith(true, false, "ar"));
     expect(setGoalSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("UX2 A1-A6: defaults to recommended 10 XP, empty workspace, and saves defaults without changes", async () => {
+    const user = userEvent.setup();
+    let completed = false;
+    vi.spyOn(ipc, "getMotivationState").mockImplementation(async () =>
+      makeMotivationState({ onboarding_completed: completed, daily_goal_xp: 10 }),
+    );
+    const setGoalSpy = vi
+      .spyOn(ipc, "setDailyGoal")
+      .mockImplementation(async (g) => makeMotivationState({ daily_goal_xp: g }));
+    const completeSpy = vi.spyOn(ipc, "completeOnboarding").mockImplementation(async () => {
+      completed = true;
+    });
+
+    expect(en["motivation.onboarding.goalHint.10"]).toContain("Recommended");
+    expect(en["motivation.onboarding.goalHint.20"]).not.toContain("Recommended");
+    expect(ar["motivation.onboarding.goalHint.10"]).toContain("موصى به");
+    expect(ar["motivation.onboarding.goalHint.20"]).not.toContain("موصى به");
+    expect(en["motivation.onboarding.createStarter"]).toBe("Add a sample deck to try");
+
+    renderWithQueryClient();
+    await screen.findByRole("dialog");
+
+    // Step 1 -> 2 -> 3 -> 4 without changing anything
+    await user.click(screen.getByRole("button", { name: en["motivation.onboarding.next"] }));
+    await user.click(screen.getByRole("button", { name: en["motivation.onboarding.next"] }));
+    expect(screen.getByRole("radio", { name: /10 XP/ })).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("button", { name: en["motivation.onboarding.next"] }));
+    expect(
+      screen.getByRole("radio", { name: new RegExp(en["motivation.onboarding.startEmpty"]) }),
+    ).toHaveAttribute("aria-checked", "true");
+
+    await user.click(screen.getByRole("button", { name: en["motivation.onboarding.finish"] }));
+    await waitFor(() => expect(setGoalSpy).toHaveBeenCalledWith(10));
+    expect(completeSpy).toHaveBeenCalledWith(false, false, "en");
   });
 });

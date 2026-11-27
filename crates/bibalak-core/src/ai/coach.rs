@@ -46,7 +46,35 @@ pub fn build_coach_input(
         .map(|h| h.hour)
         .collect();
 
-    let mut deck_stats_sorted = stats.deck_stats.clone();
+    // Roll up due_today and total_cards across subdecks via parent_id so
+    // parent decks with cards only in subdecks are represented accurately.
+    let mut rolled = stats.deck_stats.clone();
+    let idx_by_id: std::collections::HashMap<i64, usize> = rolled
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (d.deck_id, i))
+        .collect();
+    for i in 0..stats.deck_stats.len() {
+        let add_due = stats.deck_stats[i].due_today;
+        let add_total = stats.deck_stats[i].total_cards;
+        let mut cur_parent = stats.deck_stats[i].parent_id;
+        let mut guard = stats.deck_stats.len();
+        while let Some(pid) = cur_parent {
+            if guard == 0 {
+                break;
+            }
+            guard -= 1;
+            if let Some(&p_idx) = idx_by_id.get(&pid) {
+                rolled[p_idx].due_today = rolled[p_idx].due_today.saturating_add(add_due);
+                rolled[p_idx].total_cards = rolled[p_idx].total_cards.saturating_add(add_total);
+                cur_parent = stats.deck_stats[p_idx].parent_id;
+            } else {
+                break;
+            }
+        }
+    }
+
+    let mut deck_stats_sorted = rolled;
     deck_stats_sorted.sort_by(|a, b| {
         b.due_today
             .cmp(&a.due_today)

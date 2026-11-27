@@ -869,16 +869,21 @@ describe("BrowseScreen", () => {
     // Wait for NoteEditorPanel's useEffect([note.data]) to hydrate tags & initialRef before editing.
     const tagsInput = (await screen.findByDisplayValue("tag1")) as HTMLInputElement;
     fireEvent.change(tagsInput, { target: { value: "tag1 arrow-edited" } });
+    await waitFor(() => {
+      expect(tagsInput).toHaveValue("tag1 arrow-edited");
+    });
 
     // ArrowDown inside tags input is ignored; outside it autosaves 201 (B3) and moves to row 1 (note 202).
-    tagsInput.focus();
+    fireEvent.focus(tagsInput);
     fireEvent.keyDown(tagsInput, { key: "ArrowDown" });
     expect(ipc.getNote).not.toHaveBeenCalledWith(202);
-    tagsInput.blur();
+    fireEvent.blur(tagsInput);
 
     fireEvent.keyDown(window, { key: "ArrowDown" });
     await waitFor(() => {
       expect(ipc.saveNote).toHaveBeenCalledWith(201, ["Q", "A"], ["tag1", "arrow-edited"]);
+    });
+    await waitFor(() => {
       expect(ipc.getNote).toHaveBeenCalledWith(202);
       expect(screen.getByRole("button", { name: /Unsuspend/i })).toBeInTheDocument();
     });

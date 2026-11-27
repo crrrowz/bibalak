@@ -49,7 +49,7 @@ apps/desktop/src           واجهة React 19 + TypeScript (TanStack Router/Que
 
 ## 4. البيانات والوضع المحمول ([ADR-006](docs/architecture/adr/006-portable-mode.md))
 
-- **التثبيت الاعتيادي:** يحفظ `collection.sqlite` و`collection.media/` و`backups/` و`plugins/` في مجلد بيانات النظام (`com.keepsake.desktop` عبر `data_dir::data_dir`).
+- **التثبيت الاعتيادي:** يحفظ `collection.sqlite` و`collection.media/` و`backups/` و`plugins/` في مجلد بيانات النظام (`com.bibalak.desktop` عبر `data_dir::data_dir`).
 - **الوضع المحمول (Windows):** وجود ملف `portable.txt` بجانب `Bibalak.exe` يوجّه `data_dir` إلى مجلد `./data/` المجاور دون كتابة أي شيء في `%APPDATA%`.
 - **النسخ الاحتياطي التلقائي:** نسخة احتياطية يومية عند بدء التشغيل، ونسخة أمان تلقائية `.pre-v<N>.sqlite` قبل أي ترقية لمخطط قاعدة البيانات.
 

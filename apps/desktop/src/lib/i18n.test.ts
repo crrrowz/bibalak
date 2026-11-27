@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, setLocale, t, tn } from "./i18n";
 import { en } from "@/locales/en";
 import { ar } from "@/locales/ar";
@@ -111,5 +111,32 @@ describe("Arabic locale completeness", () => {
       for (const p of needed) expect(placeholders(ar[key]), key).toContain(p);
       for (const p of placeholders(ar[key])) expect(placeholders(en[key]), key).toContain(p);
     }
+  });
+});
+
+describe("initialLocale auto-detection (UX2 A1)", () => {
+  afterEach(() => {
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("preselects Arabic when any entry in navigator.languages starts with 'ar'", async () => {
+    localStorage.clear();
+    vi.stubGlobal("navigator", { language: "en-US", languages: ["en-US", "ar-IQ"] });
+    vi.resetModules();
+    const mod = await import("./i18n");
+    expect(mod.getLocale()).toBe("ar");
+    expect(document.documentElement.lang).toBe("ar");
+    expect(document.documentElement.dir).toBe("rtl");
+  });
+
+  it("lets a saved choice win over navigator.languages", async () => {
+    localStorage.setItem("keepsake-locale", "en");
+    vi.stubGlobal("navigator", { language: "ar-IQ", languages: ["ar-IQ"] });
+    vi.resetModules();
+    const mod = await import("./i18n");
+    expect(mod.getLocale()).toBe("en");
+    expect(document.documentElement.dir).toBe("ltr");
   });
 });

@@ -40,7 +40,7 @@ export function HourlyChart({ hourly }: { hourly: HourlyStat[] }) {
   const data = Array.from({ length: 24 }, (_, hour) => {
     const h = byHour.get(hour);
     const passRate = h && h.total > 0 ? (h.passed / h.total) * 100 : null;
-    return { hour, label: `${hour}`, total: h?.total ?? 0, passRate };
+    return { hour, label: formatNumber(hour), total: h?.total ?? 0, passRate };
   });
 
   const total = data.reduce((sum, d) => sum + d.total, 0);

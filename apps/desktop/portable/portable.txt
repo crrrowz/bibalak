@@ -4,7 +4,7 @@ This file turns on portable mode. While it sits next to Bibalak.exe, all of
 Bibalak's data (collection, media, backups, plugins, settings) is kept in the
 "data" folder beside it, so the whole folder can be copied or carried on a USB
 stick. Delete this file and Bibalak uses the normal Windows data folder
-(%APPDATA%\com.keepsake.desktop) instead.
+(%APPDATA%\com.bibalak.desktop) instead.
 
 Back up by copying the whole folder while Bibalak is closed.
 Requires the Microsoft Edge WebView2 Runtime (built into Windows 10 and 11).

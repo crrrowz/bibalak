@@ -120,7 +120,7 @@ describe("Cycle 3 motivation shared frames & mocks (16d)", () => {
       dayIndex: number;
     }) => StreakCalendarDto;
 
-    expect(getState().daily_goal_xp).toBe(20);
+    expect(getState().daily_goal_xp).toBe(10);
     expect(setGoal({ goalXp: 50 }).daily_goal_xp).toBe(50);
     expect(getState().daily_goal_xp).toBe(50);
 

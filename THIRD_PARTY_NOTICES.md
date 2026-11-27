@@ -38,16 +38,16 @@ Rust crates and production npm packages bundled with Bibalak keep their own lice
 
 | Crate | Version | License |
 | --- | --- | --- |
-| `desktop` | `1.1.0` | `AGPL-3.0-or-later` |
-| `bibalak-ai` | `1.1.0` | `AGPL-3.0-or-later` |
-| `bibalak-ankifmt` | `1.1.0` | `AGPL-3.0-or-later` |
-| `bibalak-core` | `1.1.0` | `AGPL-3.0-or-later` |
-| `bibalak-db` | `1.1.0` | `AGPL-3.0-or-later` |
-| `bibalak-media` | `1.1.0` | `AGPL-3.0-or-later` |
-| `bibalak-plugin` | `1.1.0` | `AGPL-3.0-or-later` |
-| `bibalak-render` | `1.1.0` | `AGPL-3.0-or-later` |
-| `bibalak-scheduler` | `1.1.0` | `AGPL-3.0-or-later` |
-| `bibalak-search` | `1.1.0` | `AGPL-3.0-or-later` |
+| `desktop` | `1.1.1` | `AGPL-3.0-or-later` |
+| `bibalak-ai` | `1.1.1` | `AGPL-3.0-or-later` |
+| `bibalak-ankifmt` | `1.1.1` | `AGPL-3.0-or-later` |
+| `bibalak-core` | `1.1.1` | `AGPL-3.0-or-later` |
+| `bibalak-db` | `1.1.1` | `AGPL-3.0-or-later` |
+| `bibalak-media` | `1.1.1` | `AGPL-3.0-or-later` |
+| `bibalak-plugin` | `1.1.1` | `AGPL-3.0-or-later` |
+| `bibalak-render` | `1.1.1` | `AGPL-3.0-or-later` |
+| `bibalak-scheduler` | `1.1.1` | `AGPL-3.0-or-later` |
+| `bibalak-search` | `1.1.1` | `AGPL-3.0-or-later` |
 
 ````text
 GNU AFFERO GENERAL PUBLIC LICENSE

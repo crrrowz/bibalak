@@ -43,7 +43,8 @@ pub(crate) fn map_motivation_settings(row: &Row<'_>) -> rusqlite::Result<Motivat
     Ok(MotivationSettingsRow {
         id: row.get(0)?,
         user_id: row.get(1)?,
-        daily_goal_xp: u32::try_from(row.get::<_, i64>(2)?.max(0)).unwrap_or(20),
+        daily_goal_xp: u32::try_from(row.get::<_, i64>(2)?.max(0))
+            .unwrap_or(bibalak_core::motivation::DEFAULT_DAILY_GOAL_XP),
         onboarding_completed_at: row.get(3)?,
         comeback_return_day: row.get(4)?,
         comeback_awarded_return_day: row.get(5)?,
@@ -200,13 +201,26 @@ fn quest_counts_in_window(
 
     let new_cards: i64 = conn
         .query_row(
-            "SELECT COUNT(DISTINCT r.card_id)
+            "SELECT COUNT(DISTINCT
+                r.card_id || ':' || COALESCE(
+                    (SELECT MAX(f.id) FROM revlog f
+                     WHERE f.card_id = r.card_id AND f.review_kind = 4 AND f.id <= r.id),
+                    -1
+                )
+             )
              FROM revlog r
              WHERE r.id >= ?1 AND r.id < ?2
                AND r.review_kind = 0
                AND NOT EXISTS (
                    SELECT 1 FROM revlog prev
-                   WHERE prev.card_id = r.card_id AND prev.id < ?1
+                   WHERE prev.card_id = r.card_id
+                     AND prev.review_kind != 4
+                     AND prev.id < ?1
+                     AND prev.id > COALESCE(
+                         (SELECT MAX(f.id) FROM revlog f
+                          WHERE f.card_id = r.card_id AND f.review_kind = 4 AND f.id <= r.id),
+                         -1
+                     )
                )",
             params![start_ms, end_ms],
             |r| r.get(0),
@@ -463,27 +477,39 @@ fn eval_quest_completed_bounded(
         QuestMetric::NewCards => {
             let mut stmt = conn
                 .prepare_cached(
-                    "SELECT card_id FROM revlog
-                     WHERE id >= ?1 AND id < ?2 AND review_kind = 0",
+                    "SELECT r.card_id,
+                            COALESCE(
+                                (SELECT MAX(f.id) FROM revlog f
+                                 WHERE f.card_id = r.card_id AND f.review_kind = 4 AND f.id <= r.id),
+                                -1
+                            ) AS reset_id
+                     FROM revlog r
+                     WHERE r.id >= ?1 AND r.id < ?2 AND r.review_kind = 0",
                 )
                 .map_err(err)?;
             let mut prev_stmt = conn
-                .prepare_cached("SELECT 1 FROM revlog WHERE card_id = ?1 AND id < ?2 LIMIT 1")
+                .prepare_cached(
+                    "SELECT 1 FROM revlog
+                     WHERE card_id = ?1 AND review_kind != 4 AND id < ?2 AND id > ?3
+                     LIMIT 1",
+                )
                 .map_err(err)?;
             let mut rows = stmt.query(params![start_ms, end_ms]).map_err(err)?;
             let mut seen_new = HashSet::new();
             while let Some(r) = rows.next().map_err(err)? {
                 let cid: i64 = r.get(0).map_err(err)?;
-                if seen_new.contains(&cid) {
+                let reset_id: i64 = r.get(1).map_err(err)?;
+                let key = (cid, reset_id);
+                if seen_new.contains(&key) {
                     continue;
                 }
                 let has_prev = prev_stmt
-                    .query_row(params![cid, start_ms], |_| Ok(()))
+                    .query_row(params![cid, start_ms, reset_id], |_| Ok(()))
                     .optional()
                     .map_err(err)?
                     .is_some();
                 if !has_prev {
-                    seen_new.insert(cid);
+                    seen_new.insert(key);
                     if seen_new.len() >= tpl.target as usize {
                         return Ok(true);
                     }
@@ -1624,5 +1650,20 @@ mod tests {
                 .gold_cents,
             COMEBACK_BONUS_GOLD_CENTS as i64
         );
+    }
+
+    #[test]
+    fn fresh_collection_defaults_daily_goal_to_10_while_existing_row_keeps_20() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let clock = Arc::new(TestClock::new(1_794_830_400_000));
+        let col = Collection::new(Box::new(storage), clock).unwrap();
+
+        let state = col.get_motivation_state().unwrap();
+        assert_eq!(state.daily_goal_xp, 10);
+
+        // Existing saved goal (20) must be preserved when reloaded.
+        let after = col.set_daily_goal(20).unwrap();
+        assert_eq!(after.daily_goal_xp, 20);
+        assert_eq!(col.get_motivation_state().unwrap().daily_goal_xp, 20);
     }
 }

@@ -166,6 +166,7 @@ impl Collection {
             .set_rollover_hour(prefs.rollover_hour, self.now_ms())?;
         self.rollover_hour
             .store(prefs.rollover_hour, Ordering::Relaxed);
+        let _ = self.maybe_unbury_day_rollover()?;
         self.events.emit(DomainEvent::SchemaChanged);
         Ok(())
     }
@@ -258,6 +259,12 @@ impl Collection {
         action: impl FnOnce(&dyn Storage, i64) -> CoreResult<()> + Send + 'static,
     ) {
         self.lock_undo().record(label, Box::new(action));
+    }
+
+    /// Clear pending undo history when an irreversible mutation runs so `undo()`
+    /// never silently reverses an earlier unrelated operation.
+    pub(crate) fn clear_undo(&self) {
+        self.lock_undo().clear();
     }
 }
 

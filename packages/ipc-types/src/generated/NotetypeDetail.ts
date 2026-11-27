@@ -10,7 +10,7 @@ export type NotetypeDetail = { id: number, name: string,
 /**
  * 0 = standard, 1 = cloze.
  */
-kind: bigint, fields: Array<FieldSummary>, templates: Array<TemplateSummary>, 
+kind: bigint, is_image_occlusion?: boolean, fields: Array<FieldSummary>, templates: Array<TemplateSummary>, 
 /**
  * Custom card CSS (`Notetype.config_json.css`), user-editable.
  */

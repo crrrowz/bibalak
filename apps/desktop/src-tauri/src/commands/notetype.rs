@@ -265,9 +265,11 @@ pub async fn save_notetype_preset(
     app: AppHandle,
     notetype_id: i64,
     preset: NotetypePreset,
+    confirm_remove: Option<bool>,
 ) -> IpcResult<NotetypeDetail> {
+    let confirm = confirm_remove.unwrap_or(false);
     with_collection(app, move |collection| {
-        Ok(collection.save_notetype_preset(notetype_id, preset)?)
+        Ok(collection.save_notetype_preset(notetype_id, preset, confirm)?)
     })
     .await
 }

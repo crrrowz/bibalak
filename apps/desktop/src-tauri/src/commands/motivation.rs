@@ -107,7 +107,7 @@ mod tests {
         let col = Collection::new(Box::new(storage), clock).unwrap();
 
         let initial = col.get_motivation_state().unwrap();
-        assert_eq!(initial.daily_goal_xp, 20);
+        assert_eq!(initial.daily_goal_xp, 10);
         assert!(!initial.onboarding_completed);
         assert_eq!(initial.daily_quests.len(), 3);
 

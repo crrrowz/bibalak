@@ -9,6 +9,49 @@ up to 0.1.0-beta.3 are Synapse's history.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-27
+
+### Added
+
+- **Deck options you can read:** a simple view with three questions (new
+  cards a day, most reviews a day, how much you want to remember, with an
+  estimate of minutes a day) and an advanced view with sections named by
+  what they do. Every setting says what it does and what its value means,
+  and each section can go back to its defaults. New decks use FSRS.
+- **Undo for more actions:** suspend, bury, flags, moving cards, deck
+  options, today's extra limit and adding notes can now be undone.
+- **A friendlier first start:** the setup picks Arabic when your computer
+  lists Arabic, starts with the Game look, a 10 XP (about 5 minutes) daily
+  goal and an empty workspace. The empty Home offers Create a deck, Import
+  from Anki and Add a sample deck.
+
+### Changed
+
+- The app's data folder is now `com.bibalak.desktop`. The old folder is
+  renamed on the first start, with nothing copied and nothing lost, and the
+  saved AI key moves with it.
+- The app opens maximized the first time.
+- Import results show as a notice you can close, not a strip under the page.
+
+### Fixed
+
+- **Counts:** resetting a card now makes it count as new again; the study
+  counter no longer grows when you press Again; New, Learn and Due stay right
+  after every action and line up under their headers in English and Arabic.
+- Cards waiting a day in learning are counted on the right day.
+- Studying in a filtered deck no longer uses up the home deck's daily limits,
+  as in Anki.
+- Undoing a deck delete brings back its review history and settings too.
+- Statistics leave filtered decks out of the deck filter and per-deck totals.
+- A deleted app folder no longer brings back data from the old Synapse
+  folder.
+- Long deck names wrap in the delete dialog, which now says the delete can
+  be undone.
+- Changing a note type between basic and cloze is refused while it has
+  notes, and removing card templates asks first.
+- Cancelling an import right at the end no longer leaves extra media files.
+- Calendar agenda shows the day's habits; streak and habit views refresh.
+
 ## [1.1.0] - 2026-11-27
 
 ### Added
@@ -159,6 +202,7 @@ Synapse release, kept as history. Source:
 - Bidirectional .apkg/.colpkg import/export (Anki schema v11/v18)
 - Statistics dashboards
 
-[unreleased]: https://github.com/crrrowz/bibalak/compare/v1.1.0...HEAD
+[unreleased]: https://github.com/crrrowz/bibalak/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/crrrowz/bibalak/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/crrrowz/bibalak/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/crrrowz/bibalak/releases/tag/v1.0.0

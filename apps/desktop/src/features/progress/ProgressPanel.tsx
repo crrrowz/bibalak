@@ -214,9 +214,7 @@ export function ProgressPanel({ variant = "compact", className }: ProgressPanelP
                 style={{ width: `${pct}%` }}
               />
             </div>
-            <span dir="ltr" className="tnum shrink-0 text-xs text-muted-foreground">
-              {xpNextText}
-            </span>
+            <span className="tnum shrink-0 text-xs text-muted-foreground">{xpNextText}</span>
           </div>
         </div>
       </div>

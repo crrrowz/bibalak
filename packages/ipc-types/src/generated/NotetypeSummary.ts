@@ -7,4 +7,4 @@ export type NotetypeSummary = { id: number, name: string,
 /**
  * 0 = standard, 1 = cloze.
  */
-kind: bigint, field_names: Array<string>, note_count: number, };
+kind: bigint, is_image_occlusion?: boolean, field_names: Array<string>, note_count: number, };

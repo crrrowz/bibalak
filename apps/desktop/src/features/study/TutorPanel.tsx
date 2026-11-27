@@ -23,6 +23,7 @@ import { toast } from "@/stores/toast";
 
 interface TutorPanelProps {
   card: StudyCardDto;
+  sessionDeckId?: number;
   deckName: string | null;
   typedAnswer: string;
   configured: boolean;
@@ -63,6 +64,7 @@ const TUTOR_ACTIONS: Array<{
 
 export function TutorPanel({
   card,
+  sessionDeckId,
   deckName,
   typedAnswer,
   configured,
@@ -125,6 +127,9 @@ export function TutorPanel({
       void queryClient.invalidateQueries({ queryKey: queryKeys.notesDetail(card.note_id) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
       void queryClient.invalidateQueries({ queryKey: queryKeys.undoStatus });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.queue(String(sessionDeckId ?? card.deck_id)),
+      });
       void queryClient.invalidateQueries({ queryKey: queryKeys.queue(String(card.deck_id)) });
       toast.success(t("ai.tutor.savedToast", { field: fieldName }));
       setSaveOpen(false);

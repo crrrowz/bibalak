@@ -1,5 +1,6 @@
 param(
-    [switch]$NoRust
+    [switch]$NoRust,
+    [switch]$Audit
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,3 +41,20 @@ Invoke-Step "pnpm lint:ts" { Invoke-Pnpm @("lint:ts") }
 Invoke-Step "pnpm fmt:check" { Invoke-Pnpm @("fmt:check") }
 Invoke-Step "pnpm test:ts" { Invoke-Pnpm @("test:ts") }
 Invoke-Step "pnpm --filter @bibalak/desktop build" { Invoke-Pnpm @("--filter", "@bibalak/desktop", "build") }
+Invoke-Step "node --test (repo scripts)" {
+    # Every *.test.mjs under scripts/ (found, not listed: the public copy has fewer).
+    $scriptTests = Get-ChildItem -Path scripts -Recurse -Filter *.test.mjs |
+        Sort-Object FullName | ForEach-Object { $_.FullName }
+    node --test @scriptTests
+}
+if (-not $NoRust) {
+    Invoke-Step "node scripts/licenses/generate-notices.mjs --check" {
+        node scripts/licenses/generate-notices.mjs --check
+    }
+}
+if ($Audit) {
+    Invoke-Step "pnpm audit --audit-level=high" { Invoke-Pnpm @("audit", "--audit-level=high") }
+    if (-not $NoRust) {
+        Invoke-Step "cargo audit" { cargo audit }
+    }
+}

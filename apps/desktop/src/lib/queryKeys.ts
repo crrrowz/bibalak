@@ -9,6 +9,7 @@ export const queryKeys = {
   isPortable: ["is-portable"] as const,
   decks: ["decks"] as const,
   deck: (deckId: string) => ["decks", deckId] as const,
+  queueAll: ["queue"] as const,
   queue: (deckId: string) => ["queue", deckId] as const,
 
   notetypes: ["notetypes"] as const,
@@ -95,6 +96,7 @@ export const queryKeys = {
   // STUDY1
   deckPresetSharing: (configId: number | null, deckIds: number[]) =>
     ["deck-preset-sharing", configId, deckIds] as const,
+  deckCardIdsAll: ["deck-card-ids"] as const,
   deckCardIds: (deckId: number | null, includeSubdecks: boolean) =>
     ["deck-card-ids", deckId, includeSubdecks] as const,
   statsFsrsDecks: (deckId: number | null, deckIds: number[]) =>

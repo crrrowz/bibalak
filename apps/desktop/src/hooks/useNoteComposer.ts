@@ -130,7 +130,7 @@ export function useNoteComposer({
     });
 
   const isImageOcclusion =
-    Number(selectedNotetype?.kind) === 2 || selectedNotetype?.name === "Image Occlusion";
+    Number(selectedNotetype?.kind) === 1 && Boolean(selectedNotetype?.is_image_occlusion);
   const imageFieldIdx = selectedNotetype?.field_names.indexOf("Image") ?? -1;
   const occlusionFieldIdx = selectedNotetype?.field_names.indexOf("Occlusion") ?? -1;
 
@@ -149,6 +149,10 @@ export function useNoteComposer({
       setFormVersion((v) => v + 1);
       setTags("");
       void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.decks });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.queueAll });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.deckCardIdsAll });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.statsAll });
     },
   });
 

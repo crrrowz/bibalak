@@ -154,7 +154,7 @@ pub fn stats(
                 d.stat.total_cards += 1;
                 if queue == -1 {
                     d.stat.suspended_count += 1;
-                } else if queue >= 0 {
+                } else {
                     match ctype {
                         0 => d.stat.new_count += 1,
                         1 | 3 => d.stat.learning_count += 1,
@@ -195,7 +195,7 @@ pub fn stats(
             }
             if queue == -1 {
                 stats.suspended_count += 1;
-            } else if queue >= 0 {
+            } else {
                 match ctype {
                     0 => stats.new_count += 1,
                     1 | 3 => stats.learning_count += 1,
@@ -203,21 +203,23 @@ pub fn stats(
                     2 => stats.mature_count += 1,
                     _ => {}
                 }
-                let stability: Option<f64> = r.get(7).map_err(err)?;
-                let difficulty: Option<f64> = r.get(8).map_err(err)?;
-                if let (Some(stab), Some(diff)) = (stability, difficulty) {
-                    fsrs.card_count += 1;
-                    let s_idx = STABILITY_EDGES
-                        .iter()
-                        .position(|&edge| stab < edge)
-                        .unwrap_or(STABILITY_EDGES.len());
-                    fsrs.stability_buckets[s_idx] += 1;
-                    let d_idx = ((diff - 1.0).clamp(0.0, 8.999)) as usize;
-                    fsrs.difficulty_buckets[d_idx.min(9)] += 1;
-                    if let Some(last_day) = r.get::<_, Option<i64>>(9).map_err(err)? {
-                        let elapsed = (today_i64 - last_day).max(0) as f64;
-                        sum_r += retrievability(elapsed, stab, fsrs_weights) * 100.0;
-                        n_r += 1;
+                if queue >= 0 {
+                    let stability: Option<f64> = r.get(7).map_err(err)?;
+                    let difficulty: Option<f64> = r.get(8).map_err(err)?;
+                    if let (Some(stab), Some(diff)) = (stability, difficulty) {
+                        fsrs.card_count += 1;
+                        let s_idx = STABILITY_EDGES
+                            .iter()
+                            .position(|&edge| stab < edge)
+                            .unwrap_or(STABILITY_EDGES.len());
+                        fsrs.stability_buckets[s_idx] += 1;
+                        let d_idx = ((diff - 1.0).clamp(0.0, 8.999)) as usize;
+                        fsrs.difficulty_buckets[d_idx.min(9)] += 1;
+                        if let Some(last_day) = r.get::<_, Option<i64>>(9).map_err(err)? {
+                            let elapsed = (today_i64 - last_day).max(0) as f64;
+                            sum_r += retrievability(elapsed, stab, fsrs_weights) * 100.0;
+                            n_r += 1;
+                        }
                     }
                 }
             }
@@ -280,6 +282,9 @@ pub fn stats(
             let last_interval: i64 = r.get(3).map_err(err)?;
             let taken_ms: i64 = r.get(4).map_err(err)?;
             let review_kind: i64 = r.get(5).map_err(err)?;
+            if !(0..=3).contains(&review_kind) {
+                continue;
+            }
 
             let day_idx = day_bucket(id, tz_offset_minutes, rollover_hour, created_epoch_day);
             let (is_first, retention_30d_pass) =
@@ -373,7 +378,7 @@ pub fn stats(
                         buttons.mature[idx] += 1;
                     }
                 }
-                let hour = (((id + tz_off_ms) % MS_PER_DAY) / 3_600_000) as u8;
+                let hour = ((id + tz_off_ms).rem_euclid(MS_PER_DAY) / 3_600_000) as u8;
                 let h = hourly.entry(hour).or_insert((0, 0));
                 h.0 += 1;
                 if ease > 1 {
@@ -495,7 +500,7 @@ pub fn workload_snapshot(conn: &Connection, deck_ids: &[i64]) -> CoreResult<Work
             due: due as i32,
             state: CardState {
                 phase: crate::study::type_to_phase(ctype),
-                steps_remaining: (remaining / 1000).max(0) as u32,
+                steps_remaining: remaining.max(0) as u32,
                 interval_days: interval.max(0) as u32,
                 ease_milli: ease_factor.max(1300) as u32,
                 reps: reps.max(0) as u32,
@@ -1118,8 +1123,11 @@ mod tests {
             .add_note(nt.id, deck.id, &["hola".into(), "hello".into()], &[])
             .unwrap();
         let card = col.next_card(deck.id).unwrap().unwrap();
-        let cfg_sm2 = col.get_deck_config(deck.id).unwrap();
-        assert_eq!(cfg_sm2.algorithm, Algorithm::Sm2);
+        // New decks default to FSRS (UX2 B4); switch to SM-2 first to seed an SM-2 review.
+        let mut cfg_sm2 = col.get_deck_config(deck.id).unwrap();
+        assert_eq!(cfg_sm2.algorithm, Algorithm::Fsrs);
+        cfg_sm2.algorithm = Algorithm::Sm2;
+        col.set_deck_config(&cfg_sm2).unwrap();
 
         // Record an SM-2 answer (no FSRS state on the card).
         let next_state = bibalak_core::scheduling::CardState {
@@ -1214,6 +1222,48 @@ mod tests {
         assert_eq!(
             s.reviews[0].day, -1,
             "1 hour before epoch at UTC+0 rollover 0 must bucket to day -1 via div_euclid"
+        );
+    }
+
+    #[test]
+    fn stats_hour_bucket_uses_rem_euclid_for_negative_timestamps() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut m = model();
+        m.revlog.clear();
+        storage.import(&m, 1_700_000_000_000).unwrap();
+
+        let card_id: i64 = storage
+            .lock()
+            .query_row("SELECT id FROM cards LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        // 1 hour before epoch at UTC-2 (tz_offset_minutes = -120) -> 21:00 local time.
+        storage
+            .lock()
+            .execute(
+                "INSERT INTO revlog (id, card_id, usn, ease, interval, last_interval, ease_factor, taken_ms, review_kind)
+                 VALUES (?1, ?2, -1, 3, 1, 0, 2500, 1000, 1)",
+                [-3_600_000_i64, card_id],
+            )
+            .unwrap();
+
+        let s = storage
+            .stats(
+                None,
+                None,
+                -120,
+                0,
+                &FSRS6_DEFAULT_WEIGHTS,
+                90.0,
+                1,
+                super::MS_PER_DAY,
+                0,
+            )
+            .unwrap();
+
+        assert_eq!(s.hourly.len(), 1);
+        assert_eq!(
+            s.hourly[0].hour, 21,
+            "negative local timestamp must wrap to hour 0..=23 via rem_euclid"
         );
     }
 
@@ -1354,5 +1404,71 @@ mod tests {
         // 2 passed out of 3 qualifying (young + mature review answers) = 66.666...%
         let pct = s.retention_pct.expect("qualifying reviews present");
         assert!((pct - (200.0 / 3.0)).abs() < 1e-9, "got {pct}");
+    }
+
+    #[test]
+    fn buried_cards_count_in_phases_and_steps_remaining_is_unscaled() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let now_ms = 1_794_601_800_000_i64;
+        storage.ensure_collection(now_ms).unwrap();
+        {
+            let conn = storage.lock();
+            conn.execute(
+                r#"INSERT OR IGNORE INTO notetypes (id, name, kind, "mod", usn) VALUES (1, 'Basic', 0, 0, -1)"#,
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                r#"INSERT INTO notes (id, guid, notetype_id, "mod", usn, tags, fields)
+                   VALUES (10, 'g10', 1, 0, -1, ' ', 'A\x1fB')"#,
+                [],
+            )
+            .unwrap();
+            // Card 101: buried mature review (type=2, queue=-2, ivl=30)
+            // Card 102: active learning (type=1, queue=1, remaining=2)
+            conn.execute(
+                r#"INSERT INTO cards
+                   (id, note_id, deck_id, ord, "mod", usn, type, queue, due, interval,
+                    ease_factor, reps, lapses, remaining, original_due, original_deck_id, flags)
+                   VALUES (101, 10, 1, 0, 0, -1, 2, -2, 0, 30, 2500, 3, 0, 0, 0, 0, 0),
+                          (102, 10, 1, 1, 0, -1, 1, 1, 1, 0, 2500, 1, 0, 2, 0, 0, 0)"#,
+                [],
+            )
+            .unwrap();
+        }
+        let s = storage
+            .stats(
+                None,
+                None,
+                0,
+                4,
+                &FSRS6_DEFAULT_WEIGHTS,
+                90.0,
+                0,
+                now_ms,
+                now_ms,
+            )
+            .unwrap();
+        assert_eq!(s.mature_count, 1);
+        assert_eq!(s.learning_count, 1);
+        let d1 = s.deck_stats.iter().find(|d| d.deck_id == 1).unwrap();
+        assert_eq!(
+            d1.new_count
+                + d1.learning_count
+                + d1.young_count
+                + d1.mature_count
+                + d1.suspended_count,
+            d1.total_cards,
+            "buried cards must appear in phase breakdown"
+        );
+        assert_eq!(d1.due_today, 0, "buried card must not count as due_today");
+
+        let ws = storage.workload_snapshot(&[1]).unwrap();
+        let learn_snap = ws
+            .cards
+            .iter()
+            .find(|c| c.state.phase == bibalak_core::scheduling::CardPhase::Learning)
+            .unwrap();
+        assert_eq!(learn_snap.state.steps_remaining, 2);
     }
 }

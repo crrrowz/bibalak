@@ -45,7 +45,7 @@ export function CoachCards({
           <div className="flex items-start gap-3">
             <PauseCircle className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <div className="space-y-1">
-              <p className="text-sm font-medium">
+              <p className="text-sm font-medium tabular-nums">
                 {tn("stats.coach.leechTitle", coach.leech_count, {
                   minutes: formatNumber(coach.leech_weekly_minutes),
                 })}
@@ -77,7 +77,7 @@ export function CoachCards({
           <div className="flex items-start gap-3">
             <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <div className="space-y-1">
-              <p className="text-sm font-medium">
+              <p className="text-sm font-medium tabular-nums">
                 {tn("stats.coach.backlogTitle", coach.overdue_count)}
               </p>
               <p className="text-xs text-muted-foreground">

@@ -519,7 +519,7 @@ mod tests {
         let Setup { s, nt_id, .. } = setup();
         let col = Collection::new(Box::new(s), Arc::new(SystemClock)).unwrap();
         let preset = NotetypePreset::for_layout(LayoutId::Basic);
-        let before = col.save_notetype_preset(nt_id, preset).unwrap();
+        let before = col.save_notetype_preset(nt_id, preset, false).unwrap();
         let prev_digest = before.preset.unwrap().compiled_digest.unwrap();
 
         col.rename_field(nt_id, 0, "Prompt").unwrap();
