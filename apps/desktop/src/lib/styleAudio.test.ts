@@ -327,4 +327,23 @@ describe("styleAudio (14g)", () => {
       expect(totalBytes).toBeLessThanOrEqual(300 * 1024);
     }
   });
+
+  it("queues distinct burst cues instead of silently dropping the second cue", async () => {
+    vi.useFakeTimers();
+    try {
+      const capture = installAudioMocks();
+      playStyleCue("unlock");
+      playStyleCue("achievement");
+      await flushMicrotasks();
+      expect(capture.startCalls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(200);
+      await flushMicrotasks();
+      expect(capture.startCalls).toBe(2);
+      expect(capture.urlsFetched).toContain("/sounds/game/unlock.mp3");
+      expect(capture.urlsFetched).toContain("/sounds/game/achievement.mp3");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

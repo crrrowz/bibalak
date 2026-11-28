@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BookType, Copy, Trash2 } from "lucide-react";
-import type { FieldOptions, NotetypeDetail, TemplateSummary } from "@bibalak/ipc-types";
+import type { FieldKind, FieldOptions, NotetypeDetail, TemplateSummary } from "@bibalak/ipc-types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { ScreenHeader } from "@/components/ScreenHeader";
@@ -95,8 +95,19 @@ export function NotetypeScreen() {
     template &&
     (tmplName !== template.name || tmplQfmt !== template.qfmt || tmplAfmt !== template.afmt);
 
-  const confirmSwitch = (action: () => void) => {
-    if (isTemplateDirty) {
+  const lastCssNtIdRef = useRef<number | null>(null);
+  const [cssDraft, setCssDraft] = useState("");
+  useEffect(() => {
+    if (nt && lastCssNtIdRef.current !== nt.id) {
+      lastCssNtIdRef.current = nt.id;
+      setCssDraft(nt.css);
+    }
+  }, [nt]);
+
+  const isCssDirty = Boolean(nt && cssDraft !== nt.css);
+
+  const confirmSwitch = (action: () => void, includeCss = false) => {
+    if (isTemplateDirty || (includeCss && isCssDirty)) {
       setConfirmDialogState({
         open: true,
         title: t("notetypes.title"),
@@ -104,6 +115,9 @@ export function NotetypeScreen() {
         onConfirm: () => {
           setConfirmDialogState((s) => ({ ...s, open: false }));
           lastTemplateKeyRef.current = "";
+          if (includeCss) {
+            lastCssNtIdRef.current = null;
+          }
           action();
         },
       });
@@ -112,11 +126,40 @@ export function NotetypeScreen() {
     action();
   };
 
-  const sampleFields = nt?.fields.map((f) => `(${f.name})`) ?? [];
-  const [cssDraft, setCssDraft] = useState("");
+  const [previewNoteIndex, setPreviewNoteIndex] = useState(0);
   useEffect(() => {
-    setCssDraft(nt?.css ?? "");
-  }, [nt?.id, nt?.css]);
+    setPreviewNoteIndex(0);
+  }, [selectedId]);
+
+  const hasNoteLookup = typeof ipc.searchNoteRows === "function";
+  const sampleNoteRows = useQuery({
+    queryKey: queryKeys.notetypesSampleNotes(selectedId),
+    queryFn: () => {
+      const escaped = nt!.name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      return ipc.searchNoteRows(`note:"${escaped}"`, 0, "sort_field", true, 20);
+    },
+    enabled: tauri && selectedId !== null && !!nt && hasNoteLookup,
+    staleTime: 30_000,
+  });
+
+  const sampleNoteList = sampleNoteRows.data ?? [];
+  const clampedNoteIdx =
+    sampleNoteList.length > 0 ? Math.min(previewNoteIndex, sampleNoteList.length - 1) : 0;
+  const sampleNoteId = sampleNoteList[clampedNoteIdx]?.note_id ?? null;
+  const hasGetNote = typeof ipc.getNote === "function";
+  const sampleNote = useQuery({
+    queryKey: queryKeys.notesDetail(sampleNoteId ?? -1),
+    queryFn: () => ipc.getNote(sampleNoteId!),
+    enabled: tauri && sampleNoteId !== null && hasGetNote,
+    staleTime: 30_000,
+  });
+
+  const sampleFields =
+    sampleNote.data?.fields && sampleNote.data.fields.length > 0
+      ? sampleNote.data.fields.map((f) => f.value)
+      : (nt?.fields.map((f, idx) =>
+          Number(nt.kind) === 1 && idx === 0 ? `Sample {{c1::${f.name}}} text` : `(${f.name})`,
+        ) ?? []);
 
   const preview = useQuery({
     queryKey: queryKeys.notetypesPreview(
@@ -125,6 +168,7 @@ export function NotetypeScreen() {
       tmplQfmt,
       tmplAfmt,
       cssDraft,
+      sampleFields.join("\u001f"),
     ),
     queryFn: () =>
       ipc.previewTemplate(selectedId!, selectedTemplateOrd, sampleFields, tmplQfmt, tmplAfmt),
@@ -205,7 +249,21 @@ export function NotetypeScreen() {
   });
 
   const addField = useMutation({
-    mutationFn: () => ipc.addField(selectedId!, "New Field"),
+    mutationFn: async ({ name, kind }: { name: string; kind: FieldKind }) => {
+      const targetId = selectedId!;
+      await ipc.addField(targetId, name);
+      if (kind !== "text") {
+        const nextOrd =
+          nt && nt.fields.length > 0 ? Math.max(...nt.fields.map((f) => Number(f.ord))) + 1 : 0;
+        await ipc.saveFieldOptions(targetId, nextOrd, {
+          direction: "auto",
+          font: "",
+          size: 0,
+          description: "",
+          kind,
+        });
+      }
+    },
     onSuccess: invalidate,
     onError: handleMutationError,
   });
@@ -356,7 +414,7 @@ export function NotetypeScreen() {
               setSelectedId(id);
               setSelectedTemplateOrd(0);
               setActiveTab("fields");
-            })
+            }, true)
           }
           onCreateBlank={() => createNotetype.mutate(t("notetypes.defaultName"))}
           onAddStock={(index) => addStockNotetype.mutate(index)}
@@ -433,13 +491,13 @@ export function NotetypeScreen() {
                   tabIndex={activeTab === tab ? 0 : -1}
                   aria-selected={activeTab === tab}
                   aria-controls={`notetype-panel-${tab}`}
-                  onClick={() => confirmSwitch(() => setActiveTab(tab))}
+                  onClick={() => setActiveTab(tab)}
                   onKeyDown={(e) =>
                     handleTabListKeyDown(
                       e,
                       ["fields", "templates", "styling"] as const,
                       activeTab,
-                      (next) => confirmSwitch(() => setActiveTab(next)),
+                      (next) => setActiveTab(next),
                     )
                   }
                   className={[
@@ -464,7 +522,7 @@ export function NotetypeScreen() {
                   onRenameField={(ord, name) => renameField.mutate({ ord, name })}
                   onRemoveField={(ord) => removeField.mutate(ord)}
                   onSaveFieldOptions={(ord, options) => saveFieldOptions.mutate({ ord, options })}
-                  onAddField={() => addField.mutate()}
+                  onAddField={(name, kind) => addField.mutate({ name, kind })}
                   onValidationError={reportError}
                   onRequestConfirm={({ title, description, onConfirm }) =>
                     setConfirmDialogState({
@@ -494,6 +552,12 @@ export function NotetypeScreen() {
                   tauri={tauri}
                   night={night}
                   isSaving={saveTemplate.isPending}
+                  noteIndex={clampedNoteIdx}
+                  noteCount={sampleNoteList.length}
+                  onPrevNote={() => setPreviewNoteIndex((i) => Math.max(0, i - 1))}
+                  onNextNote={() =>
+                    setPreviewNoteIndex((i) => Math.min(sampleNoteList.length - 1, i + 1))
+                  }
                   onSelectTemplate={(ord) => confirmSwitch(() => setSelectedTemplateOrd(ord))}
                   onAddTemplate={() => addTemplate.mutate()}
                   onRemoveTemplate={(ord) => removeTemplate.mutate(ord)}
@@ -530,6 +594,13 @@ export function NotetypeScreen() {
                   tauri={tauri}
                   night={night}
                   isSaving={saveCss.isPending}
+                  noteIndex={clampedNoteIdx}
+                  noteCount={sampleNoteList.length}
+                  onPrevNote={() => setPreviewNoteIndex((i) => Math.max(0, i - 1))}
+                  onNextNote={() =>
+                    setPreviewNoteIndex((i) => Math.min(sampleNoteList.length - 1, i + 1))
+                  }
+                  isImported={nt.preset === null}
                   onChangeCss={setCssDraft}
                   onSaveCss={() => saveCss.mutate({ id: nt.id, css: cssDraft })}
                 />

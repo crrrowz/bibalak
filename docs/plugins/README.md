@@ -64,11 +64,12 @@ TypeScript or several modules, bundle them into one file first (section 7).
 | `read:notes`    | `ctx.notes.search()`, `get()`, `checkMediaMissing()`: plain-text fields |
 | `ui:command`    | `ctx.registerCommand()`: an entry in the command palette (`Ctrl+K`)     |
 | `ui:panel`      | `ctx.addSidebarPanel()`: a panel built from blocks                      |
+| `ui:toast`      | `ctx.showToast()`: show brief notification toasts                       |
+| `ui:navigate`   | `ctx.navigation.openDeck()` / `openBrowse()`: jump to a deck or Browse  |
 | `events:listen` | `ctx.onEvent()`: told when a card is answered, notes change, and so on  |
 
-`ctx.showToast()` and `ctx.navigation` need no permission. A manifest that
-asks for a reserved permission (`write:cards`, `net:fetch`, `ui:review-button`,
-`ai:*`) is refused at install: those are planned for a later API.
+A manifest that asks for a reserved permission (`write:cards`, `net:fetch`,
+`ui:review-button`, `ai:*`) is refused at install: those are planned for a later API.
 
 ## 3. The code
 

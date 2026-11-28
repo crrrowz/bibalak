@@ -1,121 +1,196 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import vm from "node:vm";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PluginHost } from "./pluginHost";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { PLUGIN_CHANNEL, PluginHost } from "./pluginHost";
 
-/** Stand-in for a Web Worker: records what the host posts, lets tests fake plugin messages. */
-class FakeWorker {
-  static all: FakeWorker[] = [];
-  onmessage: ((e: MessageEvent) => void) | null = null;
-  onerror: ((e: ErrorEvent) => void) | null = null;
-  posted: unknown[] = [];
-  terminated = false;
-  constructor() {
-    FakeWorker.all.push(this);
-  }
-  postMessage(msg: unknown) {
-    this.posted.push(msg);
-  }
-  terminate() {
-    this.terminated = true;
-  }
-  /** Simulate the plugin calling raw `self.postMessage(msg)`, bypassing the bridge. */
-  emit(msg: unknown) {
-    this.onmessage?.({ data: msg } as MessageEvent);
-  }
-  /** Simulate an uncaught Worker crash. */
-  crash(message: string) {
-    this.onerror?.({ message } as ErrorEvent);
-  }
+function frameFor(pluginId: string): HTMLIFrameElement {
+  const frame = document.querySelector<HTMLIFrameElement>(`iframe[data-plugin-id="${pluginId}"]`);
+  if (!frame) throw new Error(`Missing sandbox iframe for plugin ${pluginId}`);
+  return frame;
+}
+
+function emitFromFrame(pluginId: string, msg: unknown) {
+  const frame = frameFor(pluginId);
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      data:
+        typeof msg === "object" && msg !== null
+          ? { channel: PLUGIN_CHANNEL, ...(msg as Record<string, unknown>) }
+          : msg,
+      source: frame.contentWindow,
+    }),
+  );
+}
+
+function extractBundledCode(srcdoc: string): string {
+  const match = srcdoc.match(/new Blob\(\[("(?:\\.|[^"\\])*")\]/);
+  if (!match) throw new Error("Could not extract plugin bundle from sandbox srcdoc");
+  return JSON.parse(match[1]) as string;
 }
 
 /**
  * Evaluates the real generated Worker bundle (bridge preamble + sample plugin JS)
- * inside an isolated Node `vm` context with no `window` or `document`.
+ * inside an isolated Node `vm` context with no `window` or `document`, wired to
+ * the plugin's sandbox `<iframe>` message channel.
  */
-class EvalWorker {
-  static all: EvalWorker[] = [];
-  onmessage: ((e: MessageEvent) => void) | null = null;
-  onerror: ((e: ErrorEvent) => void) | null = null;
-  terminated = false;
-  private listeners: Array<(e: MessageEvent) => void> = [];
+function attachEvalWorker(pluginId: string) {
+  const frame = frameFor(pluginId);
+  const code = extractBundledCode(frame.srcdoc);
+  const posted: unknown[] = [];
+  let terminated = false;
+  const listeners: Array<(e: MessageEvent) => void> = [];
 
-  constructor(code: string) {
-    EvalWorker.all.push(this);
-    const selfObj: Record<string, unknown> = {
-      postMessage: (msg: unknown) => {
-        this.onmessage?.({ data: msg } as MessageEvent);
-      },
-      addEventListener: (type: string, fn: (e: MessageEvent) => void) => {
-        if (type === "message") this.listeners.push(fn);
-      },
-      setInterval,
-      clearInterval,
-      console,
-      Promise,
-      Set,
-      Map,
-      String,
-      Number,
-      Array,
-      Object,
-      JSON,
-      Error,
-      Math,
-    };
-    selfObj.self = selfObj;
-    const context = vm.createContext(selfObj);
-    queueMicrotask(() => {
-      if (!this.terminated) {
-        vm.runInContext(code, context);
-      }
-    });
-  }
+  const selfObj: Record<string, unknown> = {
+    postMessage: (msg: unknown) => {
+      if (terminated) return;
+      emitFromFrame(pluginId, msg);
+    },
+    addEventListener: (type: string, fn: (e: MessageEvent) => void) => {
+      if (type === "message") listeners.push(fn);
+    },
+    setInterval,
+    clearInterval,
+    console,
+    Promise,
+    Set,
+    Map,
+    String,
+    Number,
+    Array,
+    Object,
+    JSON,
+    Error,
+    Math,
+  };
+  selfObj.self = selfObj;
+  const context = vm.createContext(selfObj);
 
-  postMessage(msg: unknown) {
-    for (const fn of this.listeners) {
-      fn({ data: msg } as MessageEvent);
+  // Intercept parent -> iframe postMessage calls on frame.contentWindow.
+  const win = frame.contentWindow as Window;
+  vi.spyOn(win, "postMessage").mockImplementation((data: unknown) => {
+    const d = data as { channel?: string; type?: string; payload?: unknown };
+    if (d?.channel !== PLUGIN_CHANNEL) return;
+    if (d.type === "host:terminate") {
+      terminated = true;
+      return;
     }
-  }
+    posted.push(d.payload);
+    for (const fn of listeners) {
+      fn({ data: d.payload } as MessageEvent);
+    }
+  });
 
-  terminate() {
-    this.terminated = true;
-  }
+  emitFromFrame(pluginId, { type: "host:ready" });
+  queueMicrotask(() => {
+    if (!terminated) {
+      vm.runInContext(code, context);
+    }
+  });
+
+  return { posted };
 }
 
-beforeEach(() => {
-  FakeWorker.all = [];
-  EvalWorker.all = [];
-  vi.stubGlobal("Worker", FakeWorker);
-  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fake");
-  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-});
+function spyFramePosts(pluginId: string): unknown[] {
+  const frame = frameFor(pluginId);
+  const posted: unknown[] = [];
+  const win = frame.contentWindow as Window;
+  vi.spyOn(win, "postMessage").mockImplementation((data: unknown) => {
+    const d = data as { channel?: string; payload?: unknown };
+    if (d?.channel === PLUGIN_CHANNEL && "payload" in d) {
+      posted.push(d.payload);
+    }
+  });
+  emitFromFrame(pluginId, { type: "host:ready" });
+  return posted;
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  document.querySelectorAll("iframe[data-plugin-id]").forEach((el) => el.remove());
 });
 
 describe("PluginHost capability enforcement", () => {
+  it("mounts plugin inside an opaque-origin sandboxed iframe without a same-origin Worker and gates toast/navigation on permissions (A4-07)", () => {
+    const WorkerSpy = vi.fn();
+    vi.stubGlobal("Worker", WorkerSpy);
+
+    const onToast = vi.fn();
+    const openDeck = vi.fn();
+    const openBrowse = vi.fn();
+
+    const host = new PluginHost();
+    host.onToast(onToast);
+    host.setNavigationHandlers({ openDeck, openBrowse });
+
+    host.load("zero-perm-plugin", [], "/* noop */");
+
+    expect(WorkerSpy).not.toHaveBeenCalled();
+    const frame = frameFor("zero-perm-plugin");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("aria-hidden")).toBe("true");
+    expect(frame.srcdoc).toContain("new Worker");
+
+    emitFromFrame("zero-perm-plugin", { type: "show:toast", message: "unpermissioned-toast" });
+    emitFromFrame("zero-perm-plugin", { type: "navigate:deck", deckId: 42 });
+    emitFromFrame("zero-perm-plugin", { type: "navigate:browse", query: "tag:secret" });
+
+    expect(onToast).not.toHaveBeenCalled();
+    expect(openDeck).not.toHaveBeenCalled();
+    expect(openBrowse).not.toHaveBeenCalled();
+
+    host.load("perm-plugin", ["ui:toast", "ui:navigate"], "/* noop */");
+    emitFromFrame("perm-plugin", { type: "show:toast", message: "allowed-toast" });
+    emitFromFrame("perm-plugin", { type: "navigate:deck", deckId: 42 });
+    emitFromFrame("perm-plugin", { type: "navigate:browse", query: "tag:ok" });
+
+    expect(onToast).toHaveBeenCalledWith({
+      pluginId: "perm-plugin",
+      message: "allowed-toast",
+    });
+    expect(openDeck).toHaveBeenCalledWith(42);
+    expect(openBrowse).toHaveBeenCalledWith("tag:ok");
+
+    host.destroyAll();
+    expect(document.querySelectorAll("iframe[data-plugin-id]")).toHaveLength(0);
+  });
+
   it("ignores a command registration from a plugin without ui:command", () => {
     const host = new PluginHost();
     host.load("p1", [], "");
-    FakeWorker.all[0].emit({ type: "register:command", id: "x", title: "X" });
+    emitFromFrame("p1", { type: "register:command", id: "x", title: "X" });
     expect(host.commands).toEqual([]);
   });
 
   it("ignores a panel registration from a plugin without ui:panel", () => {
     const host = new PluginHost();
     host.load("p1", ["ui:command"], "");
-    FakeWorker.all[0].emit({ type: "register:panel", id: "x", title: "X", blocks: [] });
+    emitFromFrame("p1", { type: "register:panel", id: "x", title: "X", blocks: [] });
     expect(host.panels).toEqual([]);
+  });
+
+  it("blocks show:toast and navigation without ui:toast / ui:navigate", () => {
+    const onToast = vi.fn();
+    const openDeck = vi.fn();
+    const openBrowse = vi.fn();
+    const host = new PluginHost({ onNavigateDeck: openDeck, onNavigateBrowse: openBrowse });
+    host.onToast(onToast);
+    host.load("p1", ["ui:panel", "ui:command"], "");
+
+    emitFromFrame("p1", { type: "show:toast", message: "blocked" });
+    emitFromFrame("p1", { type: "navigate:deck", deckId: 1 });
+    emitFromFrame("p1", { type: "navigate:browse", query: "tag:x" });
+
+    expect(onToast).not.toHaveBeenCalled();
+    expect(openDeck).not.toHaveBeenCalled();
+    expect(openBrowse).not.toHaveBeenCalled();
   });
 
   it("accepts registrations the manifest declares", () => {
     const host = new PluginHost();
     host.load("p1", ["ui:command"], "");
-    FakeWorker.all[0].emit({ type: "register:command", id: "x", title: "X" });
+    emitFromFrame("p1", { type: "register:command", id: "x", title: "X" });
     expect(host.commands).toEqual([{ pluginId: "p1", id: "x", title: "X" }]);
   });
 
@@ -123,57 +198,68 @@ describe("PluginHost capability enforcement", () => {
     const host = new PluginHost();
     host.load("quiet", [], "");
     host.load("listener", ["events:listen"], "");
+    const quietPosted = spyFramePosts("quiet");
+    const listenerPosted = spyFramePosts("listener");
     host.broadcastEvent({ type: "notes-changed" });
-    expect(FakeWorker.all[0].posted).toEqual([]);
-    expect(FakeWorker.all[1].posted).toEqual([{ type: "event", event: { type: "notes-changed" } }]);
+    expect(quietPosted).toEqual([]);
+    expect(listenerPosted).toEqual([{ type: "event", event: { type: "notes-changed" } }]);
   });
 
   it("invokes a command only in the plugin that registered it", () => {
     const host = new PluginHost();
     host.load("a", ["ui:command"], "");
     host.load("b", ["ui:command"], "");
-    FakeWorker.all[0].emit({ type: "register:command", id: "same", title: "A" });
-    FakeWorker.all[1].emit({ type: "register:command", id: "same", title: "B" });
+    const aPosted = spyFramePosts("a");
+    const bPosted = spyFramePosts("b");
+    emitFromFrame("a", { type: "register:command", id: "same", title: "A" });
+    emitFromFrame("b", { type: "register:command", id: "same", title: "B" });
     host.invokeCommand("b", "same");
-    expect(FakeWorker.all[0].posted).toEqual([]);
-    expect(FakeWorker.all[1].posted).toEqual([{ type: "invoke:command", id: "same" }]);
+    expect(aPosted).toEqual([]);
+    expect(bPosted).toEqual([{ type: "invoke:command", id: "same" }]);
     expect(host.commands.map((c) => c.pluginId)).toEqual(["a", "b"]);
   });
 
-  it("removes every command and panel of an unloaded plugin", () => {
+  it("removes every command, panel, and iframe of an unloaded plugin", () => {
     const host = new PluginHost();
     host.load("a", ["ui:command", "ui:panel"], "");
-    const w = FakeWorker.all[0];
-    w.emit({ type: "register:command", id: "one", title: "1" });
-    w.emit({ type: "register:command", id: "two", title: "2" });
-    w.emit({ type: "register:panel", id: "p", title: "P", blocks: [] });
+    emitFromFrame("a", { type: "register:command", id: "one", title: "1" });
+    emitFromFrame("a", { type: "register:command", id: "two", title: "2" });
+    emitFromFrame("a", { type: "register:panel", id: "p", title: "P", blocks: [] });
     host.unload("a");
     expect(host.commands).toEqual([]);
     expect(host.panels).toEqual([]);
+    expect(document.querySelector('iframe[data-plugin-id="a"]')).toBeNull();
   });
 
-  it("ignores malformed messages", () => {
+  it("ignores malformed messages and wrong-source messages", () => {
     const host = new PluginHost();
     host.load("a", ["ui:command"], "");
-    expect(() => FakeWorker.all[0].emit(null)).not.toThrow();
-    expect(() => FakeWorker.all[0].emit("register:command")).not.toThrow();
+    expect(() => emitFromFrame("a", null)).not.toThrow();
+    expect(() => emitFromFrame("a", "register:command")).not.toThrow();
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { channel: PLUGIN_CHANNEL, type: "register:command", id: "spoof", title: "Spoof" },
+        source: window,
+      }),
+    );
     expect(host.commands).toEqual([]);
   });
 
-  it("injects capability checks in the Worker bridge and blocks mismatched capabilities on host", async () => {
+  it("injects capability checks in the Worker bridge and blocks mismatched capabilities on host", () => {
     const host = new PluginHost();
     host.load("panel-only", ["ui:panel"], "console.log('hi');");
 
     // Host enforces manifest permissions even if plugin bypasses bridge via raw postMessage.
-    FakeWorker.all[0].emit({ type: "register:command", id: "cmd", title: "Sneaky" });
+    emitFromFrame("panel-only", { type: "register:command", id: "cmd", title: "Sneaky" });
     expect(host.commands).toEqual([]);
 
-    // Bridge preamble embeds the declared permission set and _check guard.
-    const blob = vi.mocked(URL.createObjectURL).mock.calls[0]?.[0] as Blob;
-    const text = await blob.text();
-    expect(text).toContain('var _perms = ["ui:panel"];');
-    expect(text).toContain("function _check(cap)");
-    expect(text).toContain('_check("ui:command")');
+    // Bridge preamble embeds the declared permission set and _check guard inside opaque iframe.
+    const code = extractBundledCode(frameFor("panel-only").srcdoc);
+    expect(code).toContain('var _perms = ["ui:panel"];');
+    expect(code).toContain("function _check(cap)");
+    expect(code).toContain('_check("ui:command")');
+    expect(code).toContain('_check("ui:toast")');
+    expect(code).toContain('_check("ui:navigate")');
   });
 
   it("rejects data:request when plugin lacks read:decks or read:notes and enforces rate limits", async () => {
@@ -181,19 +267,20 @@ describe("PluginHost capability enforcement", () => {
     const readNotes = vi.fn(async () => []);
     const host = new PluginHost({ readDecks, readNotes, checkMediaMissing: async () => [] });
     host.load("no-data", ["ui:panel"], "");
+    const noDataPosted = spyFramePosts("no-data");
 
-    FakeWorker.all[0].emit({ type: "data:request", reqId: "r1", op: "decks:list" });
-    FakeWorker.all[0].emit({
+    emitFromFrame("no-data", { type: "data:request", reqId: "r1", op: "decks:list" });
+    emitFromFrame("no-data", {
       type: "data:request",
       reqId: "r2",
       op: "notes:search",
       query: "",
       limit: 10,
     });
-    await vi.waitFor(() => expect(FakeWorker.all[0].posted.length).toBe(2));
+    await vi.waitFor(() => expect(noDataPosted.length).toBe(2));
     expect(readDecks).not.toHaveBeenCalled();
     expect(readNotes).not.toHaveBeenCalled();
-    expect(FakeWorker.all[0].posted[0]).toMatchObject({
+    expect(noDataPosted[0]).toMatchObject({
       type: "data:response",
       reqId: "r1",
       ok: false,
@@ -201,12 +288,12 @@ describe("PluginHost capability enforcement", () => {
 
     // Rate limit enforcement
     host.load("deck-reader", ["read:decks"], "");
-    const w = FakeWorker.all[1];
+    const readerPosted = spyFramePosts("deck-reader");
     for (let i = 0; i < 35; i++) {
-      w.emit({ type: "data:request", reqId: `r-${i}`, op: "decks:list" });
+      emitFromFrame("deck-reader", { type: "data:request", reqId: `r-${i}`, op: "decks:list" });
     }
-    await vi.waitFor(() => expect(w.posted.length).toBe(35));
-    const failed = w.posted.filter((m) => (m as { ok: boolean }).ok === false) as Array<{
+    await vi.waitFor(() => expect(readerPosted.length).toBe(35));
+    const failed = readerPosted.filter((m) => (m as { ok: boolean }).ok === false) as Array<{
       ok: boolean;
       error?: string;
     }>;
@@ -214,16 +301,18 @@ describe("PluginHost capability enforcement", () => {
     expect(failed[0]?.error).toMatch(/rate limit/i);
   });
 
-  it("isolates Worker crashes, terminates the worker, clears contributions, and records crashed status", () => {
+  it("isolates Worker crashes, removes the sandbox iframe, clears contributions, and records crashed status", () => {
     const host = new PluginHost();
     host.load("crashy", ["ui:command", "ui:panel"], "");
-    const w = FakeWorker.all[0];
-    w.emit({ type: "register:command", id: "c1", title: "C1" });
-    w.emit({ type: "register:panel", id: "p1", title: "P1", blocks: [] });
+    emitFromFrame("crashy", { type: "register:command", id: "c1", title: "C1" });
+    emitFromFrame("crashy", { type: "register:panel", id: "p1", title: "P1", blocks: [] });
 
-    w.crash("ReferenceError: boom is not defined");
+    emitFromFrame("crashy", {
+      type: "plugin:error",
+      message: "ReferenceError: boom is not defined",
+    });
 
-    expect(w.terminated).toBe(true);
+    expect(document.querySelector('iframe[data-plugin-id="crashy"]')).toBeNull();
     expect(host.commands).toEqual([]);
     expect(host.panels).toEqual([]);
     expect(host.getStatus("crashy")).toEqual({
@@ -233,31 +322,6 @@ describe("PluginHost capability enforcement", () => {
   });
 
   it("loads and executes all 4 sample plugins end-to-end inside the sandbox bridge", async () => {
-    const capturedCodes: string[] = [];
-    vi.stubGlobal(
-      "Worker",
-      class extends EvalWorker {
-        constructor() {
-          super(capturedCodes[capturedCodes.length - 1] ?? "");
-        }
-      },
-    );
-    vi.spyOn(URL, "createObjectURL").mockImplementation((blob: Blob | MediaSource) => {
-      // Read synchronously from mocked Blob in jsdom/node via internal text if available
-      void blob;
-      return "blob:eval";
-    });
-    const origBlob = globalThis.Blob;
-    vi.stubGlobal(
-      "Blob",
-      class extends origBlob {
-        constructor(parts?: BlobPart[], options?: BlobPropertyBag) {
-          super(parts, options);
-          capturedCodes.push((parts ?? []).map(String).join(""));
-        }
-      },
-    );
-
     const openDeck = vi.fn();
     const openBrowse = vi.fn();
     const host = new PluginHost({
@@ -335,6 +399,7 @@ describe("PluginHost capability enforcement", () => {
       };
       const code = readFileSync(resolve(root, manifest.entry), "utf8");
       host.load(manifest.id, manifest.permissions, code, manifest);
+      attachEvalWorker(manifest.id);
     }
 
     // Focus timer: wait for Worker boot, then card-answered increments count

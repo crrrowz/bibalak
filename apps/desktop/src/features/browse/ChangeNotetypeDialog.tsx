@@ -54,24 +54,48 @@ export function ChangeNotetypeDialog({
     enabled: open && tauri && effectiveTargetId !== null,
   });
 
-  const [fieldMap, setFieldMap] = useState<Array<number | null>>([]);
-  const [templateMap, setTemplateMap] = useState<Array<[number, number | null]>>([]);
+  const srcDetail = srcDetailQuery.data;
+  const dstDetail = dstDetailQuery.data;
+  const pairKey = srcDetail && dstDetail ? `${srcDetail.id}:${dstDetail.id}` : "";
 
-  useEffect(() => {
-    if (!srcDetailQuery.data || !dstDetailQuery.data) return;
-    const srcFields = srcDetailQuery.data.fields;
-    const dstFields = dstDetailQuery.data.fields;
-    setFieldMap(dstFields.map((_, idx) => (idx < srcFields.length ? idx : null)));
+  const [fieldMapState, setFieldMapState] = useState<{
+    key: string;
+    map: Array<number | null>;
+  } | null>(null);
+  const [templateMapState, setTemplateMapState] = useState<{
+    key: string;
+    map: Array<[number, number | null]>;
+  } | null>(null);
+  const [dropConfirmedState, setDropConfirmedState] = useState<{
+    key: string;
+    confirmed: boolean;
+  }>({ key: "", confirmed: false });
 
-    const srcTmpls = srcDetailQuery.data.templates;
-    const dstTmpls = dstDetailQuery.data.templates;
-    setTemplateMap(
-      srcTmpls.map((tmpl, idx) => [
-        Number(tmpl.ord),
-        idx < dstTmpls.length ? Number(dstTmpls[idx].ord) : null,
-      ]),
-    );
-  }, [srcDetailQuery.data, dstDetailQuery.data]);
+  const defaultFieldMap: Array<number | null> =
+    srcDetail && dstDetail
+      ? dstDetail.fields.map((_, idx) => (idx < srcDetail.fields.length ? idx : null))
+      : [];
+  const defaultTemplateMap: Array<[number, number | null]> =
+    srcDetail && dstDetail
+      ? srcDetail.templates.map((tmpl, idx) => [
+          Number(tmpl.ord),
+          idx < dstDetail.templates.length ? Number(dstDetail.templates[idx].ord) : null,
+        ])
+      : [];
+
+  const fieldMap = fieldMapState?.key === pairKey ? fieldMapState.map : defaultFieldMap;
+  const templateMap = templateMapState?.key === pairKey ? templateMapState.map : defaultTemplateMap;
+  const dropConfirmed = dropConfirmedState.key === pairKey ? dropConfirmedState.confirmed : false;
+
+  const setFieldMap = (updater: (prev: (number | null)[]) => (number | null)[]) =>
+    setFieldMapState({ key: pairKey, map: updater(fieldMap) });
+  const setTemplateMap = (
+    updater: (prev: [number, number | null][]) => [number, number | null][],
+  ) => {
+    setTemplateMapState({ key: pairKey, map: updater(templateMap) });
+  };
+  const setDropConfirmed = (confirmed: boolean) =>
+    setDropConfirmedState({ key: pairKey, confirmed });
 
   const applyMut = useMutation({
     mutationFn: () => {
@@ -89,10 +113,24 @@ export function ChangeNotetypeDialog({
   useEffect(() => {
     if (open) {
       setTargetId(null);
+      setFieldMapState(null);
+      setTemplateMapState(null);
+      setDropConfirmedState({ key: "", confirmed: false });
       applyMut.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  const isDstCloze = dstDetail ? Number(dstDetail.kind) === 1 : false;
+  const droppedTemplates =
+    srcDetail && dstDetail
+      ? srcDetail.templates.filter((st) =>
+          isDstCloze
+            ? Number(st.ord) > 0
+            : (templateMap.find(([ord]) => ord === Number(st.ord))?.[1] ?? null) === null,
+        )
+      : [];
+  const lostCardCount = droppedTemplates.length * noteIds.length;
 
   return (
     <DialogFrame open={open} title={t("browse.changeNotetype.title")} onClose={onClose}>
@@ -176,12 +214,12 @@ export function ChangeNotetypeDialog({
                   ))}
                 </div>
 
-                {Number(dstDetail.kind) === 0 && (
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      {t("browse.changeNotetype.templatesHeading")}
-                    </h3>
-                    {srcDetail.templates.map((srcTmpl, tIdx) => {
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {t("browse.changeNotetype.templatesHeading")}
+                  </h3>
+                  {Number(dstDetail.kind) === 0 ? (
+                    srcDetail.templates.map((srcTmpl, tIdx) => {
                       const currentMapped =
                         templateMap.find(([ord]) => ord === Number(srcTmpl.ord))?.[1] ?? null;
                       return (
@@ -199,6 +237,7 @@ export function ChangeNotetypeDialog({
                             value={currentMapped === null ? "" : String(currentMapped)}
                             onChange={(e) => {
                               const val = e.target.value === "" ? null : Number(e.target.value);
+                              setDropConfirmed(false);
                               setTemplateMap((prev) =>
                                 prev.map(([o, m]) =>
                                   o === Number(srcTmpl.ord) ? [o, val] : [o, m],
@@ -215,9 +254,35 @@ export function ChangeNotetypeDialog({
                           </Select>
                         </div>
                       );
-                    })}
-                  </div>
-                )}
+                    })
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {t("browse.changeNotetype.clozeNotice")}
+                    </p>
+                  )}
+
+                  {droppedTemplates.length > 0 && (
+                    <div
+                      role="alert"
+                      className="space-y-2 rounded border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive"
+                    >
+                      <p>
+                        {tn("browse.changeNotetype.dropWarning", lostCardCount, {
+                          count: lostCardCount,
+                          templates: droppedTemplates.map((d) => d.name).join(", "),
+                        })}
+                      </p>
+                      <label className="flex cursor-pointer items-center gap-2 font-medium text-foreground">
+                        <input
+                          type="checkbox"
+                          checked={dropConfirmed}
+                          onChange={(e) => setDropConfirmed(e.target.checked)}
+                        />
+                        <span>{t("browse.changeNotetype.confirmDrop")}</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
               </>
             );
           })()}
@@ -239,7 +304,8 @@ export function ChangeNotetypeDialog({
                 !srcDetailQuery.data ||
                 !dstDetailQuery.data ||
                 fieldMap.length !== dstDetailQuery.data.fields.length ||
-                templateMap.length !== srcDetailQuery.data.templates.length
+                templateMap.length !== srcDetailQuery.data.templates.length ||
+                (droppedTemplates.length > 0 && !dropConfirmed)
               }
             >
               {t("browse.changeNotetype.apply")}

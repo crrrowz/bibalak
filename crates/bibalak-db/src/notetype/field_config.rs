@@ -337,6 +337,7 @@ mod tests {
             font: "Amiri".into(),
             size: 24,
             description: "Arabic word".into(),
+            kind: None,
         };
         s.save_field_options(nt_id, 0, &opts, 2_000).unwrap();
         let detail = s.get_notetype_detail(nt_id).unwrap().unwrap();

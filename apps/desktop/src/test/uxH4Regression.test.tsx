@@ -64,8 +64,8 @@ describe("H4 UX & §B3 regression suite", () => {
     expect(header.className).not.toMatch(/(?:^|\s)h-12(?:\s|$)/);
 
     const h1 = screen.getByRole("heading", { level: 1 });
-    expect(h1.className).not.toContain("shrink-0");
-    expect(h1.className).toContain("truncate");
+    expect(h1.className).toContain("shrink-0");
+    expect(h1.className).not.toContain("truncate");
 
     const actionsContainer = screen.getByRole("button", { name: "استيراد" }).parentElement!;
     expect(actionsContainer.className).toContain("flex-wrap");

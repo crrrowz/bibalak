@@ -152,54 +152,171 @@ pub fn list_tag_counts(conn: &Connection) -> CoreResult<Vec<TagCount>> {
         .collect())
 }
 
-/// Rename `old_tag` to `new_tag` in every note's tag blob and update the
-/// registry. Returns the number of notes affected.
-pub fn rename_tag(conn: &Connection, old_tag: &str, new_tag: &str, now_ms: i64) -> CoreResult<u32> {
-    let old_needle = format!(" {old_tag} ");
-    let new_needle = format!(" {new_tag} ");
-    let n = conn
-        .execute(
-            r#"UPDATE notes SET tags = replace(tags, ?1, ?2), "mod" = ?3, usn = -1
-               WHERE instr(tags, ?1) > 0"#,
-            params![old_needle, new_needle, now_ms],
-        )
-        .map_err(err)?;
-    conn.execute("DELETE FROM tags WHERE name = ?1", [old_tag])
-        .map_err(err)?;
-    register_tags(conn, [new_tag])?;
-    Ok(n as u32)
+/// Validate a single tag token: trimmed, non-empty, no whitespace or control characters.
+pub(crate) fn validate_tag(tag: &str) -> CoreResult<&str> {
+    let clean = tag.trim();
+    if clean.is_empty() {
+        return Err(CoreError::Invalid("tag cannot be empty".into()));
+    }
+    if clean.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(CoreError::Invalid(format!(
+            "tag {clean:?} cannot contain whitespace or control characters"
+        )));
+    }
+    Ok(clean)
 }
 
-/// Remove `tag` from every note's tag blob and from the registry.
+fn rewrite_note_tag_blob(blob: &str, old_tag: &str, replacement: Option<&str>) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for tok in blob.split_whitespace() {
+        let next = if tok == old_tag {
+            match replacement {
+                Some(r) => r,
+                None => continue,
+            }
+        } else {
+            tok
+        };
+        if seen.insert(next.to_string()) {
+            out.push(next);
+        }
+    }
+    if out.is_empty() {
+        String::new()
+    } else {
+        format!(" {} ", out.join(" "))
+    }
+}
+
+/// Rename `old_tag` to `new_tag` in every note's tag blob and update the
+/// registry atomically. Returns the number of notes affected.
+pub fn rename_tag(conn: &Connection, old_tag: &str, new_tag: &str, now_ms: i64) -> CoreResult<u32> {
+    let old_clean = validate_tag(old_tag)?;
+    let new_clean = validate_tag(new_tag)?;
+    if old_clean == new_clean {
+        return Ok(0);
+    }
+    let old_needle = format!(" {old_clean} ");
+
+    conn.execute_batch("SAVEPOINT rename_tag_tx").map_err(err)?;
+    let res = (|| -> CoreResult<u32> {
+        let rows: Vec<(i64, String)> = {
+            let mut stmt = conn
+                .prepare("SELECT id, tags FROM notes WHERE instr(tags, ?1) > 0")
+                .map_err(err)?;
+            let collected = stmt
+                .query_map([&old_needle], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(err)?;
+            collected
+        };
+        let mut update_stmt = conn
+            .prepare_cached(r#"UPDATE notes SET tags = ?1, "mod" = ?2, usn = -1 WHERE id = ?3"#)
+            .map_err(err)?;
+        for (note_id, blob) in &rows {
+            let next_blob = rewrite_note_tag_blob(blob, old_clean, Some(new_clean));
+            update_stmt
+                .execute(params![next_blob, now_ms, note_id])
+                .map_err(err)?;
+        }
+        conn.execute("DELETE FROM tags WHERE name = ?1", [old_clean])
+            .map_err(err)?;
+        register_tags(conn, [new_clean])?;
+        Ok(rows.len() as u32)
+    })();
+    match res {
+        Ok(n) => {
+            conn.execute_batch("RELEASE SAVEPOINT rename_tag_tx")
+                .map_err(err)?;
+            Ok(n)
+        }
+        Err(e) => {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT rename_tag_tx; RELEASE SAVEPOINT rename_tag_tx;",
+            );
+            Err(e)
+        }
+    }
+}
+
+/// Remove `tag` from every note's tag blob and from the registry atomically.
 /// Returns the number of notes affected.
 pub fn delete_tag(conn: &Connection, tag: &str, now_ms: i64) -> CoreResult<u32> {
-    let needle = format!(" {tag} ");
-    let n = conn
-        .execute(
-            r#"UPDATE notes SET tags = replace(tags, ?1, ' '), "mod" = ?2, usn = -1
-               WHERE instr(tags, ?1) > 0"#,
-            params![needle, now_ms],
-        )
-        .map_err(err)?;
-    conn.execute("DELETE FROM tags WHERE name = ?1", [tag])
-        .map_err(err)?;
-    Ok(n as u32)
+    let clean = validate_tag(tag)?;
+    let needle = format!(" {clean} ");
+    conn.execute_batch("SAVEPOINT delete_tag_tx").map_err(err)?;
+    let res = (|| -> CoreResult<u32> {
+        let rows: Vec<(i64, String)> = {
+            let mut stmt = conn
+                .prepare("SELECT id, tags FROM notes WHERE instr(tags, ?1) > 0")
+                .map_err(err)?;
+            let collected = stmt
+                .query_map([&needle], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(err)?;
+            collected
+        };
+        let mut update_stmt = conn
+            .prepare_cached(r#"UPDATE notes SET tags = ?1, "mod" = ?2, usn = -1 WHERE id = ?3"#)
+            .map_err(err)?;
+        for (note_id, blob) in &rows {
+            let next_blob = rewrite_note_tag_blob(blob, clean, None);
+            update_stmt
+                .execute(params![next_blob, now_ms, note_id])
+                .map_err(err)?;
+        }
+        conn.execute("DELETE FROM tags WHERE name = ?1", [clean])
+            .map_err(err)?;
+        Ok(rows.len() as u32)
+    })();
+    match res {
+        Ok(n) => {
+            conn.execute_batch("RELEASE SAVEPOINT delete_tag_tx")
+                .map_err(err)?;
+            Ok(n)
+        }
+        Err(e) => {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT delete_tag_tx; RELEASE SAVEPOINT delete_tag_tx;",
+            );
+            Err(e)
+        }
+    }
 }
 
 /// Rename each `sources` tag to `target` (and dedup the `target` if already
-/// present). Idempotent if `sources` contains `target`.
+/// present) in one transaction. Idempotent if `sources` contains `target`.
 pub fn merge_tags(
     conn: &Connection,
     sources: &[String],
     target: &str,
     now_ms: i64,
 ) -> CoreResult<()> {
-    for src in sources {
-        if src != target {
-            rename_tag(conn, src, target, now_ms)?;
+    let target_clean = validate_tag(target)?;
+    conn.execute_batch("SAVEPOINT merge_tags_tx").map_err(err)?;
+    let res = (|| -> CoreResult<()> {
+        for src in sources {
+            let src_clean = validate_tag(src)?;
+            if src_clean != target_clean {
+                rename_tag(conn, src_clean, target_clean, now_ms)?;
+            }
+        }
+        Ok(())
+    })();
+    match res {
+        Ok(()) => conn
+            .execute_batch("RELEASE SAVEPOINT merge_tags_tx")
+            .map_err(err),
+        Err(e) => {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT merge_tags_tx; RELEASE SAVEPOINT merge_tags_tx;",
+            );
+            Err(e)
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -374,7 +491,8 @@ mod tests {
         );
 
         // Running Check database restores missing tags idempotently.
-        assert!(s.integrity_check(1_000).unwrap().is_empty());
+        let report = s.integrity_check(1_000).unwrap();
+        assert!(report.errors.is_empty() && report.repaired_orphan_subdecks == 0);
         assert_eq!(
             s.list_tags().unwrap(),
             vec![
@@ -506,6 +624,30 @@ mod tests {
                     },
                 ]
             );
+        }
+    }
+
+    #[test]
+    fn rename_tag_dedupes_delete_clears_space_and_validation_rejects_whitespace() {
+        let s = setup();
+        add_note_with_tags(&s, 1, " old new ");
+        add_note_with_tags(&s, 2, " solo ");
+        {
+            let conn = s.lock();
+            rename_tag(&conn, "old", "new", 2_000).unwrap();
+            let blob: String = conn
+                .query_row("SELECT tags FROM notes WHERE id = 1", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(blob, " new ");
+
+            delete_tag(&conn, "solo", 3_000).unwrap();
+            let deleted_blob: String = conn
+                .query_row("SELECT tags FROM notes WHERE id = 2", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(deleted_blob, "");
+
+            assert!(rename_tag(&conn, "new", "bad\ttag", 4_000).is_err());
+            assert!(rename_tag(&conn, "new", "   ", 4_000).is_err());
         }
     }
 }

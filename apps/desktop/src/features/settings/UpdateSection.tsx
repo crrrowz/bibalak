@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import {
+  SettingsCard,
+  SettingsSectionHeader,
+  SettingsToggleRow,
+} from "@/components/ui/settings-kit";
 import { formatDate, t } from "@/lib/i18n";
 import { errorMessage, ipc } from "@/lib/ipc";
 import { platform } from "@/lib/platform";
@@ -59,34 +64,32 @@ export function UpdateSection() {
   }
 
   return (
-    <section className="rounded-xl border border-border bg-card p-5 space-y-3">
+    <SettingsCard className="space-y-3">
       <div>
-        <h2 className="text-sm font-medium text-foreground">{t("settings.updates.title")}</h2>
-        <p className="text-xs text-muted-foreground mt-0.5">
+        <SettingsSectionHeader title={t("settings.updates.cardTitle")} />
+        <p className="text-xs text-muted-foreground mt-1">
           {t("settings.updates.current")}{" "}
-          <span className="font-mono">{appInfoQuery.data?.version ?? "…"}</span>
+          <bdi dir="ltr" className="font-mono">
+            {appInfoQuery.data?.version ?? __APP_VERSION__}
+          </bdi>
         </p>
         <p className="text-xs text-muted-foreground mt-0.5">
-          {t("settings.updates.buildStamp", {
-            sha: __BUILD_SHA__,
-            date: formatDate(new Date(__BUILD_DATE__), {
+          {t("settings.updates.buildLabel")} <bdi dir="ltr">{__BUILD_SHA__}</bdi> ·{" "}
+          <bdi>
+            {formatDate(new Date(__BUILD_DATE__), {
               dateStyle: "medium",
               timeStyle: "short",
-            }),
-          })}
+            })}
+          </bdi>
         </p>
       </div>
       {manifestUrl ? (
         <>
-          <label className="flex items-center gap-2.5 text-sm">
-            <input
-              type="checkbox"
-              checked={autoCheck}
-              onChange={(e) => setAutoCheck(e.target.checked)}
-              className="size-4 rounded border border-input accent-primary"
-            />
-            <span>{t("settings.updates.autoCheck")}</span>
-          </label>
+          <SettingsToggleRow
+            label={t("settings.updates.autoCheck")}
+            checked={autoCheck}
+            onToggle={setAutoCheck}
+          />
           <Button
             size="sm"
             variant="outline"
@@ -98,7 +101,12 @@ export function UpdateSection() {
           </Button>
         </>
       ) : (
-        <p className="text-sm text-muted-foreground">{t("settings.updates.noSite")}</p>
+        <p className="text-sm text-muted-foreground">
+          {t("settings.updates.noSiteBefore")}{" "}
+          <bdi dir="ltr" className="font-mono">
+            {"github.com/crrrowz/bibalak/releases"}
+          </bdi>
+        </p>
       )}
       {result?.kind === "up-to-date" && (
         <p className="text-sm text-green-600 dark:text-green-400" aria-live="polite">
@@ -145,6 +153,6 @@ export function UpdateSection() {
           {result.message}
         </p>
       )}
-    </section>
+    </SettingsCard>
   );
 }

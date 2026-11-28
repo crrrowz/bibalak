@@ -1,5 +1,5 @@
-import { Plus } from "lucide-react";
 import type { NotetypeSummary } from "@bibalak/ipc-types";
+import { Select } from "@/components/ui/select";
 import { t } from "@/lib/i18n";
 
 interface NotetypeSidebarProps {
@@ -22,43 +22,34 @@ export function NotetypeSidebar({
 }: NotetypeSidebarProps) {
   return (
     <aside className="flex w-64 shrink-0 flex-col border-e border-border">
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="space-y-1.5 border-b border-border px-3 py-2">
+        <span className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           {t("notetypes.title")}
         </span>
-        <div className="relative">
-          <select
-            className="absolute inset-0 size-6 cursor-pointer bg-popover text-popover-foreground opacity-0"
-            value=""
-            title={t("notetypes.add")}
-            aria-label={t("notetypes.add")}
-            onChange={(e) => {
-              const value = e.target.value;
-              if (value === "blank") {
-                onCreateBlank();
-              } else if (value) {
-                onAddStock(Number(value));
-              }
-              e.target.value = "";
-            }}
-          >
-            <option value="" disabled>
-              {t("notetypes.addMenu")}
+        <Select
+          selectSize="xs"
+          value=""
+          title={t("notetypes.add")}
+          aria-label={t("notetypes.add")}
+          onChange={(e) => {
+            const value = e.target.value;
+            if (value === "blank") {
+              onCreateBlank();
+            } else if (value) {
+              onAddStock(Number(value));
+            }
+          }}
+        >
+          <option value="" disabled>
+            {t("notetypes.addMenu")}
+          </option>
+          <option value="blank">{t("notetypes.blank")}</option>
+          {stockNames.map((name, i) => (
+            <option key={name} value={i}>
+              {name}
             </option>
-            <option value="blank">{t("notetypes.blank")}</option>
-            {stockNames.map((name, i) => (
-              <option key={name} value={i}>
-                {name}
-              </option>
-            ))}
-          </select>
-          <span
-            aria-hidden="true"
-            className="pointer-events-none inline-flex size-6 items-center justify-center rounded-md text-muted-foreground"
-          >
-            <Plus className="size-3.5" />
-          </span>
-        </div>
+          ))}
+        </Select>
       </div>
 
       <div className="flex-1 overflow-auto">

@@ -25,14 +25,14 @@ right away. In 0.2 the app stops a plugin by ending its sandbox, so
 | `ctx.manifest`                  | —               | Your `plugin.json`, read-only        |
 | `ctx.registerCommand(cmd)`      | `ui:command`    | `Disposable`                         |
 | `ctx.addSidebarPanel(panel)`    | `ui:panel`      | `SidebarPanelHandle`                 |
-| `ctx.showToast(message)`        | —               | nothing                              |
+| `ctx.showToast(message)`        | `ui:toast`      | nothing                              |
 | `ctx.onEvent(handler)`          | `events:listen` | `Disposable`                         |
 | `ctx.decks.list()`              | `read:decks`    | `Promise<PluginDeckSummary[]>`       |
 | `ctx.notes.search(q, opts?)`    | `read:notes`    | `Promise<PluginNoteSummary[]>`       |
 | `ctx.notes.get(noteId)`         | `read:notes`    | `Promise<PluginNoteSummary \| null>` |
 | `ctx.notes.checkMediaMissing()` | `read:notes`    | `Promise<string[]>`                  |
-| `ctx.navigation.openDeck(id)`   | —               | nothing                              |
-| `ctx.navigation.openBrowse(q?)` | —               | nothing                              |
+| `ctx.navigation.openDeck(id)`   | `ui:navigate`   | nothing                              |
+| `ctx.navigation.openBrowse(q?)` | `ui:navigate`   | nothing                              |
 
 Calling a member without its permission throws
 `Plugin permission denied: <permission>`. The app checks again on its side,

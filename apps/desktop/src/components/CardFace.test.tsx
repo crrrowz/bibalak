@@ -2,11 +2,13 @@ import { act, render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { CardFace } from "./CardFace";
 import {
+  MAX_FRAME_HEIGHT,
   buildFrameDocument,
   parseFrameMessage,
   prepareForFrame,
   themeVariables,
 } from "@/lib/cardFrame";
+import * as mediaModule from "@/lib/media";
 import { useSound } from "@/stores/sound";
 
 /**
@@ -158,5 +160,60 @@ describe("cardFrame message & CSS guards (ADR-004 / H1)", () => {
     expect(css).not.toContain("--evil-var");
     document.documentElement.style.removeProperty("--good-var");
     document.documentElement.style.removeProperty("--evil-var");
+  });
+
+  it("caps frame height, drops Ctrl/Meta key combos, and removes dead resolveCardMedia (A4-09)", async () => {
+    expect(MAX_FRAME_HEIGHT).toBe(16_384);
+    expect(
+      parseFrameMessage({ channel: "keepsake-card", type: "height", value: 1_000_000 }),
+    ).toEqual({
+      type: "height",
+      value: 16_384,
+    });
+    expect("resolveCardMedia" in mediaModule).toBe(false);
+
+    const { frame } = await renderFace();
+    const seenKeys: Array<{ key: string; ctrlKey: boolean; metaKey: boolean }> = [];
+    const onKeyDown = (e: KeyboardEvent) => {
+      seenKeys.push({
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+      });
+    };
+    document.addEventListener("keydown", onKeyDown);
+
+    postFromFrame(frame, { channel: "keepsake-card", type: "height", value: 1_000_000 });
+    postFromFrame(frame, {
+      channel: "keepsake-card",
+      type: "key",
+      key: "k",
+      code: "KeyK",
+      ctrlKey: true,
+      metaKey: true,
+    });
+    postFromFrame(frame, {
+      channel: "keepsake-card",
+      type: "key",
+      key: " ",
+      code: "Space",
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+    });
+    postFromFrame(frame, {
+      channel: "keepsake-card",
+      type: "key",
+      key: "a",
+      code: "KeyA",
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+    });
+
+    document.removeEventListener("keydown", onKeyDown);
+
+    expect(frame.style.height).toBe("16384px");
+    expect(seenKeys).toEqual([{ key: " ", ctrlKey: false, metaKey: false }]);
   });
 });

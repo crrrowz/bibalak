@@ -4,7 +4,7 @@ use bibalak_core::error::{CoreError, CoreResult};
 use bibalak_core::model::{Card, NoteTypeChangeSnapshot};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-use super::notes::{expected_card_ords, insert_new_card, update_note};
+use super::notes::{expected_card_ords, insert_new_card, update_note_fields_only};
 use super::{err, split_tags, FIELD_SEP};
 
 fn load_note_cards(tx: &Transaction<'_>, note_id: i64) -> CoreResult<Vec<Card>> {
@@ -138,7 +138,7 @@ pub fn change_note_type(
             params![note_id, target_notetype_id],
         )
         .map_err(err)?;
-        update_note(&tx, note_id, &new_fields, &tags, now_ms)?;
+        update_note_fields_only(&tx, note_id, &new_fields, &tags, now_ms)?;
 
         let expected_ords = expected_card_ords(&tx, target_notetype_id, dst_kind, &new_fields)?;
         let expected_set: HashSet<i64> = expected_ords.iter().copied().collect();
@@ -209,7 +209,7 @@ pub fn restore_note_type_changes(
             params![snap.note_id, snap.notetype_id],
         )
         .map_err(err)?;
-        update_note(&tx, snap.note_id, &snap.fields, &snap.tags, now_ms)?;
+        update_note_fields_only(&tx, snap.note_id, &snap.fields, &snap.tags, now_ms)?;
         tx.execute("DELETE FROM cards WHERE note_id = ?1", [snap.note_id])
             .map_err(err)?;
         for c in &snap.cards {

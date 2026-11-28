@@ -142,4 +142,19 @@ describe("YesterdaySummaryCard (R3)", () => {
       expect(dismissBtn.className).toContain("border");
     },
   );
+
+  it("A3-17: renders consistent Latin 0 numerals in Arabic zero counts instead of Eastern-Arabic '٠'", async () => {
+    vi.spyOn(ipcModule.ipc, "yesterdaySummary").mockResolvedValue({
+      ...SAMPLE_SUMMARY,
+      reviews: 0,
+      tasks_completed: 0,
+      habits_completed: 0,
+    });
+    setLocale("ar");
+    renderCard();
+
+    const card = await screen.findByTestId("yesterday-summary-card");
+    expect(card.textContent).not.toContain("٠");
+    expect(card.textContent).toContain("0");
+  });
 });

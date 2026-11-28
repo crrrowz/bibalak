@@ -7,6 +7,21 @@ import { pluginHost } from "@/lib/pluginHost";
 import { queryKeys } from "@/lib/queryKeys";
 import { invalidateTodayCounts } from "@/lib/queryRefresh";
 
+const DEFAULT_ROLLOVER_HOUR = 4;
+
+/** Compute milliseconds from `nowMs` until 1 second past the next local `rolloverHour`. */
+export function msUntilNextRollover(nowMs: number, rolloverHour: number): number {
+  const hour = Number.isFinite(rolloverHour)
+    ? Math.min(23, Math.max(0, Math.floor(rolloverHour)))
+    : DEFAULT_ROLLOVER_HOUR;
+  const next = new Date(nowMs);
+  next.setHours(hour, 0, 1, 0);
+  if (next.getTime() <= nowMs) {
+    next.setDate(next.getDate() + 1);
+  }
+  return Math.max(1_000, next.getTime() - nowMs);
+}
+
 /**
  * Subscribe to core domain events (re-emitted by the Tauri shell) and map them
  * to TanStack Query cache invalidations. This is how the UI stays live without
@@ -18,17 +33,56 @@ export function useCoreEvents() {
   useEffect(() => {
     if (!isTauri()) return;
     let cancelled = false;
+    let rolloverTimer: ReturnType<typeof setTimeout> | null = null;
+    let activeRolloverHour = DEFAULT_ROLLOVER_HOUR;
+
+    const scheduleNextRollover = () => {
+      if (cancelled) return;
+      if (rolloverTimer !== null) {
+        clearTimeout(rolloverTimer);
+      }
+      const delayMs = msUntilNextRollover(Date.now(), activeRolloverHour);
+      rolloverTimer = setTimeout(() => {
+        rolloverTimer = null;
+        if (cancelled) return;
+        void Promise.resolve(ipc.setLocalOffset(-new Date().getTimezoneOffset())).then(
+          () => {
+            if (cancelled) return;
+            void invalidateTodayCounts(queryClient);
+            void queryClient.invalidateQueries({ queryKey: queryKeys.habitsAll });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.habitHistoryAll });
+            scheduleNextRollover();
+          },
+          () => {
+            if (!cancelled) scheduleNextRollover();
+          },
+        );
+      }, delayMs);
+    };
+
     // Rust core has no OS timezone access; the day-rollover boundary is
-    // evaluated in local time using this offset, sent once per session.
+    // evaluated in local time using this offset, sent once per session and
+    // refreshed at each rollover boundary.
     // Re-invalidate day-boundary queries once set so initial startup fetches
     // never stay stuck on UTC (0).
-    void Promise.resolve(ipc.setLocalOffset(-new Date().getTimezoneOffset())).then(() => {
+    void Promise.all([
+      Promise.resolve(ipc.setLocalOffset(-new Date().getTimezoneOffset())),
+      Promise.resolve(ipc.getCollectionPrefs()).catch(() => undefined),
+    ]).then(([, prefs]) => {
       if (cancelled) return;
+      if (typeof prefs?.rollover_hour === "number") {
+        activeRolloverHour = prefs.rollover_hour;
+      }
       void invalidateTodayCounts(queryClient);
       void queryClient.invalidateQueries({ queryKey: queryKeys.habitsAll });
+      scheduleNextRollover();
     });
     return () => {
       cancelled = true;
+      if (rolloverTimer !== null) {
+        clearTimeout(rolloverTimer);
+        rolloverTimer = null;
+      }
     };
   }, [queryClient]);
 
@@ -123,6 +177,8 @@ export function useCoreEvents() {
         payload === "schema-changed"
       ) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.gameState });
+      }
+      if (payload === "game-changed" || payload === "schema-changed") {
         void queryClient.invalidateQueries({ queryKey: queryKeys.customRewards });
         void queryClient.invalidateQueries({ queryKey: queryKeys.spendHistory });
         void queryClient.invalidateQueries({ queryKey: queryKeys.gameDepthState });

@@ -331,13 +331,12 @@ fn integrity_check_on_large_collection_passes_and_repairs_orphan_subdecks() {
     }
 
     let report = storage.integrity_check(T0 + 20_000).unwrap();
-    assert_eq!(
-        report.len(),
-        1,
-        "expected only orphan repair message: {report:?}"
-    );
     assert!(
-        report[0].contains("Repaired 1 orphan subdeck(s)"),
+        report.errors.is_empty(),
+        "expected no SQLite errors: {report:?}"
+    );
+    assert_eq!(
+        report.repaired_orphan_subdecks, 1,
         "unexpected integrity report: {report:?}"
     );
 
@@ -359,7 +358,7 @@ fn integrity_check_on_large_collection_passes_and_repairs_orphan_subdecks() {
 
     let second = storage.integrity_check(T0 + 30_000).unwrap();
     assert!(
-        second.is_empty(),
+        second.errors.is_empty() && second.repaired_orphan_subdecks == 0,
         "second integrity_check should be clean: {second:?}"
     );
 }

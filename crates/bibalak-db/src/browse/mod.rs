@@ -13,8 +13,8 @@ pub use change_type::{change_note_type, restore_note_type_changes};
 pub use duplicates::find_duplicates;
 pub use find_replace::{find_replace_notes, preview_find_replace};
 pub use notes::{
-    add_note_with_cards, add_notes_batch, apply_quality_fixes, find_duplicate_note, generate_guid,
-    restore_notes, update_note,
+    add_note_with_cards, add_notes_batch, apply_quality_fixes, delete_empty_cards,
+    find_duplicate_note, find_empty_cards, generate_guid, restore_notes, update_note,
 };
 pub use read::{
     fields_for_notetype, index_rows, index_rows_for_notes, list_notes, list_notetypes,

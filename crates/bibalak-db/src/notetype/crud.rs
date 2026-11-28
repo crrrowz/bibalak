@@ -302,10 +302,26 @@ pub fn rename_notetype(
     name: &str,
     now_ms: i64,
 ) -> CoreResult<()> {
+    let clean = name.trim();
+    if clean.is_empty() {
+        return Err(CoreError::Invalid("note type name cannot be empty".into()));
+    }
+    let conflict: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM notetypes WHERE lower(name) = lower(?1) AND id != ?2)",
+            params![clean, notetype_id],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    if conflict {
+        return Err(CoreError::Invalid(format!(
+            "a note type named {clean:?} already exists"
+        )));
+    }
     let affected = conn
         .execute(
             r#"UPDATE notetypes SET name = ?1, "mod" = ?2, usn = -1 WHERE id = ?3"#,
-            params![name, now_ms, notetype_id],
+            params![clean, now_ms, notetype_id],
         )
         .map_err(err)?;
     if affected == 0 {
@@ -462,6 +478,7 @@ mod tests {
             font: "Amiri".into(),
             size: 22,
             description: "Word".into(),
+            kind: None,
         };
         s.save_field_options(orig_id, 0, &opts, 1_200).unwrap();
         s.set_sort_field(orig_id, 1, 1_300).unwrap();
@@ -630,5 +647,15 @@ mod tests {
         // Standard note type named "Image Occlusion" (or kind != 1) must not be flagged.
         let fake_io = col.create_notetype("Image Occlusion Fake", 0).unwrap();
         assert_eq!(fake_io.is_image_occlusion, None);
+    }
+
+    #[test]
+    fn rename_notetype_rejects_case_insensitive_duplicate_and_empty() {
+        let Setup { s, .. } = setup();
+        let second = s.create_notetype("Second", 0, 1_000).unwrap();
+        assert!(s.rename_notetype(second, "basic", 2_000).is_err());
+        assert!(s.rename_notetype(second, "   ", 2_000).is_err());
+        // Renaming to its own name (changing case) is permitted.
+        s.rename_notetype(second, "second", 2_000).unwrap();
     }
 }

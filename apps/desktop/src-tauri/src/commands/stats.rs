@@ -1,6 +1,6 @@
 //! Statistics command.
 
-use bibalak_core::ipc::{IpcError, IpcErrorKind, StatsDto};
+use bibalak_core::ipc::{DeckAlgorithmDto, DueForecastDto, IpcError, IpcErrorKind, StatsDto};
 use bibalak_core::Collection;
 use tauri::AppHandle;
 
@@ -35,6 +35,34 @@ pub async fn get_stats(
 ) -> Result<StatsDto, IpcError> {
     with_collection(app, move |collection| {
         load_stats(collection, deck_id, days, tz_offset_minutes)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn due_forecast(
+    app: AppHandle,
+    days: Option<u32>,
+    tz_offset_minutes: i32,
+) -> Result<DueForecastDto, IpcError> {
+    if !(-1440..=1440).contains(&tz_offset_minutes) {
+        return Err(IpcError {
+            kind: IpcErrorKind::Invalid,
+            message: format!("tz_offset_minutes {tz_offset_minutes} out of range -1440..=1440"),
+        });
+    }
+    with_collection(app, move |collection| {
+        collection
+            .due_forecast(days, tz_offset_minutes)
+            .map_err(IpcError::from)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_deck_algorithms(app: AppHandle) -> Result<Vec<DeckAlgorithmDto>, IpcError> {
+    with_collection(app, |collection| {
+        collection.list_deck_algorithms().map_err(IpcError::from)
     })
     .await
 }

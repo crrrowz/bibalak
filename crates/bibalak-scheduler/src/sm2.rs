@@ -65,13 +65,15 @@ fn learning(
     };
 
     let graduate_interval = |r: Rating| -> u32 {
-        if is_relearn {
+        let max_ivl = cfg.maximum_interval_days.max(1);
+        let ivl = if is_relearn {
             state.interval_days.max(cfg.minimum_interval_days)
         } else if r == Rating::Easy {
             cfg.easy_interval_days
         } else {
             cfg.graduating_interval_days
-        }
+        };
+        ivl.min(max_ivl)
     };
 
     match step_action(state, rating, steps) {
@@ -164,6 +166,7 @@ fn review_outcome(
     days: u32,
     ease_milli: u32,
 ) -> AnswerOutcome {
+    let days = days.min(ctx.config.maximum_interval_days.max(1));
     AnswerOutcome {
         next: CardState {
             phase: CardPhase::Review,

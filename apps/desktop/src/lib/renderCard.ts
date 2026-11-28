@@ -30,11 +30,13 @@ export interface PreparedCard {
 }
 
 const SOUND_RE = /\[sound:([^\]]+)\]/g;
+const VIDEO_EXT_RE = /\.(mp4|webm|ogv|mov|m4v)(?:[?#].*)?$/i;
 
 /**
  * Prepare raw card HTML for display:
- *  - extract `[sound:...]` markers and `.keepsake-tts` spans into one ordered queue
- *  - rewrite relative image src URLs (Tauri only)
+ *  - render `[sound:*.mp4|webm|...]` markers inline as `<video controls>`
+ *  - extract audio `[sound:...]` markers and `.keepsake-tts` spans into one ordered queue
+ *  - rewrite relative image/video src URLs (Tauri only)
  */
 export function prepareCard(html: string, tauri: boolean): PreparedCard {
   const doc = new DOMParser().parseFromString(html, "text/html");
@@ -48,7 +50,9 @@ export function prepareCard(html: string, tauri: boolean): PreparedCard {
       const text = node.textContent ?? "";
       if (text.includes("[sound:")) {
         for (const m of text.matchAll(SOUND_RE)) {
-          queue.push({ kind: "file", name: m[1] });
+          if (!VIDEO_EXT_RE.test(m[1])) {
+            queue.push({ kind: "file", name: m[1] });
+          }
         }
         textNodesWithSounds.push(node as Text);
       }
@@ -72,14 +76,36 @@ export function prepareCard(html: string, tauri: boolean): PreparedCard {
     }
   }
   for (const textNode of textNodesWithSounds) {
-    textNode.textContent = (textNode.textContent ?? "").replace(SOUND_RE, "");
+    const text = textNode.textContent ?? "";
+    const frag = doc.createDocumentFragment();
+    let lastIndex = 0;
+    for (const m of text.matchAll(SOUND_RE)) {
+      const start = m.index ?? 0;
+      if (start > lastIndex) {
+        frag.appendChild(doc.createTextNode(text.slice(lastIndex, start)));
+      }
+      const filename = m[1];
+      if (VIDEO_EXT_RE.test(filename)) {
+        const video = doc.createElement("video");
+        video.setAttribute("controls", "");
+        video.setAttribute("playsinline", "");
+        video.setAttribute("preload", "metadata");
+        video.setAttribute("src", tauri ? mediaUrl(filename) : filename);
+        frag.appendChild(video);
+      }
+      lastIndex = start + m[0].length;
+    }
+    if (lastIndex < text.length) {
+      frag.appendChild(doc.createTextNode(text.slice(lastIndex)));
+    }
+    textNode.replaceWith(frag);
   }
 
   if (tauri) {
-    doc.querySelectorAll("img").forEach((img) => {
-      const src = img.getAttribute("src") ?? "";
+    doc.querySelectorAll("img, video, source").forEach((el) => {
+      const src = el.getAttribute("src") ?? "";
       if (src && !/^(data:|https?:|bibalak-media:)/i.test(src)) {
-        img.setAttribute("src", mediaUrl(src));
+        el.setAttribute("src", mediaUrl(src));
       }
     });
   }

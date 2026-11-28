@@ -24,7 +24,8 @@
   box-sizing: border-box;
 }
 
-.card img {
+.card img,
+.card video {
   display: block;
   max-width: 100%;
   height: auto;

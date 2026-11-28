@@ -3,7 +3,7 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GameStateDto, ProgressSummaryDto } from "@bibalak/ipc-types";
-import { CelebrationHost } from "./CelebrationHost";
+import { CelebrationHost, GOAL_CELEBRATED_DAY_KEY } from "./CelebrationHost";
 import { Toaster } from "@/components/ui/toast";
 import { NotificationToastHost } from "@/features/notifications/NotificationToastHost";
 import {
@@ -296,5 +296,73 @@ describe("CelebrationHost (14d / 16h)", () => {
     expect(defaultBanner).toHaveAttribute("data-style", "default");
     expect(defaultBanner).toHaveAttribute("data-reduced-motion", "false");
     expect(cueSpy).not.toHaveBeenCalled();
+  });
+
+  it("A3-12: higher seenDay from an earlier collection does not suppress goal celebration on day 2", async () => {
+    useStyle.getState().setStyle("game");
+    localStorage.setItem(GOAL_CELEBRATED_DAY_KEY, "50");
+    localStorage.setItem(GAME_LEVEL_SEEN_KEY, "1");
+    localStorage.setItem(GAME_RANK_SEEN_KEY, "0");
+
+    vi.spyOn(ipcModule.ipc, "progressSummary").mockResolvedValue(makeProgress({ level: 1 }));
+    vi.spyOn(styleAudio, "playStyleCue").mockImplementation(() => {});
+    const day2Motivation = {
+      daily_goal_xp: 10,
+      today_xp: 0,
+      goal_met_today: false,
+      current_streak: 0,
+      best_streak: 1,
+      studied_today: false,
+      next_milestone: 7,
+      today_day_index: 2,
+      today_date: "2026-11-28",
+      days_remaining_in_week: 3,
+      daily_quests: [],
+      weekly_quest: {
+        id: "w",
+        kind: "weekly" as const,
+        metric: "reviews" as const,
+        progress: 0,
+        target: 150,
+        completed: false,
+        reward_gold_cents: 1000,
+      },
+      monthly_badge: {
+        month_key: "2026-11",
+        completed_daily_quests: 0,
+        target_daily_quests: 20,
+        earned: false,
+        earned_at: null,
+        seen: false,
+        reward_gold_cents: 1000,
+      },
+      earned_monthly_badges: [],
+      comeback_offer: null,
+      onboarding_completed: true,
+      auto_frozen_day: null,
+    };
+
+    const motSpy = vi
+      .spyOn(ipcModule.ipc, "getMotivationState")
+      .mockResolvedValueOnce(day2Motivation)
+      .mockResolvedValueOnce({ ...day2Motivation, today_xp: 15, goal_met_today: true });
+
+    const { queryClient } = renderHost();
+    await vi.waitFor(() => {
+      expect(motSpy).toHaveBeenCalledTimes(1);
+      expect(queryClient.getQueryState(queryKeys.motivationState)?.dataUpdatedAt).toBeGreaterThan(
+        0,
+      );
+    });
+    await act(async () => {});
+
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.motivationState });
+    });
+    await vi.waitFor(() => expect(motSpy).toHaveBeenCalledTimes(2));
+
+    const banner = await screen.findByTestId("goal-reached-celebration");
+    expect(banner).toHaveAttribute("data-style", "game");
+    expect(localStorage.getItem(GOAL_CELEBRATED_DAY_KEY)).toBe("2");
   });
 });

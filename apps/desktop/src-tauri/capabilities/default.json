@@ -12,7 +12,19 @@
     "core:window:allow-unmaximize",
     "core:window:allow-close",
     "core:window:allow-is-maximized",
-    "opener:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }]
+    },
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$APPDATA" },
+        { "path": "$APPDATA/**" },
+        { "path": "$LOCALDATA" },
+        { "path": "$LOCALDATA/**" }
+      ]
+    },
     "global-shortcut:allow-is-registered",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
@@ -100,6 +112,8 @@
     "allow-preview-find-replace",
     "allow-find-replace-notes",
     "allow-find-duplicates",
+    "allow-find-empty-cards",
+    "allow-delete-empty-cards",
     "allow-change-note-type",
     "allow-list-tags",
     "allow-list-tag-counts",
@@ -208,6 +222,10 @@
     "allow-dismiss-comeback-offer",
     "allow-complete-onboarding",
     "allow-mark-monthly-badge-seen",
-    "allow-plan-reminders"
+    "allow-plan-reminders",
+    "allow-reset-deck-progress",
+    "allow-undo-history",
+    "allow-due-forecast",
+    "allow-list-deck-algorithms"
   ]
 }

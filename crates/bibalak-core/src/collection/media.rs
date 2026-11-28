@@ -37,29 +37,13 @@ impl Collection {
             )
         };
 
-        let library_count = u32::try_from(sizes.len()).unwrap_or(u32::MAX);
-        let total_bytes: u64 = sizes.iter().map(|(_, s)| *s).sum();
         let needle = search.trim().to_lowercase();
 
+        let mut scope_count = 0u32;
         let mut unused_count = 0u32;
+        let mut total_bytes: u64 = 0;
         let mut filtered: Vec<MediaLibraryItem> = Vec::new();
         for (filename, size_bytes) in sizes {
-            let whole_usage = all_counts.get(&filename).copied().unwrap_or(0);
-            if whole_usage == 0 {
-                unused_count += 1;
-            }
-
-            let usage_count = match &matched_counts {
-                Some(matched) => {
-                    let count = matched.get(&filename).copied().unwrap_or(0);
-                    if count == 0 {
-                        continue;
-                    }
-                    count
-                }
-                None => whole_usage,
-            };
-
             if !needle.is_empty() && !filename.to_lowercase().contains(&needle) {
                 continue;
             }
@@ -71,15 +55,44 @@ impl Collection {
                 }
             }
 
+            let whole_usage = all_counts.get(&filename).copied().unwrap_or(0);
+            let is_library_unused = whole_usage == 0;
+
+            let (in_scope, usage_count) = match &matched_counts {
+                Some(matched) => {
+                    let count = matched.get(&filename).copied().unwrap_or(0);
+                    if count > 0 {
+                        (true, count)
+                    } else if filter.usage == MediaUsageFilter::Unused && is_library_unused {
+                        // A2-20: "Unused" files belong to no deck/tag; when combined with a
+                        // deck/tag query, still surface library-unused items cleanly.
+                        (true, 0)
+                    } else {
+                        (false, 0)
+                    }
+                }
+                None => (true, whole_usage),
+            };
+
+            if !in_scope {
+                continue;
+            }
+
+            scope_count = scope_count.saturating_add(1);
+            if is_library_unused {
+                unused_count = unused_count.saturating_add(1);
+            }
+
             let matches_usage = match filter.usage {
                 MediaUsageFilter::All => true,
                 MediaUsageFilter::Used => usage_count > 0,
-                MediaUsageFilter::Unused => usage_count == 0,
+                MediaUsageFilter::Unused => is_library_unused,
             };
             if !matches_usage {
                 continue;
             }
 
+            total_bytes = total_bytes.saturating_add(size_bytes);
             filtered.push(MediaLibraryItem {
                 filename,
                 size_bytes,
@@ -114,7 +127,7 @@ impl Collection {
         Ok(MediaLibraryPage {
             items: filtered[start..end].to_vec(),
             total_count,
-            library_count,
+            library_count: scope_count,
             unused_count,
             total_bytes,
         })
@@ -219,7 +232,7 @@ mod tests {
             ],
         };
 
-        // 1. Query filter narrows visible items + usage_count while keeping library totals intact.
+        // 1. Query filter narrows visible items + usage_count and scoped totals (A2-20).
         let by_deck = col
             .list_media_library(
                 &store,
@@ -232,10 +245,29 @@ mod tests {
                 0,
             )
             .unwrap();
-        assert_eq!(by_deck.library_count, 4);
-        assert_eq!(by_deck.unused_count, 1);
-        assert_eq!(by_deck.total_bytes, 1_800);
+        assert_eq!(by_deck.library_count, 2);
+        assert_eq!(by_deck.unused_count, 0);
+        assert_eq!(by_deck.total_bytes, 600);
         assert_eq!(by_deck.total_count, 2);
+
+        // 1b. Query filter + Unused still returns library-unused items cleanly.
+        let by_deck_unused = col
+            .list_media_library(
+                &store,
+                "",
+                &MediaLibraryFilter {
+                    query: "deck:\"Spanish\"".into(),
+                    usage: MediaUsageFilter::Unused,
+                    ..Default::default()
+                },
+                48,
+                0,
+            )
+            .unwrap();
+        assert_eq!(by_deck_unused.total_count, 1);
+        assert_eq!(by_deck_unused.unused_count, 1);
+        assert_eq!(by_deck_unused.total_bytes, 300);
+        assert_eq!(by_deck_unused.items[0].filename, "unused.png");
         let names: Vec<_> = by_deck
             .items
             .iter()

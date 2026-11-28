@@ -169,4 +169,48 @@ describe("16j shared toolbar in Browse NoteEditorPanel & QuickAddScreen", () => 
     expect(qaBoxes[1].querySelector("strong")?.textContent).toBe("quick");
     expect(qaBoxes[0].querySelector("strong")).toBeNull();
   });
+
+  it("renders subs2srs-style pure image/audio fields visually without raw HTML or [sound:] text boxes", async () => {
+    vi.spyOn(ipc, "getNote").mockResolvedValue({
+      note_id: 99,
+      notetype_name: "subs2srs",
+      fields: [
+        {
+          name: "Audio",
+          value: "[sound:line_01.mp3]",
+          options: { direction: "auto", font: "", size: 0, description: "" },
+        },
+        {
+          name: "Snapshot",
+          value: "",
+          options: { direction: "auto", font: "", size: 0, description: "" },
+        },
+        {
+          name: "Expression",
+          value: '<img src="sub_01.png">',
+          options: { direction: "auto", font: "", size: 0, description: "" },
+        },
+      ],
+      tags: [],
+    });
+
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <NoteEditorPanel noteId={99} onSaved={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByAltText("sub_01.png")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Play line_01\.mp3/i })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Snapshot" })).toBeInTheDocument();
+    expect(
+      screen
+        .queryAllByRole("textbox")
+        .filter((el) => el.getAttribute("contenteditable") === "true"),
+    ).toHaveLength(0);
+    expect(screen.getByLabelText(/tags/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show as plain text/i })).toBeNull();
+  });
 });

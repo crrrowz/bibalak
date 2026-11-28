@@ -100,4 +100,15 @@ describe("DailyGoalSetting (16e)", () => {
     await waitFor(() => expect(setGoalSpy).toHaveBeenCalledWith(30));
     expect(await screen.findByText("15 / 30 XP")).toBeInTheDocument();
   });
+
+  it("A5-04: defaults to 10 XP (matching core DEFAULT_DAILY_GOAL_XP and Onboarding) before state loads", () => {
+    vi.spyOn(ipcModule.ipc, "getMotivationState").mockImplementation(() => new Promise(() => {}));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <DailyGoalSetting />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("radio", { name: /10 XP/ })).toHaveAttribute("aria-checked", "true");
+  });
 });

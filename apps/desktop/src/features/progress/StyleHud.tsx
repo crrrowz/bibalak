@@ -146,12 +146,12 @@ export function StyleHud({ inFocus = false }: StyleHudProps) {
 
   return (
     <header aria-label={t(skin.hud.ariaLabelKey)} className={skin.hud.containerClass}>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-2.5 gap-y-1.5 lg:flex-nowrap">
         {/* Avatar + Rank / Title · Level */}
         <a
           href={skin.hud.avatarLinkTo}
           onClick={go(skin.hud.avatarLinkTo)}
-          className="inline-flex min-w-0 items-center gap-2.5 rounded-lg pe-1 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex min-w-0 shrink-0 items-center gap-2 rounded-lg pe-1 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <motion.div
             ref={avatarReaction.stageRef}
@@ -188,7 +188,7 @@ export function StyleHud({ inFocus = false }: StyleHudProps) {
         </a>
 
         {/* XP progress bar */}
-        <div className="relative flex min-w-[160px] max-w-sm flex-1 items-center gap-2.5">
+        <div className="relative flex min-w-[110px] max-w-xs flex-1 items-center gap-2">
           <div
             role="progressbar"
             aria-label={t("progress.levelProgress")}
@@ -211,13 +211,13 @@ export function StyleHud({ inFocus = false }: StyleHudProps) {
         </div>
 
         {/* Currency, Streak & Freezes */}
-        <div className="flex flex-wrap items-center gap-2 text-xs">
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-xs lg:flex-nowrap">
           {skin.id === "game" ? (
             <a
               href={skin.hud.currencyLinkTo}
               onClick={go(skin.hud.currencyLinkTo)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1.5 py-0.5 font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 skin.hud.currencyClass,
               )}
             >
@@ -225,7 +225,7 @@ export function StyleHud({ inFocus = false }: StyleHudProps) {
               <span className="tnum">{currencyText}</span>
             </a>
           ) : (
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 font-medium text-foreground">
+            <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1.5 py-0.5 font-medium text-foreground">
               <CurrencyIcon className="size-3.5 shrink-0 text-primary" />
               <span className="tnum">{currencyText}</span>
             </span>
@@ -239,7 +239,7 @@ export function StyleHud({ inFocus = false }: StyleHudProps) {
                 earned: formatNumber(motivation.today_xp),
                 goal: formatNumber(motivation.daily_goal_xp),
               })}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-1.5 py-0.5 font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1.5 py-0.5 font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <GoalRing earned={motivation.today_xp} goal={motivation.daily_goal_xp} size={24} />
               <span className="tnum hidden sm:inline">
@@ -254,7 +254,7 @@ export function StyleHud({ inFocus = false }: StyleHudProps) {
           <a
             href="/streak"
             onClick={go("/streak")}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1.5 py-0.5 font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <StreakFlameIcon className="size-3.5 shrink-0 text-primary" />
             <span className="tnum">{streakText}</span>
@@ -264,7 +264,7 @@ export function StyleHud({ inFocus = false }: StyleHudProps) {
             <a
               href={skin.hud.freezeLinkTo}
               onClick={go(skin.hud.freezeLinkTo)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 font-medium text-[hsl(var(--game-freeze))] transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1.5 py-0.5 font-medium text-[hsl(var(--game-freeze))] transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <FrostShieldIcon className="size-3.5 shrink-0" />
               <span className="tnum">

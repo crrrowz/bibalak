@@ -13,9 +13,18 @@ import {
 } from "./chartTheme";
 import { difficultyQuery, stabilityQuery } from "./statQuery";
 import { t, formatNumber } from "@/lib/i18n";
+import type { LocaleKey } from "@/locales/en";
 import { FSRS_ALGORITHM_NAME } from "@/lib/schedulingConstants";
 
-const STABILITY_LABELS = ["<1d", "1-7d", "7-21d", "21-90d", "90-180d", "180-365d", "365d+"];
+const STABILITY_LABEL_KEYS: readonly LocaleKey[] = [
+  "stats.fsrs.bucket.lt1d",
+  "stats.fsrs.bucket.d1_7",
+  "stats.fsrs.bucket.d7_21",
+  "stats.fsrs.bucket.d21_90",
+  "stats.fsrs.bucket.d90_180",
+  "stats.fsrs.bucket.d180_365",
+  "stats.fsrs.bucket.gte365d",
+];
 
 export function FsrsPanels({
   fsrs,
@@ -54,12 +63,12 @@ export function FsrsPanels({
   }
 
   const stabilityData = fsrs.stability_buckets.map((count, i) => ({
-    label: STABILITY_LABELS[i],
+    label: STABILITY_LABEL_KEYS[i] ? t(STABILITY_LABEL_KEYS[i]) : `${i + 1}`,
     count,
     bucketIndex: i,
   }));
   const difficultyData = fsrs.difficulty_buckets.map((count, i) => ({
-    label: `${i + 1}`,
+    label: formatNumber(i + 1),
     count,
     bucketIndex: i,
   }));

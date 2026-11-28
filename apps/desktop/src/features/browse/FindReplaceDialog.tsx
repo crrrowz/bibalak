@@ -10,11 +10,13 @@ import { DialogFrame } from "./DialogFrame";
 export function FindReplaceDialog({
   open,
   noteIds,
+  notetypeNames,
   onClose,
   onDone,
 }: {
   open: boolean;
   noteIds: number[];
+  notetypeNames?: string[];
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -24,6 +26,7 @@ export function FindReplaceDialog({
   const [replace, setReplace] = useState("");
   const [useRegex, setUseRegex] = useState(false);
   const [caseSensitive, setCaseSensitive] = useState(false);
+  const [includeHtml, setIncludeHtml] = useState(false);
 
   const notetypesQuery = useQuery({
     queryKey: queryKeys.notetypesAll,
@@ -31,7 +34,28 @@ export function FindReplaceDialog({
     enabled: open && tauri,
   });
 
-  const availableFields = [...new Set((notetypesQuery.data ?? []).flatMap((nt) => nt.field_names))];
+  const hasExplicitTypes = Boolean(notetypeNames && notetypeNames.length > 0);
+  const noteTypesFromNotesQuery = useQuery({
+    queryKey: queryKeys.noteNotetypesForIds(noteIds),
+    queryFn: async () => {
+      if (typeof ipc.getNote !== "function") return [];
+      const uniqueIds = [...new Set(noteIds)].slice(0, 100);
+      const details = await Promise.all(uniqueIds.map((id) => ipc.getNote(id).catch(() => null)));
+      return [...new Set(details.flatMap((n) => (n ? [n.notetype_name] : [])))];
+    },
+    enabled: open && tauri && noteIds.length > 0 && !hasExplicitTypes,
+  });
+
+  const activeTypeNames = new Set(
+    hasExplicitTypes ? notetypeNames : (noteTypesFromNotesQuery.data ?? []),
+  );
+  const availableFields = [
+    ...new Set(
+      (notetypesQuery.data ?? [])
+        .filter((nt) => activeTypeNames.has(nt.name))
+        .flatMap((nt) => nt.field_names),
+    ),
+  ];
 
   const previewMut = useMutation({
     mutationFn: () =>
@@ -41,6 +65,8 @@ export function FindReplaceDialog({
         find,
         useRegex,
         caseSensitive,
+        replace,
+        includeHtml,
       ),
   });
 
@@ -53,6 +79,7 @@ export function FindReplaceDialog({
         replace,
         useRegex,
         caseSensitive,
+        includeHtml,
       ),
     onSuccess: () => {
       onDone();
@@ -67,6 +94,7 @@ export function FindReplaceDialog({
       setReplace("");
       setUseRegex(false);
       setCaseSensitive(false);
+      setIncludeHtml(false);
       previewMut.reset();
       applyMut.reset();
     }
@@ -166,15 +194,40 @@ export function FindReplaceDialog({
             />
             <span>{t("browse.findReplace.caseSensitive")}</span>
           </label>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={includeHtml}
+              onChange={(e) => {
+                setIncludeHtml(e.target.checked);
+                previewMut.reset();
+              }}
+            />
+            <span>{t("browse.findReplace.includeHtml")}</span>
+          </label>
         </div>
 
         {previewMut.isSuccess && previewMut.data && (
-          <p className="rounded-md bg-secondary/60 px-3 py-2 text-xs text-foreground">
-            {t("browse.findReplace.previewResult", {
-              occurrences: previewMut.data.occurrences,
-              notes: previewMut.data.notes_matched,
-            })}
-          </p>
+          <div className="space-y-1.5 rounded-md bg-secondary/60 px-3 py-2 text-xs text-foreground">
+            <p>
+              {t("browse.findReplace.previewResult", {
+                occurrences: previewMut.data.occurrences,
+                notes: previewMut.data.notes_matched,
+              })}
+            </p>
+            {previewMut.data.sample_before !== null && previewMut.data.sample_after !== null && (
+              <div className="space-y-1 border-t border-border/60 pt-1.5 font-mono text-[11px]">
+                <div className="truncate text-muted-foreground">
+                  <span className="font-semibold">{t("browse.findReplace.previewBefore")}: </span>
+                  {previewMut.data.sample_before}
+                </div>
+                <div className="truncate text-foreground">
+                  <span className="font-semibold">{t("browse.findReplace.previewAfter")}: </span>
+                  {previewMut.data.sample_after}
+                </div>
+              </div>
+            )}
+          </div>
         )}
         {errorMessage && <p className="text-xs text-destructive">{errorMessage}</p>}
 

@@ -269,7 +269,7 @@ pub fn set_deck_config(
     Ok(())
 }
 
-fn parse_sched_config(json: &str) -> SchedConfig {
+pub(crate) fn parse_sched_config(json: &str) -> SchedConfig {
     let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
     let algorithm = match v["algo"].as_str().unwrap_or("sm2") {
         "fsrs" => Algorithm::Fsrs,
@@ -432,6 +432,10 @@ pub fn set_last_unbury_day(conn: &Connection, day: i32, now_ms: i64) -> CoreResu
 /// drift at most `NEW_ORDER_JITTER` positions, which also breaks up sibling runs.
 const NEW_ORDER_JITTER: i64 = 5;
 
+/// Anki default learn-ahead limit (collapse time = 1200s / 20 minutes,
+/// `rslib/src/scheduler/queue/builder.rs`).
+const LEARN_AHEAD_MS: i64 = 20 * 60_000;
+
 /// The studyable cards in a deck, split into their three streams plus a single
 /// learn-ahead fallback. The application layer ([`Collection::next_card`])
 /// decides the order; this just gates each stream correctly.
@@ -529,19 +533,22 @@ pub fn study_queue(
             .map_err(err)?;
     }
 
-    // 4. Learn-ahead fallback — learning cards due before midnight, soonest
-    //    first. Shown immediately when nothing else is due so the user can
-    //    finish the day. Kept as a list (not just the soonest) so the caller
-    //    can skip a just-answered card still inside its grace period in favor
-    //    of the next-soonest one.
+    // 4. Learn-ahead fallback — learning cards due within Anki's 20-minute
+    //    collapse window (and before rollover), soonest first. Shown when
+    //    nothing else is due; kept as a list so the caller can skip a
+    //    just-answered card still inside its grace period.
+    let learn_ahead_cutoff = now_ms.saturating_add(LEARN_AHEAD_MS);
     let mut stmt = conn
         .prepare(
             "SELECT id FROM cards WHERE deck_id = ?1 AND queue NOT IN (-1,-2,-3)
-             AND type IN (1, 3) AND queue != 3 AND due > ?2 AND due < ?3 ORDER BY due",
+             AND type IN (1, 3) AND queue != 3 AND due > ?2 AND due <= ?3 AND due < ?4 ORDER BY due",
         )
         .map_err(err)?;
     let learning_ahead: Vec<i64> = stmt
-        .query_map(params![deck_id, now_ms, today_end_ms], |r| r.get(0))
+        .query_map(
+            params![deck_id, now_ms, learn_ahead_cutoff, today_end_ms],
+            |r| r.get(0),
+        )
         .map_err(err)?
         .collect::<rusqlite::Result<_>>()
         .map_err(err)?;
@@ -1091,11 +1098,93 @@ pub fn undo_answer(
     Ok(())
 }
 
+fn ledger_day_window_totals(
+    conn: &Connection,
+    user_id: &str,
+    target_day: i32,
+    window_start_ms: i64,
+    window_end_ms: i64,
+) -> CoreResult<(u64, u64, u32)> {
+    let mut xp_sum = 0_u64;
+    let mut gold_sum = 0_u64;
+    let mut tasks_rewarded = 0_u32;
+
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT source_key, xp, gold_cents
+             FROM progress_ledger
+             WHERE user_id = ?1 AND deleted_at IS NULL AND created_at >= ?2 AND created_at < ?3",
+        )
+        .map_err(err)?;
+    let mut rows = stmt
+        .query(params![user_id, window_start_ms, window_end_ms])
+        .map_err(err)?;
+    while let Some(r) = rows.next().map_err(err)? {
+        let key: String = r.get(0).map_err(err)?;
+        let xp: i64 = r.get(1).map_err(err)?;
+        let gold: i64 = r.get(2).map_err(err)?;
+        if let Some(bibalak_core::progress::ParsedSourceKey::HabitLog { day_index, .. }) =
+            bibalak_core::progress::parse_ledger_source_key(&key)
+        {
+            if day_index != target_day {
+                continue;
+            }
+        }
+        xp_sum = xp_sum.saturating_add(xp.max(0) as u64);
+        gold_sum = gold_sum.saturating_add(gold.max(0) as u64);
+        if key.starts_with("task_done:") {
+            tasks_rewarded = tasks_rewarded.saturating_add(1);
+        }
+    }
+    drop(rows);
+    drop(stmt);
+
+    // A habit completed for `target_day` may be back-logged on `target_day + 1`, putting its
+    // `created_at` outside `[window_start_ms, window_end_ms)`. Probe via `idx_habit_logs_day`.
+    let mut h_stmt = conn
+        .prepare_cached(
+            "SELECT habit_id FROM habit_logs
+             WHERE user_id = ?1 AND day_index = ?2 AND deleted_at IS NULL AND completed = 1",
+        )
+        .map_err(err)?;
+    let mut h_rows = h_stmt.query(params![user_id, target_day]).map_err(err)?;
+    let mut l_stmt = conn
+        .prepare_cached(
+            "SELECT xp, gold_cents, created_at
+             FROM progress_ledger
+             WHERE user_id = ?1 AND source_key = ?2 AND deleted_at IS NULL",
+        )
+        .map_err(err)?;
+    while let Some(hr) = h_rows.next().map_err(err)? {
+        let habit_id: String = hr.get(0).map_err(err)?;
+        let key = bibalak_core::progress::habit_source_key(&habit_id, target_day);
+        if let Some((xp, gold, created_at)) = l_stmt
+            .query_row(params![user_id, key], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
+            .optional()
+            .map_err(err)?
+        {
+            if created_at < window_start_ms || created_at >= window_end_ms {
+                xp_sum = xp_sum.saturating_add(xp.max(0) as u64);
+                gold_sum = gold_sum.saturating_add(gold.max(0) as u64);
+            }
+        }
+    }
+
+    Ok((xp_sum, gold_sum, tasks_rewarded))
+}
+
 pub fn progress_totals(
     conn: &Connection,
     user_id: &str,
     today_start_ms: i64,
     today_end_ms: i64,
+    today_day: i32,
 ) -> CoreResult<bibalak_core::progress::ProgressTotals> {
     let (total_xp, gold_cents): (i64, i64) = conn
         .query_row(
@@ -1106,23 +1195,14 @@ pub fn progress_totals(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(err)?;
-    let (today_xp, today_gold_cents, tasks_rewarded_today): (i64, i64, i64) = conn
-        .query_row(
-            "SELECT COALESCE(SUM(xp), 0),
-                    COALESCE(SUM(gold_cents), 0),
-                    COALESCE(SUM(CASE WHEN source_key LIKE 'task_done:%' THEN 1 ELSE 0 END), 0)
-             FROM progress_ledger
-             WHERE user_id = ?1 AND deleted_at IS NULL AND created_at >= ?2 AND created_at < ?3",
-            params![user_id, today_start_ms, today_end_ms],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .map_err(err)?;
+    let (today_xp, today_gold_cents, tasks_rewarded_today) =
+        ledger_day_window_totals(conn, user_id, today_day, today_start_ms, today_end_ms)?;
     Ok(bibalak_core::progress::ProgressTotals {
         total_xp: total_xp.max(0) as u64,
         gold_cents: gold_cents.max(0) as u64,
-        today_xp: today_xp.max(0) as u64,
-        today_gold_cents: today_gold_cents.max(0) as u64,
-        tasks_rewarded_today: tasks_rewarded_today.max(0) as u32,
+        today_xp,
+        today_gold_cents,
+        tasks_rewarded_today,
     })
 }
 
@@ -1214,21 +1294,19 @@ pub fn yesterday_activity(
             |r| r.get(0),
         )
         .map_err(err)?;
-    let (xp, gold_cents): (i64, i64) = conn
-        .query_row(
-            "SELECT COALESCE(SUM(xp), 0), COALESCE(SUM(gold_cents), 0)
-             FROM progress_ledger
-             WHERE user_id = ?1 AND deleted_at IS NULL AND created_at >= ?2 AND created_at < ?3",
-            params![user_id, yesterday_start_ms, yesterday_end_ms],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .map_err(err)?;
+    let (xp, gold_cents, _) = ledger_day_window_totals(
+        conn,
+        user_id,
+        yesterday_day,
+        yesterday_start_ms,
+        yesterday_end_ms,
+    )?;
     Ok(bibalak_core::progress::YesterdayActivity {
         reviews: reviews.max(0) as u32,
         tasks_completed: tasks_completed.max(0) as u32,
         habits_completed: habits_completed.max(0) as u32,
-        xp: xp.max(0) as u64,
-        gold_cents: gold_cents.max(0) as u64,
+        xp,
+        gold_cents,
     })
 }
 
@@ -1830,6 +1908,25 @@ mod tests {
         let q = storage.study_queue(1, 0, NOW, TODAY_END, 20, 200).unwrap();
         assert!(q.learning.is_empty() && q.new.is_empty() && q.review.is_empty());
         assert!(q.learning_ahead.is_empty());
+    }
+
+    #[test]
+    fn learning_card_beyond_20_minutes_not_in_learn_ahead() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        storage.ensure_collection(NOW).unwrap();
+        storage
+            .import(
+                &model_with_cards(vec![
+                    card(1, 1, 1, NOW + 20 * MIN_MS),   // inside 20-min learn-ahead
+                    card(2, 1, 1, NOW + 21 * MIN_MS),   // beyond 20-min learn-ahead
+                    card(3, 1, 1, NOW + 3 * 3_600_000), // 3 hours later today
+                ]),
+                NOW,
+            )
+            .unwrap();
+
+        let q = storage.study_queue(1, 0, NOW, TODAY_END, 20, 200).unwrap();
+        assert_eq!(q.learning_ahead, vec![1]);
     }
 
     // ── Performance regression guards ─────────────────────────────────────────
@@ -3107,5 +3204,64 @@ mod tests {
         let created = col.create_deck("Japanese").unwrap();
         let created_cfg = col.get_deck_config(created.id).unwrap();
         assert_eq!(created_cfg.algorithm, bibalak_core::model::Algorithm::Fsrs);
+    }
+
+    #[test]
+    fn apply_answer_atomic_rolls_back_answer_if_leech_note_missing() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        storage.ensure_collection(NOW).unwrap();
+        storage
+            .import(&model_with_cards(vec![card(1, 0, 0, 0)]), NOW)
+            .unwrap();
+
+        let next = CardState {
+            phase: CardPhase::Relearning,
+            steps_remaining: 1,
+            interval_days: 1,
+            ease_milli: 2300,
+            reps: 1,
+            lapses: 1,
+            stability: None,
+            difficulty: None,
+            last_review_day: Some(0),
+        };
+        let log = bibalak_core::model::Revlog {
+            id: NOW,
+            card_id: 1,
+            usn: -1,
+            ease: 1,
+            interval: 1,
+            last_interval: 0,
+            ease_factor: 2300,
+            taken_ms: 400,
+            review_kind: 1,
+        };
+        let ctx = bibalak_core::game_depth::GameEvalContext {
+            user_id: bibalak_core::progress::NIL_USER_ID.to_string(),
+            today: 0,
+            awarded_day: 0,
+            now_ms: NOW,
+            tz_offset_minutes: 0,
+            rollover_hour: 4,
+            created_ms: NOW,
+            card_is_mature: false,
+        };
+
+        // Missing note_id=999_999 with is_leech=true must fail and roll back card + revlog.
+        let res =
+            storage.apply_answer_atomic(1, 999_999, &next, NOW + 60_000, &log, None, true, &ctx);
+        assert!(res.is_err());
+
+        let conn = storage.lock();
+        let revlog_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM revlog WHERE card_id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(revlog_count, 0);
+        let card_type: i64 = conn
+            .query_row("SELECT type FROM cards WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(card_type, 0);
     }
 }

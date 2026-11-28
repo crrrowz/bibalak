@@ -90,6 +90,38 @@ fn partial_sibling_path(dest_path: &Path) -> PathBuf {
     ))
 }
 
+fn is_precompressed_media(name: &str) -> bool {
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "jpg"
+            | "jpeg"
+            | "png"
+            | "gif"
+            | "webp"
+            | "avif"
+            | "mp3"
+            | "ogg"
+            | "oga"
+            | "opus"
+            | "aac"
+            | "m4a"
+            | "flac"
+            | "weba"
+            | "mp4"
+            | "m4v"
+            | "webm"
+            | "mkv"
+            | "mov"
+            | "avi"
+            | "ogv"
+            | "woff2"
+            | "zip"
+            | "gz"
+            | "zst"
+    )
+}
+
 fn check_cancelled(cancel: &AtomicBool) -> CoreResult<()> {
     if cancel.load(Ordering::Relaxed) {
         Err(CoreError::Cancelled)
@@ -226,11 +258,14 @@ fn write_apkg_with_opener(
     let file = std::fs::File::create(&temp_path).map_err(fmt)?;
     let buf_writer = BufWriter::with_capacity(ZIP_BUF_BYTES, file);
     let mut zip = zip::ZipWriter::new(buf_writer);
-    let opts =
+    let deflate_opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let stored_opts =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
-    // Stream collection.anki2
-    zip.start_file("collection.anki2", opts).map_err(fmt)?;
+    // Stream collection.anki2 (Deflated)
+    zip.start_file("collection.anki2", deflate_opts)
+        .map_err(fmt)?;
     {
         let db_file = std::fs::File::open(&db_path).map_err(fmt)?;
         let mut reader = BufReader::with_capacity(ZIP_BUF_BYTES, db_file);
@@ -262,7 +297,12 @@ fn write_apkg_with_opener(
         check_cancelled(cancel)?;
         let mut reader = open_media(filename)?;
         let entry = i.to_string();
-        zip.start_file(&entry, opts).map_err(fmt)?;
+        let media_opts = if is_precompressed_media(filename) {
+            stored_opts
+        } else {
+            deflate_opts
+        };
+        zip.start_file(&entry, media_opts).map_err(fmt)?;
         loop {
             check_cancelled(cancel)?;
             let n = reader.read(&mut chunk).map_err(fmt)?;
@@ -306,7 +346,7 @@ fn write_apkg_with_opener(
         bytes_total,
     });
 
-    zip.start_file("media", opts).map_err(fmt)?;
+    zip.start_file("media", deflate_opts).map_err(fmt)?;
     zip.write_all(
         serde_json::to_string(&Value::Object(index))
             .map_err(fmt)?
@@ -382,7 +422,7 @@ fn build_sqlite_to_file(
     )?;
     insert_cards(
         &conn,
-        &model.cards,
+        model,
         notes_total,
         cards_total,
         media_total,
@@ -559,14 +599,20 @@ fn build_models_json(model: &CanonicalModel) -> String {
 
 fn notetype_to_v11(nt: &Notetype, fields: Vec<Value>, tmpls: Vec<Value>) -> Value {
     // Try to extract css and sortf from config_json; default to empty / 0.
+    // Never export internal `keepsakePreset` metadata.
     let parsed = serde_json::from_str::<Value>(&nt.config_json).ok();
     let css = parsed
         .as_ref()
         .and_then(|v| v.get("css").and_then(|c| c.as_str()).map(str::to_string))
         .unwrap_or_default();
     let sortf = bibalak_core::ipc::parse_notetype_sort_field(&nt.config_json);
+    let is_io = bibalak_core::notetype_preset::is_image_occlusion_config(&nt.config_json)
+        || parsed
+            .as_ref()
+            .and_then(|v| v.get("originalStockKind").and_then(Value::as_i64))
+            == Some(6);
 
-    json!({
+    let mut obj = match json!({
         "id": nt.id,
         "name": nt.name,
         "type": nt.kind,
@@ -583,7 +629,21 @@ fn notetype_to_v11(nt: &Notetype, fields: Vec<Value>, tmpls: Vec<Value>) -> Valu
         "req": [],
         "tags": [],
         "vers": []
-    })
+    }) {
+        Value::Object(m) => m,
+        _ => unreachable!(),
+    };
+    if is_io {
+        obj.insert("originalStockKind".into(), json!(6));
+        obj.insert("kind".into(), Value::String("image-occlusion".into()));
+        if let Some(mode) = parsed
+            .as_ref()
+            .and_then(|v| v.get("occlusionMode").and_then(Value::as_str))
+        {
+            obj.insert("occlusionMode".into(), Value::String(mode.to_string()));
+        }
+    }
+    Value::Object(obj)
 }
 
 fn build_decks_json(model: &CanonicalModel) -> String {
@@ -724,10 +784,52 @@ fn to_anki_learn_due(due: i64) -> i64 {
     }
 }
 
+fn card_data_json(c: &Card, created_ms: Option<i64>, desired_retention: Option<f64>) -> String {
+    let mut map = c
+        .data
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok())
+        .and_then(|v| match v {
+            Value::Object(m) => Some(m),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    if let Some(s) = c.fsrs_stability {
+        map.insert("s".into(), json!(s));
+    }
+    if let Some(d) = c.fsrs_difficulty {
+        map.insert("d".into(), json!(d));
+    }
+    if !map.contains_key("dr") && (c.fsrs_stability.is_some() || c.fsrs_difficulty.is_some()) {
+        if let Some(dr) = desired_retention {
+            map.insert("dr".into(), json!(dr));
+        }
+    }
+    if let Some(lrt) = c.fsrs_last_review {
+        let lrt_secs = if lrt >= 100_000_000_000 {
+            Some(lrt.div_euclid(1000))
+        } else if lrt >= 1_000_000 {
+            Some(lrt)
+        } else {
+            created_ms.map(|crt| crt.div_euclid(1000) + lrt.saturating_mul(86_400))
+        };
+        if let Some(secs) = lrt_secs {
+            map.insert("lrt".into(), json!(secs));
+        }
+    }
+
+    if map.is_empty() {
+        String::new()
+    } else {
+        Value::Object(map).to_string()
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn insert_cards(
     conn: &Connection,
-    cards: &[Card],
+    model: &CanonicalModel,
     notes_total: u32,
     cards_total: u32,
     media_total: u32,
@@ -735,6 +837,21 @@ fn insert_cards(
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(ExportProgressUpdate),
 ) -> CoreResult<()> {
+    let deck_config_by_deck: std::collections::HashMap<i64, i64> =
+        model.decks.iter().map(|d| (d.id, d.config_id)).collect();
+    let dr_by_config: std::collections::HashMap<i64, f64> = model
+        .deck_configs
+        .iter()
+        .filter_map(|cfg| {
+            let v: Value = serde_json::from_str(&cfg.config_json).ok()?;
+            let dr = v
+                .pointer("/fsrs/desiredRetention")
+                .and_then(Value::as_f64)
+                .filter(|x| x.is_finite() && *x > 0.0)?;
+            Some((cfg.id, dr))
+        })
+        .collect();
+
     let mut stmt = conn
         .prepare(
             "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl,
@@ -744,7 +861,7 @@ fn insert_cards(
         )
         .map_err(fmt)?;
 
-    for (idx, c) in cards.iter().enumerate() {
+    for (idx, c) in model.cards.iter().enumerate() {
         check_cancelled(cancel)?;
         let due = if c.queue == 1 || (c.queue < 0 && (c.ctype == 1 || c.ctype == 3)) {
             to_anki_learn_due(c.due)
@@ -756,6 +873,11 @@ fn insert_cards(
         } else {
             c.original_due
         };
+        let dr = deck_config_by_deck
+            .get(&c.deck_id)
+            .and_then(|cid| dr_by_config.get(cid))
+            .copied();
+        let data_json = card_data_json(c, model.created_ms, dr);
         stmt.execute(params![
             c.id,
             c.note_id,
@@ -774,7 +896,7 @@ fn insert_cards(
             odue,
             c.original_deck_id,
             c.flags,
-            c.data.as_deref().unwrap_or(""),
+            data_json,
         ])
         .map_err(fmt)?;
         let done = (idx + 1) as u32;

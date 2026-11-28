@@ -1,7 +1,13 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, RotateCcw, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, SlidersHorizontal, X } from "lucide-react";
 import type { DeckConfig, FsrsOptimizeResult } from "@bibalak/ipc-types";
+import {
+  MaxIntervalField,
+  NumField,
+  OptionSection,
+  StepsField,
+} from "@/components/deckOptionsFields";
 import { WorkloadSimulatorChart } from "@/components/stats/WorkloadSimulatorChart";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -36,179 +42,8 @@ function writeAdvancedPreference(value: boolean) {
   }
 }
 
-function formatStepsSummary(steps: number[]): string {
-  const parts = steps.map((m) => tn("options.minuteStep", m));
-  return t("options.stepsEffect", { steps: parts.join(t("options.stepsJoinThen")) });
-}
-
-function parseStepsInput(raw: string): number[] | null {
-  const tokens = raw.trim().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return null;
-  const parsed = tokens.map((tok) => Number(tok.replace(/[mد]$/i, "")));
-  if (parsed.some((n) => !Number.isFinite(n) || n <= 0)) return null;
-  return parsed;
-}
-
-function NumField({
-  label,
-  description,
-  effect,
-  unit,
-  hint,
-  value,
-  onChange,
-  min,
-  max,
-  step,
-}: {
-  label: string;
-  description: string;
-  effect?: string;
-  unit?: string;
-  hint?: string;
-  value: number;
-  onChange: (v: number) => void;
-  min?: number;
-  max?: number;
-  step?: number;
-}) {
-  const inputId = useId();
-  const [text, setText] = useState(String(value));
-
-  useEffect(() => {
-    setText(String(value));
-  }, [value]);
-
-  return (
-    <div className="flex flex-col gap-1.5 py-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <label
-          htmlFor={inputId}
-          className="flex flex-wrap items-baseline gap-1.5 text-sm font-medium text-foreground"
-        >
-          <span>{label}</span>
-          {hint && <span className="tnum text-xs font-medium text-primary">{hint}</span>}
-        </label>
-        <p className="text-xs text-muted-foreground">{description}</p>
-        {effect && <p className="text-xs font-medium text-primary/90 tabular-nums">{effect}</p>}
-      </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <input
-          id={inputId}
-          type="number"
-          min={min}
-          max={max}
-          step={step ?? 1}
-          value={text}
-          onChange={(e) => {
-            const raw = e.target.value;
-            setText(raw);
-            if (raw !== "" && !Number.isNaN(Number(raw))) {
-              onChange(Number(raw));
-            }
-          }}
-          onBlur={() => {
-            if (text === "" || Number.isNaN(Number(text))) {
-              setText(String(value));
-            }
-          }}
-          className="h-8 w-24 rounded-md border border-input bg-background px-2 text-sm tabular-nums outline-none focus:ring-1 focus:ring-ring"
-        />
-        {unit && <span className="text-xs text-muted-foreground">{unit}</span>}
-      </div>
-    </div>
-  );
-}
-
-function StepsField({
-  label,
-  description,
-  unit,
-  value,
-  onChange,
-}: {
-  label: string;
-  description: string;
-  unit: string;
-  value: number[];
-  onChange: (v: number[]) => void;
-}) {
-  const inputId = useId();
-  const formatted = value.map((m) => `${m}m`).join(" ");
-  const [text, setText] = useState(formatted);
-
-  useEffect(() => {
-    setText(value.map((m) => `${m}m`).join(" "));
-  }, [value]);
-
-  return (
-    <div className="flex flex-col gap-1.5 py-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <label htmlFor={inputId} className="block text-sm font-medium text-foreground">
-          {label}
-        </label>
-        <p className="text-xs text-muted-foreground">{description}</p>
-        <p className="text-xs font-medium text-primary/90 tabular-nums">
-          {formatStepsSummary(value)}
-        </p>
-      </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <input
-          id={inputId}
-          type="text"
-          value={text}
-          onChange={(e) => {
-            const next = e.target.value;
-            setText(next);
-            const parsed = parseStepsInput(next);
-            if (parsed) onChange(parsed);
-          }}
-          onBlur={() => {
-            const parsed = parseStepsInput(text);
-            if (parsed) {
-              onChange(parsed);
-              setText(parsed.map((m) => `${m}m`).join(" "));
-            } else {
-              setText(formatted);
-            }
-          }}
-          className="h-8 w-28 rounded-md border border-input bg-background px-2 text-sm tabular-nums outline-none focus:ring-1 focus:ring-ring"
-        />
-        <span className="text-xs text-muted-foreground">{unit}</span>
-      </div>
-    </div>
-  );
-}
-
-function OptionSection({
-  title,
-  onReset,
-  children,
-}: {
-  title: string;
-  onReset: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <section className="space-y-2 border-t border-border pt-4">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {title}
-        </h3>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onReset}
-          className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <RotateCcw className="size-3" aria-hidden="true" />
-          <span>{t("options.resetSection")}</span>
-        </Button>
-      </div>
-      <div className="divide-y divide-border/60">{children}</div>
-    </section>
-  );
+function arraysEqual(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
 interface Props {
@@ -221,9 +56,11 @@ interface Props {
 export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props) {
   const [advanced, setAdvanced] = useState<boolean>(readAdvancedPreference);
   const [fsrsParamsOpen, setFsrsParamsOpen] = useState(false);
+  const [sm2FineOpen, setSm2FineOpen] = useState(false);
   const [editingWeights, setEditingWeights] = useState(false);
   const [weightsDraft, setWeightsDraft] = useState("");
   const [weightsError, setWeightsError] = useState<string | null>(null);
+  const [invalidFields, setInvalidFields] = useState<Record<string, boolean>>({});
   const [cfg, setCfg] = useState<DeckConfig | null>(null);
   const [extraNew, setExtraNew] = useState(0);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -231,6 +68,19 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const titleId = `deck-options-title-${deckId}`;
   const retentionId = `deck-options-retention-${deckId}`;
+
+  const handleValidityChange = useCallback((key: string, valid: boolean) => {
+    setInvalidFields((prev) => {
+      if (valid) {
+        if (!prev[key]) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      if (prev[key]) return prev;
+      return { ...prev, [key]: true };
+    });
+  }, []);
 
   const optimizeMut = useMutation({
     mutationFn: () => ipc.optimizeFsrs(deckId),
@@ -337,7 +187,7 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
       .split(/[\s,]+/)
       .filter(Boolean)
       .map(Number);
-    if (parsed.length !== 21 || parsed.some((n) => !Number.isFinite(n))) {
+    if (parsed.length !== 21 || parsed.some((n) => !Number.isFinite(n) || n < -100 || n > 100)) {
       setWeightsError(t("options.weightsInvalid"));
       return;
     }
@@ -348,13 +198,18 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
 
   const sliderMin = cfg ? Math.min(0.8, Math.round(cfg.desired_retention * 100) / 100) : 0.8;
   const sliderMax = cfg ? Math.max(0.95, Math.round(cfg.desired_retention * 100) / 100) : 0.95;
+  const minIntervalError =
+    cfg && cfg.algorithm === "sm2" && cfg.minimum_interval_days > cfg.maximum_interval_days
+      ? t("options.validation.minGreaterThanMax")
+      : null;
+  const hasValidationError = Object.keys(invalidFields).length > 0 || Boolean(minIntervalError);
 
   return (
     <Dialog
       open
       onClose={onClose}
       ariaLabelledBy={titleId}
-      className="flex max-h-[90vh] w-[600px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden bg-background"
+      className="flex max-h-[90vh] w-[620px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden bg-background"
     >
       {/* Header */}
       <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
@@ -404,15 +259,18 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
               </div>
             )}
 
-            {/* Simple view: always shows the three everyday items (retention hidden under SM-2) */}
+            {/* Simple view / Daily limits */}
             <div className="divide-y divide-border/60">
               <NumField
+                fieldKey="new_per_day"
                 label={t("options.simple.newPerDay")}
                 description={t("options.simple.newPerDayDesc")}
+                when={advanced ? t("options.when.newPerDay") : undefined}
                 effect={t("options.simple.newPerDayEffect", {
                   count: formatNumber(cfg.new_per_day),
                 })}
                 unit={t("options.unit.cards")}
+                recommended={cfg.new_per_day === DECK_CONFIG_DEFAULTS.new_per_day}
                 hint={
                   extraNew > 0
                     ? t("options.extraToday", { count: formatNumber(extraNew) })
@@ -420,18 +278,23 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
                 }
                 value={cfg.new_per_day}
                 onChange={(v) => set("new_per_day", v)}
+                onValidityChange={handleValidityChange}
                 min={0}
                 max={9999}
               />
               <NumField
+                fieldKey="review_per_day"
                 label={t("options.simple.reviewsPerDay")}
                 description={t("options.simple.reviewsPerDayDesc")}
+                when={advanced ? t("options.when.reviewsPerDay") : undefined}
                 effect={t("options.simple.reviewsPerDayEffect", {
                   count: formatNumber(cfg.review_per_day),
                 })}
                 unit={t("options.unit.reviews")}
+                recommended={cfg.review_per_day === DECK_CONFIG_DEFAULTS.review_per_day}
                 value={cfg.review_per_day}
                 onChange={(v) => set("review_per_day", v)}
+                onValidityChange={handleValidityChange}
                 min={0}
                 max={9999}
               />
@@ -442,9 +305,14 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
                     <div className="min-w-0 space-y-0.5">
                       <label
                         htmlFor={retentionId}
-                        className="block text-sm font-medium text-foreground"
+                        className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground"
                       >
-                        {t("options.simple.rememberLabel")}
+                        <span>{t("options.simple.rememberLabel")}</span>
+                        {Math.round(cfg.desired_retention * 100) === 90 && (
+                          <span className="rounded bg-primary/12 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                            {t("options.algo.recommendedBadge")}
+                          </span>
+                        )}
                       </label>
                       <p className="text-xs text-muted-foreground">
                         {t("options.simple.rememberDesc")}
@@ -498,7 +366,7 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
                     set("desired_retention", DECK_CONFIG_DEFAULTS.desired_retention);
                   }}
                 >
-                  <div className="space-y-2.5 py-2">
+                  <div className="space-y-2.5 py-2.5">
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <button
                         type="button"
@@ -633,16 +501,13 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
                     )}
                   </div>
 
-                  <NumField
-                    label={t("options.maxInterval")}
-                    description={t("options.maxIntervalDesc")}
-                    effect={t("options.maxIntervalEffect", {
-                      span: tn("common.days", cfg.maximum_interval_days),
-                    })}
-                    unit={t("options.unit.days")}
+                  <MaxIntervalField
                     value={cfg.maximum_interval_days}
+                    recommended={
+                      cfg.maximum_interval_days === DECK_CONFIG_DEFAULTS.maximum_interval_days
+                    }
                     onChange={(v) => set("maximum_interval_days", v)}
-                    min={1}
+                    onValidityChange={handleValidityChange}
                   />
                 </OptionSection>
 
@@ -655,33 +520,52 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
                   }}
                 >
                   <StepsField
+                    fieldKey="learning_steps_min"
                     label={t("options.learningSteps")}
                     description={t("options.learningStepsDesc")}
-                    unit={t("options.unit.minutes")}
+                    when={t("options.when.learningSteps")}
+                    addLabel={t("options.steps.addLearning")}
+                    recommended={arraysEqual(
+                      cfg.learning_steps_min,
+                      DECK_CONFIG_DEFAULTS.learning_steps_min,
+                    )}
                     value={cfg.learning_steps_min}
                     onChange={(v) => set("learning_steps_min", v)}
+                    onValidityChange={handleValidityChange}
                   />
                   <NumField
+                    fieldKey="graduating_interval_days"
                     label={t("options.graduatingInterval")}
                     description={t("options.graduatingIntervalDesc")}
+                    when={t("options.when.graduatingInterval")}
                     effect={t("options.waitDaysEffect", {
                       span: tn("common.days", cfg.graduating_interval_days),
                     })}
                     unit={t("options.unit.days")}
+                    recommended={
+                      cfg.graduating_interval_days === DECK_CONFIG_DEFAULTS.graduating_interval_days
+                    }
                     value={cfg.graduating_interval_days}
                     onChange={(v) => set("graduating_interval_days", v)}
+                    onValidityChange={handleValidityChange}
                     min={1}
+                    max={36_500}
                   />
                   <NumField
+                    fieldKey="easy_interval_days"
                     label={t("options.easyInterval")}
                     description={t("options.easyIntervalDesc")}
+                    when={t("options.when.easyInterval")}
                     effect={t("options.waitDaysEffect", {
                       span: tn("common.days", cfg.easy_interval_days),
                     })}
                     unit={t("options.unit.days")}
+                    recommended={cfg.easy_interval_days === DECK_CONFIG_DEFAULTS.easy_interval_days}
                     value={cfg.easy_interval_days}
                     onChange={(v) => set("easy_interval_days", v)}
+                    onValidityChange={handleValidityChange}
                     min={1}
+                    max={36_500}
                   />
                 </OptionSection>
 
@@ -697,29 +581,42 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
                   }}
                 >
                   <StepsField
+                    fieldKey="relearning_steps_min"
                     label={t("options.relearningSteps")}
                     description={t("options.relearningStepsDesc")}
-                    unit={t("options.unit.minutes")}
+                    when={t("options.when.relearningSteps")}
+                    addLabel={t("options.steps.addRelearning")}
+                    recommended={arraysEqual(
+                      cfg.relearning_steps_min,
+                      DECK_CONFIG_DEFAULTS.relearning_steps_min,
+                    )}
                     value={cfg.relearning_steps_min}
                     onChange={(v) => set("relearning_steps_min", v)}
+                    onValidityChange={handleValidityChange}
                   />
                   <NumField
+                    fieldKey="leech_threshold"
                     label={t("options.leechThreshold")}
                     description={t("options.leechThresholdDesc")}
+                    when={t("options.when.leechThreshold")}
                     effect={t("options.leechThresholdEffect", {
                       count: formatNumber(cfg.leech_threshold),
                     })}
                     unit={t("options.unit.lapses")}
+                    recommended={cfg.leech_threshold === DECK_CONFIG_DEFAULTS.leech_threshold}
                     value={cfg.leech_threshold}
                     onChange={(v) => set("leech_threshold", v)}
-                    min={1}
-                    max={99}
+                    onValidityChange={handleValidityChange}
+                    min={0}
+                    max={999}
                   />
                   {cfg.algorithm === "sm2" && (
                     <>
                       <NumField
+                        fieldKey="lapse_interval_factor"
                         label={t("options.lapseIntervalPct")}
                         description={t("options.lapseIntervalDesc")}
+                        when={t("options.when.lapseInterval")}
                         effect={
                           cfg.lapse_interval_factor === 0
                             ? t("options.lapseIntervalEffectZero")
@@ -728,109 +625,137 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
                               })
                         }
                         unit={t("options.unit.percent")}
-                        value={Math.round(cfg.lapse_interval_factor * 100)}
-                        onChange={(v) =>
-                          set(
-                            "lapse_interval_factor",
-                            Math.max(0, Math.min(1, Math.round(v) / 100)),
-                          )
+                        recommended={
+                          cfg.lapse_interval_factor === DECK_CONFIG_DEFAULTS.lapse_interval_factor
                         }
+                        value={Math.round(cfg.lapse_interval_factor * 100)}
+                        onChange={(v) => set("lapse_interval_factor", v / 100)}
+                        onValidityChange={handleValidityChange}
                         min={0}
                         max={100}
-                        step={1}
                       />
                       <NumField
+                        fieldKey="minimum_interval_days"
                         label={t("options.minInterval")}
                         description={t("options.minIntervalDesc")}
+                        when={t("options.when.minInterval")}
                         effect={t("options.minIntervalEffect", {
                           span: tn("common.days", cfg.minimum_interval_days),
                         })}
                         unit={t("options.unit.days")}
+                        recommended={
+                          cfg.minimum_interval_days === DECK_CONFIG_DEFAULTS.minimum_interval_days
+                        }
+                        externalError={minIntervalError}
                         value={cfg.minimum_interval_days}
                         onChange={(v) => set("minimum_interval_days", v)}
+                        onValidityChange={handleValidityChange}
                         min={1}
+                        max={36_500}
                       />
                     </>
                   )}
                 </OptionSection>
 
                 {cfg.algorithm === "sm2" && (
-                  <OptionSection
-                    title={t("options.section.sm2Fine")}
-                    onReset={() => {
-                      set("starting_ease_milli", DECK_CONFIG_DEFAULTS.starting_ease_milli);
-                      set("easy_bonus", DECK_CONFIG_DEFAULTS.easy_bonus);
-                      set("hard_interval_factor", DECK_CONFIG_DEFAULTS.hard_interval_factor);
-                      set("interval_modifier", DECK_CONFIG_DEFAULTS.interval_modifier);
-                    }}
-                  >
-                    <NumField
-                      label={t("options.startingEasePct")}
-                      description={t("options.startingEaseDesc")}
-                      effect={t("options.startingEaseEffect", {
-                        pct: formatNumber(Math.round(cfg.starting_ease_milli / 10)),
-                      })}
-                      unit={t("options.unit.percent")}
-                      value={Math.round(cfg.starting_ease_milli / 10)}
-                      onChange={(v) =>
-                        set(
-                          "starting_ease_milli",
-                          Math.max(1300, Math.min(9999, Math.round(v * 10))),
-                        )
-                      }
-                      min={130}
-                      max={999}
-                      step={1}
-                    />
-                    <NumField
-                      label={t("options.easyBonusPct")}
-                      description={t("options.easyBonusDesc")}
-                      effect={t("options.easyBonusEffect", {
-                        pct: formatNumber(Math.round(cfg.easy_bonus * 100)),
-                      })}
-                      unit={t("options.unit.percent")}
-                      value={Math.round(cfg.easy_bonus * 100)}
-                      onChange={(v) =>
-                        set("easy_bonus", Math.max(1, Math.min(5, Math.round(v) / 100)))
-                      }
-                      min={100}
-                      max={500}
-                      step={1}
-                    />
-                    <NumField
-                      label={t("options.hardIntervalPct")}
-                      description={t("options.hardIntervalDesc")}
-                      effect={t("options.hardIntervalEffect", {
-                        pct: formatNumber(Math.round(cfg.hard_interval_factor * 100)),
-                      })}
-                      unit={t("options.unit.percent")}
-                      value={Math.round(cfg.hard_interval_factor * 100)}
-                      onChange={(v) =>
-                        set("hard_interval_factor", Math.max(0.5, Math.min(3, Math.round(v) / 100)))
-                      }
-                      min={50}
-                      max={300}
-                      step={1}
-                    />
-                    <NumField
-                      label={t("options.intervalModifierPct")}
-                      description={t("options.intervalModifierDesc")}
-                      effect={t("options.intervalModifierEffect", {
-                        pct: formatNumber(Math.round(cfg.interval_modifier * 100)),
-                      })}
-                      unit={t("options.unit.percent")}
-                      value={Math.round(cfg.interval_modifier * 100)}
-                      onChange={(v) =>
-                        set(
-                          "interval_modifier",
-                          Math.max(0.01, Math.min(9.99, Math.round(v) / 100)),
-                        )
-                      }
-                      min={1}
-                      max={999}
-                      step={1}
-                    />
-                  </OptionSection>
+                  <section className="space-y-2 border-t border-border pt-4">
+                    <button
+                      type="button"
+                      aria-expanded={sm2FineOpen}
+                      onClick={() => setSm2FineOpen((open) => !open)}
+                      className="flex w-full items-center justify-between gap-2 text-start text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+                    >
+                      <span>{t("options.section.sm2Fine")}</span>
+                      {sm2FineOpen ? (
+                        <ChevronDown className="size-4" aria-hidden="true" />
+                      ) : (
+                        <ChevronRight className="size-4 rtl:-scale-x-100" aria-hidden="true" />
+                      )}
+                    </button>
+
+                    {sm2FineOpen && (
+                      <OptionSection
+                        title={t("options.section.sm2Fine")}
+                        onReset={() => {
+                          set("starting_ease_milli", DECK_CONFIG_DEFAULTS.starting_ease_milli);
+                          set("easy_bonus", DECK_CONFIG_DEFAULTS.easy_bonus);
+                          set("hard_interval_factor", DECK_CONFIG_DEFAULTS.hard_interval_factor);
+                          set("interval_modifier", DECK_CONFIG_DEFAULTS.interval_modifier);
+                        }}
+                      >
+                        <NumField
+                          fieldKey="starting_ease_milli"
+                          label={t("options.startingEasePct")}
+                          description={t("options.startingEaseDesc")}
+                          when={t("options.when.startingEase")}
+                          effect={t("options.startingEaseEffect", {
+                            pct: formatNumber(Math.round(cfg.starting_ease_milli / 10)),
+                          })}
+                          unit={t("options.unit.percent")}
+                          recommended={
+                            cfg.starting_ease_milli === DECK_CONFIG_DEFAULTS.starting_ease_milli
+                          }
+                          value={Math.round(cfg.starting_ease_milli / 10)}
+                          onChange={(v) => set("starting_ease_milli", v * 10)}
+                          onValidityChange={handleValidityChange}
+                          min={130}
+                          max={999}
+                        />
+                        <NumField
+                          fieldKey="easy_bonus"
+                          label={t("options.easyBonusPct")}
+                          description={t("options.easyBonusDesc")}
+                          when={t("options.when.easyBonus")}
+                          effect={t("options.easyBonusEffect", {
+                            pct: formatNumber(Math.round(cfg.easy_bonus * 100)),
+                          })}
+                          unit={t("options.unit.percent")}
+                          recommended={cfg.easy_bonus === DECK_CONFIG_DEFAULTS.easy_bonus}
+                          value={Math.round(cfg.easy_bonus * 100)}
+                          onChange={(v) => set("easy_bonus", v / 100)}
+                          onValidityChange={handleValidityChange}
+                          min={100}
+                          max={500}
+                        />
+                        <NumField
+                          fieldKey="hard_interval_factor"
+                          label={t("options.hardIntervalPct")}
+                          description={t("options.hardIntervalDesc")}
+                          when={t("options.when.hardInterval")}
+                          effect={t("options.hardIntervalEffect", {
+                            pct: formatNumber(Math.round(cfg.hard_interval_factor * 100)),
+                          })}
+                          unit={t("options.unit.percent")}
+                          recommended={
+                            cfg.hard_interval_factor === DECK_CONFIG_DEFAULTS.hard_interval_factor
+                          }
+                          value={Math.round(cfg.hard_interval_factor * 100)}
+                          onChange={(v) => set("hard_interval_factor", v / 100)}
+                          onValidityChange={handleValidityChange}
+                          min={50}
+                          max={300}
+                        />
+                        <NumField
+                          fieldKey="interval_modifier"
+                          label={t("options.intervalModifierPct")}
+                          description={t("options.intervalModifierDesc")}
+                          when={t("options.when.intervalModifier")}
+                          effect={t("options.intervalModifierEffect", {
+                            pct: formatNumber(Math.round(cfg.interval_modifier * 100)),
+                          })}
+                          unit={t("options.unit.percent")}
+                          recommended={
+                            cfg.interval_modifier === DECK_CONFIG_DEFAULTS.interval_modifier
+                          }
+                          value={Math.round(cfg.interval_modifier * 100)}
+                          onChange={(v) => set("interval_modifier", v / 100)}
+                          onValidityChange={handleValidityChange}
+                          min={1}
+                          max={999}
+                        />
+                      </OptionSection>
+                    )}
+                  </section>
                 )}
 
                 {cfg.algorithm === "fsrs" && (
@@ -936,7 +861,11 @@ export function DeckOptionsDialog({ deckId, deckName, onClose, onSaved }: Props)
             <Button variant="ghost" size="sm" onClick={onClose}>
               {t("common.cancel")}
             </Button>
-            <Button size="sm" onClick={() => saveMut.mutate(cfg)} disabled={saveMut.isPending}>
+            <Button
+              size="sm"
+              onClick={() => saveMut.mutate(cfg)}
+              disabled={saveMut.isPending || hasValidationError}
+            >
               {saveMut.isPending ? t("common.saving") : t("common.save")}
             </Button>
           </div>

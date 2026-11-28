@@ -10,6 +10,7 @@ export type OptionalRouteTarget =
   | "/plan/habits"
   | "/settings"
   | "/browse"
+  | "/add"
   | "/stats"
   | "/transcript"
   | "/streak"

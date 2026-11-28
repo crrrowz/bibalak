@@ -212,14 +212,20 @@ export const mockStudyDaysScholar: StudyDay[] = [
   },
 ];
 
-const initialPreset =
-  typeof window !== "undefined"
-    ? (new URLSearchParams(window.location.search).get("progress") ??
-      (new URLSearchParams(window.location.search).get("level") === "5" ? "scholar" : null))
-    : null;
-
 function isScholarPreset(): boolean {
-  return initialPreset === "scholar";
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  const styleParam = params.get("style");
+  const progressParam = params.get("progress");
+  const levelParam = params.get("level");
+  if (styleParam === "scholar" || progressParam === "scholar" || levelParam === "5") {
+    return true;
+  }
+  try {
+    return !styleParam && localStorage.getItem("keepsake-style") === "scholar";
+  } catch {
+    return false;
+  }
 }
 
 let yesterdayDismissedDay = 0;

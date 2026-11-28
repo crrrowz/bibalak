@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use bibalak_core::{
     collection::Collection,
-    ipc::{BackupInfo, IpcError, IpcErrorKind, MediaReport},
+    ipc::{BackupInfo, IntegrityReport, IpcError, IpcErrorKind, MediaReport},
 };
 use bibalak_db::backup;
 use tauri::{AppHandle, Manager};
@@ -87,11 +87,10 @@ pub async fn list_backups(app: AppHandle) -> IpcResult<Vec<BackupInfo>> {
     .await
 }
 
-/// Restore a backup by name (zip filename).
+/// Stage a backup restore (`collection.sqlite.pending-restore`) from a zip archive.
 ///
-/// **WARNING**: Overwrites the live database file. The app must be restarted
-/// after this command returns for changes to take effect. The caller must
-/// obtain explicit user confirmation before invoking this command.
+/// Does not overwrite the live database while SQLite/WAL is open; the staged file
+/// is validated now and swapped into place before `SqliteStorage::open` on next start.
 #[tauri::command]
 pub async fn restore_backup(app: AppHandle, name: String) -> IpcResult<()> {
     run_blocking(move || {
@@ -100,25 +99,7 @@ pub async fn restore_backup(app: AppHandle, name: String) -> IpcResult<()> {
 
         let data_dir = crate::data_dir::data_dir(&app).map_err(map_io)?;
         let db_path = data_dir.join("collection.sqlite");
-
-        // Extract to a temp file first so we can validate before overwriting.
-        let tmp = data_dir.join("collection.restore.tmp");
-        backup::extract_db_from_zip(&zip_path, &tmp).map_err(IpcError::from)?;
-
-        // Validate the extracted DB.
-        {
-            let errors = backup::validate_sqlite_file(&tmp).map_err(IpcError::from)?;
-            if !errors.is_empty() {
-                let _ = std::fs::remove_file(&tmp);
-                return Err(IpcError {
-                    kind: IpcErrorKind::Format,
-                    message: format!("backup integrity check failed: {}", errors.join("; ")),
-                });
-            }
-        }
-
-        // Overwrite the live DB file. The app must restart to pick up the change.
-        std::fs::rename(&tmp, &db_path).map_err(map_io)?;
+        backup::stage_restore(&zip_path, &db_path).map_err(IpcError::from)?;
         Ok(())
     })
     .await
@@ -136,9 +117,9 @@ pub async fn delete_backup(app: AppHandle, name: String) -> IpcResult<()> {
     .await
 }
 
-/// Run `PRAGMA integrity_check`. Returns empty list when healthy.
+/// Run `PRAGMA integrity_check` and return structured error/repair counts.
 #[tauri::command]
-pub async fn check_integrity(app: AppHandle) -> IpcResult<Vec<String>> {
+pub async fn check_integrity(app: AppHandle) -> IpcResult<IntegrityReport> {
     with_collection(app, |col| col.integrity_check().map_err(IpcError::from)).await
 }
 

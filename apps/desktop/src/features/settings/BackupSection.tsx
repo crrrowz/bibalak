@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { BackupInfo } from "@bibalak/ipc-types";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
 import { errorMessage, ipc } from "@/lib/ipc";
+import { platform } from "@/lib/platform";
 import { queryKeys } from "@/lib/queryKeys";
 import { Spinner } from "./SettingsSpinner";
 import { fmt_date, fmt_size } from "./settingsUtils";
@@ -11,12 +13,15 @@ import { fmt_date, fmt_size } from "./settingsUtils";
 export function BackupSection() {
   const [backupMsg, setBackupMsg] = useState<string>("");
   const [restoreConfirm, setRestoreConfirm] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<BackupInfo | null>(null);
+  const [restorePendingRestart, setRestorePendingRestart] = useState(false);
 
   const backupsQuery = useQuery({ queryKey: queryKeys.backups, queryFn: ipc.listBackups });
 
   const backupMut = useMutation({
     mutationFn: ipc.createBackup,
     onSuccess: (info) => {
+      setRestorePendingRestart(false);
       setBackupMsg(
         t("settings.backup.created", { name: info.name, size: fmt_size(info.size_bytes) }),
       );
@@ -29,18 +34,26 @@ export function BackupSection() {
     mutationFn: (name: string) => ipc.restoreBackup(name),
     onSuccess: () => {
       setRestoreConfirm(null);
+      setRestorePendingRestart(true);
       setBackupMsg(t("settings.backup.restored"));
     },
     onError: (e) => {
       setRestoreConfirm(null);
+      setRestorePendingRestart(false);
       setBackupMsg(errorMessage(e));
     },
   });
 
   const deleteBackupMut = useMutation({
     mutationFn: (name: string) => ipc.deleteBackup(name),
-    onSuccess: () => void backupsQuery.refetch(),
-    onError: (e) => setBackupMsg(errorMessage(e)),
+    onSuccess: () => {
+      setDeleteConfirm(null);
+      void backupsQuery.refetch();
+    },
+    onError: (e) => {
+      setDeleteConfirm(null);
+      setBackupMsg(errorMessage(e));
+    },
   });
 
   const busy = backupMut.isPending || restoreMut.isPending || deleteBackupMut.isPending;
@@ -69,6 +82,18 @@ export function BackupSection() {
                   onClick={() => backupMut.mutate()}
                 >
                   {t("common.retry")}
+                </Button>
+              )}
+              {restorePendingRestart && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ms-2 h-6 px-2 text-xs"
+                  onClick={() => {
+                    void platform.updater.relaunch().catch((e) => setBackupMsg(errorMessage(e)));
+                  }}
+                >
+                  {t("settings.backup.restartNow")}
                 </Button>
               )}
             </span>
@@ -111,7 +136,7 @@ export function BackupSection() {
                     variant="ghost"
                     className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
                     disabled={busy}
-                    onClick={() => deleteBackupMut.mutate(b.name)}
+                    onClick={() => setDeleteConfirm(b)}
                   >
                     {t("common.delete")}
                   </Button>
@@ -146,6 +171,22 @@ export function BackupSection() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={deleteConfirm !== null}
+        title={t("settings.backup.deleteConfirmTitle", { name: deleteConfirm?.name ?? "" })}
+        description={t("settings.backup.deleteConfirmBody", {
+          name: deleteConfirm?.name ?? "",
+          date: deleteConfirm ? fmt_date(deleteConfirm.created_ms) : "",
+        })}
+        confirmLabel={t("common.delete")}
+        variant="destructive"
+        isPending={deleteBackupMut.isPending}
+        onConfirm={() => {
+          if (deleteConfirm) deleteBackupMut.mutate(deleteConfirm.name);
+        }}
+        onCancel={() => setDeleteConfirm(null)}
+      />
     </section>
   );
 }

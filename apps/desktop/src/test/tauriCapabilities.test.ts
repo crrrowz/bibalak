@@ -7,7 +7,10 @@ const libRs = readFileSync(resolve(tauriDir, "src/lib.rs"), "utf8");
 const buildRs = readFileSync(resolve(tauriDir, "build.rs"), "utf8");
 const defaultCap = JSON.parse(
   readFileSync(resolve(tauriDir, "capabilities/default.json"), "utf8"),
-) as { windows: string[]; permissions: string[] };
+) as {
+  windows: string[];
+  permissions: Array<string | { identifier: string; allow?: Array<Record<string, unknown>> }>;
+};
 const quickAddCap = JSON.parse(
   readFileSync(resolve(tauriDir, "capabilities/quick-add.json"), "utf8"),
 ) as { windows: string[]; permissions: string[] };
@@ -62,6 +65,31 @@ describe("tauri per-window command capabilities (H1)", () => {
     for (const cmd of registeredCommands()) {
       expect(defaultCap.permissions).toContain(`allow-${cmd.replace(/_/g, "-")}`);
     }
+  });
+
+  it("scopes opener capability to https URLs and app data folders without opener:default (A4-11)", () => {
+    expect(defaultCap.permissions).not.toContain("opener:default");
+    expect(defaultCap.permissions).not.toContain("opener:allow-default-urls");
+    expect(defaultCap.permissions).not.toContain("opener:allow-reveal-item-in-dir");
+
+    const openUrlPerm = defaultCap.permissions.find(
+      (p): p is { identifier: string; allow?: Array<{ url?: string }> } =>
+        typeof p === "object" && p.identifier === "opener:allow-open-url",
+    );
+    expect(openUrlPerm).toBeDefined();
+    expect(openUrlPerm?.allow).toEqual([{ url: "https://*" }]);
+
+    const openPathPerm = defaultCap.permissions.find(
+      (p): p is { identifier: string; allow?: Array<{ path?: string }> } =>
+        typeof p === "object" && p.identifier === "opener:allow-open-path",
+    );
+    expect(openPathPerm).toBeDefined();
+    expect(openPathPerm?.allow).toEqual([
+      { path: "$APPDATA" },
+      { path: "$APPDATA/**" },
+      { path: "$LOCALDATA" },
+      { path: "$LOCALDATA/**" },
+    ]);
   });
 
   it("quick_add_window_cannot_call_admin_commands", () => {

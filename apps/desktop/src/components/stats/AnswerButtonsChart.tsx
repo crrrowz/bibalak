@@ -19,6 +19,7 @@ import {
   tooltipStyle,
 } from "./chartTheme";
 import { ExportButton } from "./ExportButton";
+import { renderChartLegend } from "./ChartLegend";
 import { answeredQuery, type AnswerPhase } from "./statQuery";
 import { t } from "@/lib/i18n";
 
@@ -68,7 +69,7 @@ export function AnswerButtonsChart({
             labelStyle={tooltipLabelStyle}
             cursor={tooltipCursor}
           />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Legend content={renderChartLegend} />
           <Bar
             dataKey="Learning"
             name={t("stats.phase.learning")}

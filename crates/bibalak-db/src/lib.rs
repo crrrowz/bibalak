@@ -8,6 +8,7 @@
 pub mod backup;
 pub mod browse;
 pub mod cards;
+pub mod deck_reset;
 pub mod export;
 pub mod filtered;
 pub mod game;

@@ -254,15 +254,63 @@ fn quest_counts_in_window(
         )
         .map_err(err)?;
 
-    let xp: i64 = conn
-        .query_row(
-            "SELECT COALESCE(SUM(xp), 0)
+    let mut xp: u64 = 0;
+    let mut xp_stmt = conn
+        .prepare_cached(
+            "SELECT source_key, xp
              FROM progress_ledger
              WHERE user_id = ?1 AND deleted_at IS NULL AND created_at >= ?2 AND created_at < ?3",
-            params![user_id, start_ms, end_ms],
-            |r| r.get(0),
         )
         .map_err(err)?;
+    let mut xp_rows = xp_stmt
+        .query(params![user_id, start_ms, end_ms])
+        .map_err(err)?;
+    while let Some(r) = xp_rows.next().map_err(err)? {
+        let key: String = r.get(0).map_err(err)?;
+        let row_xp: i64 = r.get(1).map_err(err)?;
+        if let Some(ParsedSourceKey::HabitLog { day_index, .. }) = parse_ledger_source_key(&key) {
+            if day_index < start_day || day_index > end_day {
+                continue;
+            }
+        }
+        xp = xp.saturating_add(row_xp.max(0) as u64);
+    }
+    drop(xp_rows);
+    drop(xp_stmt);
+
+    let mut h_xp_stmt = conn
+        .prepare_cached(
+            "SELECT habit_id, day_index
+             FROM habit_logs
+             WHERE user_id = ?1 AND day_index BETWEEN ?2 AND ?3 AND deleted_at IS NULL AND completed = 1",
+        )
+        .map_err(err)?;
+    let mut h_xp_rows = h_xp_stmt
+        .query(params![user_id, start_day, end_day])
+        .map_err(err)?;
+    let mut l_xp_stmt = conn
+        .prepare_cached(
+            "SELECT xp, created_at
+             FROM progress_ledger
+             WHERE user_id = ?1 AND source_key = ?2 AND deleted_at IS NULL",
+        )
+        .map_err(err)?;
+    while let Some(hr) = h_xp_rows.next().map_err(err)? {
+        let habit_id: String = hr.get(0).map_err(err)?;
+        let day_idx: i32 = hr.get(1).map_err(err)?;
+        let key = bibalak_core::progress::habit_source_key(&habit_id, day_idx);
+        if let Some((row_xp, created_at)) = l_xp_stmt
+            .query_row(params![user_id, key], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+            })
+            .optional()
+            .map_err(err)?
+        {
+            if created_at < start_ms || created_at >= end_ms {
+                xp = xp.saturating_add(row_xp.max(0) as u64);
+            }
+        }
+    }
 
     let active_days_count = (start_day..=end_day)
         .filter(|d| active_days.contains(d))
@@ -274,7 +322,7 @@ fn quest_counts_in_window(
         new_cards: new_cards.max(0) as u32,
         tasks: tasks.max(0) as u32,
         habits: habits.max(0) as u32,
-        xp: xp.max(0) as u64,
+        xp,
         active_days: active_days_count,
     })
 }

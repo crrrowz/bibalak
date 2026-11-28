@@ -30,7 +30,7 @@ pub use note::{NoteStore, ParsedTextNote, TextImportOutcome};
 pub use notetype::NotetypeStore;
 pub use productivity::ProductivityStore;
 pub use progress::ProgressStore;
-pub use study::{SimCardSnapshot, StudyQueue, StudyStore, WorkloadSnapshot};
+pub use study::{DeckResetSnapshot, SimCardSnapshot, StudyQueue, StudyStore, WorkloadSnapshot};
 pub use sync::SyncStore;
 
 /// Source of "now", injectable so scheduler tests are deterministic across the

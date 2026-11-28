@@ -12,7 +12,6 @@ import {
   List,
   Plus,
   Sparkles,
-  Undo2,
   X,
 } from "lucide-react";
 import type {
@@ -48,7 +47,7 @@ import { useUi, type HomeLayout } from "@/stores/ui";
 import { useStyle } from "@/stores/style";
 import { cn } from "@/lib/utils";
 import { formatNumber, getLocale, t, tn, textDirection } from "@/lib/i18n";
-import { formatUndoAction } from "@/lib/undo";
+import { pushUndoToast, useUndoShortcut } from "@/lib/undoToast";
 import type { LocaleKey } from "@/locales/en";
 
 function isNothingNewImport(summary: ImportSummary): boolean {
@@ -122,13 +121,6 @@ export function DeckBrowserScreen() {
     refetchInterval: 60_000,
   });
 
-  const undoStatusQuery = useQuery({
-    queryKey: queryKeys.undoStatus,
-    queryFn: ipc.undoStatus,
-    enabled: tauri,
-  });
-  const undoAction = undoStatusQuery.data ?? null;
-
   const invalidateDecks = () => invalidateTodayCounts(queryClient);
 
   const [creating, setCreating] = useState(false);
@@ -198,12 +190,23 @@ export function DeckBrowserScreen() {
 
   const deleteMut = useMutation({
     mutationFn: (id: number) => ipc.deleteDeck(id),
-    onSuccess: () => void invalidateDecks(),
+    onSuccess: (_data, id) => {
+      const deletedName = decks.find((d) => d.id === id)?.name ?? "";
+      void invalidateDecks();
+      if (deletedName) {
+        pushUndoToast(t("undo.action.deleteDeck", { name: deletedName }), () =>
+          undoMut.mutateAsync(),
+        );
+      }
+    },
   });
 
   const renameMut = useMutation({
     mutationFn: ({ id, name }: { id: number; name: string }) => ipc.renameDeck(id, name),
-    onSuccess: () => void invalidateDecks(),
+    onSuccess: (_data, { name }) => {
+      void invalidateDecks();
+      pushUndoToast(t("undo.action.renameDeck", { name }), () => undoMut.mutateAsync());
+    },
   });
 
   const emptyMut = useMutation({
@@ -215,6 +218,8 @@ export function DeckBrowserScreen() {
     mutationFn: () => ipc.undo(),
     onSuccess: () => void invalidateDecks(),
   });
+
+  useUndoShortcut(() => undoMut.mutate(), tauri);
 
   const toggleCollapseMut = useMutation({
     mutationFn: ({ id, collapsed }: { id: number; collapsed: boolean }) =>
@@ -349,19 +354,6 @@ export function DeckBrowserScreen() {
               title={t("decks.importTextHint")}
             >
               <FileText /> {t("decks.importText")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => undoMut.mutate()}
-              disabled={!tauri || undoMut.isPending || !undoAction}
-              title={
-                undoAction
-                  ? t("decks.undoAction", { action: formatUndoAction(undoAction) })
-                  : t("decks.undoEmpty")
-              }
-            >
-              <Undo2 /> {t("decks.undo")}
             </Button>
             <Button
               variant="outline"
@@ -533,7 +525,9 @@ export function DeckBrowserScreen() {
             <div className="flex items-center justify-end gap-3 px-4 pb-1 pt-3 text-xs font-medium text-muted-foreground sm:px-6 lg:px-8">
               <span className="flex items-center gap-1">
                 <span className="w-11 shrink-0 text-center">{t("decks.col.new")}</span>
-                <span className="w-11 shrink-0 text-center">{t("decks.col.learn")}</span>
+                <span className="w-11 shrink-0 text-center" title={t("decks.col.learnHint")}>
+                  {t("decks.col.learn")}
+                </span>
                 <span className="w-11 shrink-0 text-center">{t("decks.col.due")}</span>
               </span>
               <span className="w-36 shrink-0" />
@@ -576,6 +570,12 @@ export function DeckBrowserScreen() {
                 ))}
               </AnimatePresence>
             </motion.ul>
+            <p
+              data-testid="decks-learn-hint"
+              className="px-4 pb-3 pt-2 text-[11px] text-muted-foreground sm:px-6 lg:px-8"
+            >
+              {t("decks.col.learnHint")}
+            </p>
           </>
         )}
       </div>

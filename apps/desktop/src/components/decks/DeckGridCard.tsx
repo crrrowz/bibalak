@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Filter, Layers, Play } from "lucide-react";
+import { Filter, Layers, Play, RefreshCw, Settings, X } from "lucide-react";
 import type { DeckSummary } from "@bibalak/ipc-types";
 import { Button } from "@/components/ui/button";
 import { DeckCounts } from "./DeckCounts";
@@ -10,6 +10,11 @@ import { t } from "@/lib/i18n";
 function deckLabel(name: string): string {
   const parts = name.split("::");
   return parts[parts.length - 1];
+}
+
+function deckParentPath(name: string): string | null {
+  const parts = name.split("::");
+  return parts.length > 1 ? parts.slice(0, -1).join(" / ") : null;
 }
 
 /** Ring showing today's queue composition (new / learning / review share). */
@@ -86,6 +91,7 @@ export function DeckGridCard({
   const [renameValue, setRenameValue] = useState(deck.name);
   const [limitOpen, setLimitOpen] = useState(false);
   const total = deck.new_count + deck.learning_count + deck.review_count;
+  const parentPath = deckParentPath(deck.name);
 
   function submitRename() {
     const trimmed = renameValue.trim();
@@ -119,10 +125,62 @@ export function DeckGridCard({
               className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           ) : (
-            <span className="truncate text-sm font-medium">{deckLabel(deck.name)}</span>
+            <div className="min-w-0 flex-1">
+              {parentPath && (
+                <p
+                  data-testid="deck-grid-parent"
+                  className="truncate text-[11px] text-muted-foreground"
+                >
+                  {parentPath}
+                </p>
+              )}
+              <div className="flex items-center gap-1.5">
+                <span className="truncate text-sm font-medium">{deckLabel(deck.name)}</span>
+                {hasChildren && (
+                  <span
+                    className="shrink-0 rounded bg-secondary px-1 py-0.5 text-[10px] font-medium text-muted-foreground"
+                    title={t("decks.rolledUpHint")}
+                  >
+                    {t("decks.includesSubdecks")}
+                  </span>
+                )}
+              </div>
+            </div>
           )}
         </div>
-        <div className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+        <div className="flex shrink-0 items-center gap-0.5">
+          {deck.is_filtered ? (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t("decks.rebuildNamed", { name: deck.name })}
+                onClick={onRebuild}
+                title={t("decks.rebuildFiltered")}
+              >
+                <RefreshCw className="size-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t("decks.emptyNamed", { name: deck.name })}
+                onClick={onEmpty}
+                title={t("decks.emptyHint")}
+              >
+                <X className="size-4" />
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t("decks.optionsNamed", { name: deck.name })}
+              onClick={onOptions}
+              title={t("decks.options")}
+            >
+              <Settings className="size-4" />
+            </Button>
+          )}
           <DeckActionsMenu
             deck={deck}
             onStudy={onStudy}
@@ -145,6 +203,7 @@ export function DeckGridCard({
           newCount={deck.new_count}
           learningCount={deck.learning_count}
           reviewCount={deck.review_count}
+          showLabels
         />
       </div>
 

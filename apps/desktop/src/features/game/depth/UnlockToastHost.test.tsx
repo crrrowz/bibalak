@@ -107,4 +107,54 @@ describe("unlock_toast_acknowledges_and_banner_once (14e / 16h)", () => {
     await vi.waitFor(() => expect(ipcModule.ipc.getGameDepthState).toHaveBeenCalled());
     expect(screen.queryByText(/past study/i)).not.toBeInTheDocument();
   });
+
+  it("A3-11 (F9): switching Default -> Scholar filters out Game pet unlocks and suppresses retro toggle audio", async () => {
+    useStyle.getState().setStyle("default");
+    const state = {
+      ...structuredClone(mockGameDepthLv10),
+      unseen_unlocks: [
+        {
+          id: "unlock-pet-fox",
+          kind: "pet",
+          key: "pet:fox:classic",
+          reward_ref: "fox:classic",
+          unlocked_at: Date.now(),
+        },
+        {
+          id: "unlock-ach-10",
+          kind: "achievement",
+          key: "ach:level_10",
+          reward_ref: "badge_crest",
+          unlocked_at: Date.now(),
+        },
+      ],
+      backfill_applied: false,
+    };
+
+    vi.spyOn(ipcModule.ipc, "getGameDepthState").mockResolvedValue(state);
+    vi.spyOn(ipcModule.ipc, "acknowledgeUnlocks").mockResolvedValue();
+    const cueSpy = vi.spyOn(styleAudio, "playStyleCue");
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <UnlockToastHost />
+        <NotificationToastHost />
+      </QueryClientProvider>,
+    );
+
+    expect(cueSpy).not.toHaveBeenCalled();
+
+    useStyle.getState().setStyle("scholar");
+    rerender(
+      <QueryClientProvider client={client}>
+        <UnlockToastHost />
+        <NotificationToastHost />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Academic Milestones")).toBeInTheDocument();
+    expect(screen.queryByText(/companion/i)).not.toBeInTheDocument();
+    expect(cueSpy).not.toHaveBeenCalled();
+  });
 });

@@ -1226,6 +1226,28 @@ pub fn restore_habit_log_snapshot(
     now_ms: i64,
 ) -> CoreResult<()> {
     let tx = conn.transaction().map_err(err)?;
+    let freeze_key = format!("freeze_use:{habit_id}:{day_index}");
+    let restoring_frozen = previous.is_some_and(|p| {
+        p.status == bibalak_core::productivity::HabitLogStatus::Frozen && p.deleted_at.is_none()
+    });
+    if restoring_frozen {
+        let already_frozen_in_ledger: bool = tx
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM freeze_token_ledger
+                     WHERE user_id = ?1 AND source_key = ?2 AND deleted_at IS NULL
+                 )",
+                params![user_id, freeze_key],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if !already_frozen_in_ledger && crate::game::freeze_tokens_held(&tx, user_id)? < 1 {
+            return Err(CoreError::Invalid(
+                "cannot restore frozen habit status without an available streak freeze token"
+                    .into(),
+            ));
+        }
+    }
     match previous {
         Some(prev) => {
             tx.execute(
@@ -1281,11 +1303,8 @@ pub fn restore_habit_log_snapshot(
             )?;
         }
     }
-    let freeze_key = format!("freeze_use:{habit_id}:{day_index}");
-    if previous.is_some_and(|p| p.status == bibalak_core::productivity::HabitLogStatus::Frozen) {
-        if crate::game::freeze_tokens_held(&tx, user_id)? >= 1 {
-            let _ = crate::game::upsert_freeze_entry_tx(&tx, user_id, &freeze_key, -1, now_ms)?;
-        }
+    if restoring_frozen {
+        let _ = crate::game::upsert_freeze_entry_tx(&tx, user_id, &freeze_key, -1, now_ms)?;
     } else {
         let _ = crate::game::soft_delete_freeze_entry_tx(&tx, user_id, &freeze_key, now_ms)?;
     }

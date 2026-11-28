@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import katex from "katex";
+import "katex/dist/katex.min.css";
 import { platform } from "@/lib/platform";
 import {
   Bold,
@@ -21,10 +22,11 @@ import {
   Sigma,
   Square,
 } from "lucide-react";
-import { ipc, isTauri } from "@/lib/ipc";
+import { errorMessage, ipc, isTauri } from "@/lib/ipc";
 import { mediaUrl } from "@/lib/renderCard";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
+import { toast } from "@/stores/toast";
 import { insertClozeIntoEditor } from "@/components/editor/useActiveFieldEditor";
 
 function ToolbarButton({
@@ -85,6 +87,7 @@ export function EditorToolbar({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingTargetRef = useRef<Editor | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
@@ -110,42 +113,84 @@ export function EditorToolbar({
     };
   }, []);
 
-  const insertImageSrc = (filename: string) => {
-    if (!activeEditor) return;
-    const src = tauri ? mediaUrl(filename) : filename;
-    activeEditor.chain().focus().setImage({ src, alt: filename }).run();
+  const reportMediaError = (err: unknown) => {
+    const msg = errorMessage(err);
+    setRecordError(msg);
+    toast.error(msg);
   };
 
-  const insertAudioTag = (filename: string) => {
-    if (!activeEditor) return;
-    activeEditor.chain().focus().insertContent(`[sound:${filename}]`).run();
+  const insertImageSrc = (filename: string, target: Editor | null = activeEditor) => {
+    if (!target || target.isDestroyed) return;
+    const src = tauri ? mediaUrl(filename) : filename;
+    target.chain().focus().setImage({ src, alt: filename }).run();
+  };
+
+  const insertAudioTag = (filename: string, target: Editor | null = activeEditor) => {
+    if (!target || target.isDestroyed) return;
+    target
+      .chain()
+      .focus()
+      .insertContent({ type: "text", text: `[sound:${filename}]` })
+      .run();
   };
 
   const pickImage = async () => {
-    if (!activeEditor) return;
+    const target = activeEditor;
+    if (!target) return;
+    setRecordError(null);
     if (tauri) {
-      const path = await platform.pickPath({
-        filters: [
-          { name: t("editor.fileImage"), extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
-        ],
-      });
-      if (path === null) return;
-      const filename = await ipc.saveMediaFromPath(path);
-      insertImageSrc(filename);
+      try {
+        const path = await platform.pickPath({
+          filters: [
+            {
+              name: t("editor.fileImage"),
+              extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "ico"],
+            },
+          ],
+        });
+        if (path === null) return;
+        const filename = await ipc.saveMediaFromPath(path);
+        insertImageSrc(filename, target);
+      } catch (err) {
+        reportMediaError(err);
+      }
     } else {
       imageInputRef.current?.click();
     }
   };
 
   const pickAudio = async () => {
-    if (!activeEditor) return;
+    const target = activeEditor;
+    if (!target) return;
+    setRecordError(null);
     if (tauri) {
-      const path = await platform.pickPath({
-        filters: [{ name: t("editor.fileAudio"), extensions: ["mp3", "ogg", "wav", "m4a"] }],
-      });
-      if (path === null) return;
-      const filename = await ipc.saveMediaFromPath(path);
-      insertAudioTag(filename);
+      try {
+        const path = await platform.pickPath({
+          filters: [
+            {
+              name: t("editor.fileAudio"),
+              extensions: [
+                "mp3",
+                "ogg",
+                "wav",
+                "m4a",
+                "flac",
+                "aac",
+                "opus",
+                "mp4",
+                "webm",
+                "mkv",
+                "mov",
+              ],
+            },
+          ],
+        });
+        if (path === null) return;
+        const filename = await ipc.saveMediaFromPath(path);
+        insertAudioTag(filename, target);
+      } catch (err) {
+        reportMediaError(err);
+      }
     } else {
       audioInputRef.current?.click();
     }
@@ -158,12 +203,16 @@ export function EditorToolbar({
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (tauri) {
+    if (!tauri) {
+      reportMediaError(new Error(t("editor.mediaRequiresDesktop")));
+      return;
+    }
+    try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const filename = await ipc.saveMedia(bytes, file.name);
       onSaved(filename);
-    } else {
-      onSaved(URL.createObjectURL(file));
+    } catch (err) {
+      reportMediaError(err);
     }
   };
 
@@ -186,10 +235,12 @@ export function EditorToolbar({
       return;
     }
 
+    recordingTargetRef.current = activeEditor;
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
+      recordingTargetRef.current = null;
       const name = err instanceof DOMException ? err.name : (err as { name?: string })?.name;
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
         setRecordError(t("editor.micPermissionDenied"));
@@ -224,6 +275,7 @@ export function EditorToolbar({
       recorder.onerror = () => {
         stopStreamTracks();
         recorderRef.current = null;
+        recordingTargetRef.current = null;
         setRecording(false);
         setRecordError(t("editor.recordingFailed"));
       };
@@ -231,6 +283,11 @@ export function EditorToolbar({
       recorder.onstop = () => {
         stopStreamTracks();
         recorderRef.current = null;
+        const target =
+          recordingTargetRef.current && !recordingTargetRef.current.isDestroyed
+            ? recordingTargetRef.current
+            : activeEditor;
+        recordingTargetRef.current = null;
         const actualMime = recorder.mimeType || mimeType || "audio/webm";
         const ext = actualMime.includes("ogg")
           ? "ogg"
@@ -249,9 +306,9 @@ export function EditorToolbar({
                   ? await blob.arrayBuffer()
                   : await new Response(blob).arrayBuffer();
               const saved = await ipc.saveMedia(new Uint8Array(buffer), filename);
-              insertAudioTag(saved);
+              insertAudioTag(saved, target);
             } else {
-              insertAudioTag(filename);
+              insertAudioTag(filename, target);
             }
           } catch {
             setRecordError(t("editor.recordingFailed"));
@@ -264,6 +321,7 @@ export function EditorToolbar({
     } catch {
       stopStreamTracks();
       recorderRef.current = null;
+      recordingTargetRef.current = null;
       setRecording(false);
       setRecordError(t("editor.recordingFailed"));
     }
@@ -272,7 +330,7 @@ export function EditorToolbar({
   const insertMath = () => {
     if (!activeEditor) return;
     const wrapped = mathDisplay ? `\\[${mathSrc}\\]` : `\\(${mathSrc}\\)`;
-    activeEditor.chain().focus().insertContent(wrapped).run();
+    activeEditor.chain().focus().insertContent({ type: "text", text: wrapped }).run();
     setMathOpen(false);
     setMathSrc("");
   };
@@ -485,7 +543,7 @@ export function EditorToolbar({
       <input
         ref={audioInputRef}
         type="file"
-        accept="audio/*"
+        accept="audio/*,video/*"
         className="hidden"
         onChange={(e) => void handleFileInput(e, insertAudioTag)}
       />

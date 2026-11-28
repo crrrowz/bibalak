@@ -266,3 +266,21 @@ describe("ipc game & game depth wrappers + previewMocks (14d)", () => {
     expect(depth.pets.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe("ipc saveMedia raw binary transport (A2-09)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("A2-09: ipc.saveMedia sends raw Uint8Array instead of Array.from JSON array", async () => {
+    const invokeSpy = vi.spyOn(platform, "invoke").mockResolvedValue("clip.png");
+    const payload = new Uint8Array([1, 2, 3, 4]);
+
+    await ipc.saveMedia(payload, "clip.png");
+
+    expect(invokeSpy).toHaveBeenCalledTimes(1);
+    const args = invokeSpy.mock.calls[0]?.[1] as { bytes?: unknown } | Uint8Array;
+    expect(Array.isArray((args as { bytes?: unknown })?.bytes)).toBe(false);
+    expect(args).toBeInstanceOf(Uint8Array);
+  });
+});

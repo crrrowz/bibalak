@@ -59,7 +59,7 @@ describe("QuickAddSection in Settings (E10)", () => {
     const user = userEvent.setup();
     renderSection();
 
-    const toggle = await screen.findByRole("checkbox");
+    const toggle = await screen.findByRole("switch");
     const shortcutInput = screen.getByLabelText(/Global shortcut/i) as HTMLInputElement;
     expect(shortcutInput.value).toBe("Ctrl+Shift+K");
 

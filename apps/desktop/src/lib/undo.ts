@@ -1,7 +1,7 @@
-import type { UndoAction } from "@bibalak/ipc-types";
+import type { ExtendedUndoAction } from "@/lib/ipc";
 import { t, tn } from "@/lib/i18n";
 
-export function formatUndoAction(action: UndoAction): string {
+export function formatUndoAction(action: ExtendedUndoAction): string {
   switch (action.kind) {
     case "answer-card":
       return t("undo.action.answerCard");
@@ -11,6 +11,8 @@ export function formatUndoAction(action: UndoAction): string {
       return t("undo.action.renameDeck", { name: action.name });
     case "delete-deck":
       return t("undo.action.deleteDeck", { name: action.name });
+    case "reset-deck-progress":
+      return tn("undo.action.resetDeckProgress", action.count, { name: action.name });
     case "forget-cards":
       return tn("undo.action.forgetCards", action.count);
     case "set-due-date":

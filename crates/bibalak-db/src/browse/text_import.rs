@@ -62,10 +62,15 @@ pub fn import_text_notes(
 
     let mut existing_by_csum: HashMap<i64, i64> = {
         let mut stmt = tx
-            .prepare("SELECT id, checksum FROM notes WHERE notetype_id = ?1")
+            .prepare(
+                "SELECT n.id, n.checksum
+                 FROM notes n
+                 WHERE n.notetype_id = ?1
+                   AND EXISTS (SELECT 1 FROM cards c WHERE c.note_id = n.id AND c.deck_id = ?2)",
+            )
             .map_err(err)?;
         let mut map = HashMap::new();
-        let mut q = stmt.query([notetype_id]).map_err(err)?;
+        let mut q = stmt.query(params![notetype_id, deck_id]).map_err(err)?;
         while let Some(r) = q.next().map_err(err)? {
             let id: i64 = r.get(0).map_err(err)?;
             let csum: i64 = r.get(1).map_err(err)?;
@@ -129,7 +134,7 @@ pub fn import_text_notes(
                 continue;
             }
 
-            let ords = expected_card_ords_with(kind, &field_names, &templates, &normalized_fields);
+            let ords = expected_card_ords_with(kind, &field_names, &templates, &normalized_fields)?;
             if ords.is_empty() {
                 summary.errors.push(TextImportError {
                     line: row.line,
@@ -346,5 +351,41 @@ mod tests {
         assert_eq!(out.summary.notes_added, 10_000);
         assert_eq!(out.summary.cards_added, 10_000);
         eprintln!("E4 10,000-row DB import time: {elapsed:?}");
+    }
+
+    #[test]
+    fn a2_23_update_policy_scopes_to_target_deck() {
+        use bibalak_core::ipc::DuplicatePolicy;
+        use bibalak_core::ParsedTextNote;
+
+        let s = SqliteStorage::open_in_memory().unwrap();
+        let nt_id = s.add_stock_notetype(0, 1_000).unwrap();
+        let deck_a = s.create_deck("DeckA", 1_000).unwrap().id;
+        let deck_b = s.create_deck("DeckB", 1_000).unwrap().id;
+
+        let note_in_a = s
+            .add_note_with_cards(
+                nt_id,
+                deck_a,
+                &["Shared".into(), "OriginalInA".into()],
+                &[],
+                1_000,
+            )
+            .unwrap()
+            .0;
+
+        let rows = vec![ParsedTextNote {
+            line: 2,
+            fields: vec!["Shared".into(), "IntoB".into()],
+            tags: vec![],
+        }];
+        let out = s
+            .import_text_notes(deck_b, nt_id, DuplicatePolicy::Update, &rows, 2_000)
+            .unwrap();
+        assert_eq!(out.summary.notes_updated, 0);
+        assert_eq!(out.summary.notes_added, 1);
+
+        let a_detail = s.note_detail(note_in_a).unwrap().unwrap();
+        assert_eq!(a_detail.fields[1].value, "OriginalInA");
     }
 }

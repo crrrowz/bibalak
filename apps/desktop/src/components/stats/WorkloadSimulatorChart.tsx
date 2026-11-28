@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  WORKLOAD_TICKS,
   axisProps,
   categorical,
   gridProps,
@@ -90,6 +91,7 @@ export function WorkloadSimulatorChart({
               <XAxis
                 dataKey="day"
                 {...axisProps}
+                ticks={[...WORKLOAD_TICKS[horizonDays]]}
                 tickFormatter={(d) => formatNumber(Number(d) + 1)}
               />
               <YAxis {...axisProps} allowDecimals={false} tickFormatter={(v) => formatNumber(v)} />

@@ -45,6 +45,9 @@ pub struct Collection {
     pub(crate) scheduler_set: Option<Arc<dyn SchedulerSet>>,
     pub(crate) events: Arc<EventBus>,
     pub(crate) undo: Mutex<UndoLog>,
+    /// Most recently undone answer's `card_id`, kept so `next_card_id` shows
+    /// the undone card next (Anki `rslib/src/scheduler/answering/undo.rs`, A1-09 / F6).
+    pub(crate) last_undone_card_id: Mutex<Option<i64>>,
     /// Collection creation time (ms); anchors the scheduling day-number.
     pub(crate) created_ms: i64,
     /// Local hour (0-23) at which "today" rolls over, mirroring Anki's day
@@ -73,6 +76,7 @@ impl Collection {
             scheduler_set: None,
             events: Arc::new(EventBus::new()),
             undo: Mutex::new(UndoLog::default()),
+            last_undone_card_id: Mutex::new(None),
             created_ms,
             rollover_hour: AtomicU8::new(rollover_hour),
             tz_offset_minutes: AtomicI32::new(0),
@@ -221,6 +225,12 @@ impl Collection {
         self.lock_undo().peek().cloned()
     }
 
+    /// Paged newest-first list of in-memory undoable operations (20 per page).
+    pub fn undo_history(&self, page: u32) -> crate::undo::UndoHistoryPage {
+        self.lock_undo()
+            .history(page, crate::undo::UNDO_HISTORY_PAGE_SIZE)
+    }
+
     /// Undo the most recent operation; returns the action that was undone.
     pub fn undo(&self) -> CoreResult<Option<UndoAction>> {
         let step = self.lock_undo().pop();
@@ -228,10 +238,13 @@ impl Collection {
             None => Ok(None),
             Some(step) => {
                 let label = step.label.clone();
+                let undone_card_id = step.card_id;
                 step.run(self.storage.as_ref(), self.clock.now_ms())?;
+                self.set_last_undone_card_id(undone_card_id);
                 if matches!(
                     label,
                     UndoAction::AnswerCard
+                        | UndoAction::ResetDeckProgress { .. }
                         | UndoAction::CompleteTask { .. }
                         | UndoAction::ReopenTask { .. }
                         | UndoAction::LogHabit { .. }
@@ -242,6 +255,7 @@ impl Collection {
                 if matches!(
                     label,
                     UndoAction::AnswerCard
+                        | UndoAction::ResetDeckProgress { .. }
                         | UndoAction::CompleteTask { .. }
                         | UndoAction::ReopenTask { .. }
                         | UndoAction::LogHabit { .. }
@@ -253,18 +267,44 @@ impl Collection {
         }
     }
 
+    pub(crate) fn last_undone_card_id(&self) -> Option<i64> {
+        match self.last_undone_card_id.lock() {
+            Ok(guard) => *guard,
+            Err(poisoned) => *poisoned.into_inner(),
+        }
+    }
+
+    pub(crate) fn set_last_undone_card_id(&self, card_id: Option<i64>) {
+        match self.last_undone_card_id.lock() {
+            Ok(mut guard) => *guard = card_id,
+            Err(poisoned) => *poisoned.into_inner() = card_id,
+        }
+    }
+
     pub(crate) fn record_undo(
         &self,
         label: UndoAction,
         action: impl FnOnce(&dyn Storage, i64) -> CoreResult<()> + Send + 'static,
     ) {
-        self.lock_undo().record(label, Box::new(action));
+        self.lock_undo()
+            .record_at(label, self.clock.now_ms(), Box::new(action));
+    }
+
+    pub(crate) fn record_undo_for_card(
+        &self,
+        label: UndoAction,
+        card_id: i64,
+        action: impl FnOnce(&dyn Storage, i64) -> CoreResult<()> + Send + 'static,
+    ) {
+        self.lock_undo()
+            .record_with_card_at(label, card_id, self.clock.now_ms(), Box::new(action));
     }
 
     /// Clear pending undo history when an irreversible mutation runs so `undo()`
     /// never silently reverses an earlier unrelated operation.
     pub(crate) fn clear_undo(&self) {
         self.lock_undo().clear();
+        self.set_last_undone_card_id(None);
     }
 }
 

@@ -21,7 +21,7 @@ use bibalak_core::progress::{
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 
 use crate::game::{
-    active_ledger_days, earned_totals, freeze_tokens_held, grant_unlocked_cosmetic_tx,
+    earned_totals, freeze_tokens_held, frozen_study_days, grant_unlocked_cosmetic_tx,
     has_active_ledger_row_on_day, spend_gold_tx, upsert_freeze_entry_tx,
 };
 use crate::productivity::{map_habit, map_habit_log, HABIT_COLS, HABIT_LOG_COLS};
@@ -436,13 +436,43 @@ fn has_at_least_mature_cards(conn: &Connection, threshold: u32) -> CoreResult<bo
 }
 
 const STUDIED_TOP_DECKS_SYNC_KEY: &str = "game:studied_top_decks";
+const REVIEWS_COUNT_SYNC_KEY: &str = "game:reviews_count";
 
 pub(crate) fn invalidate_studied_top_decks_tx(tx: &Transaction<'_>) -> CoreResult<()> {
     tx.execute(
-        "DELETE FROM sync_state WHERE key = ?1",
-        params![STUDIED_TOP_DECKS_SYNC_KEY],
+        "DELETE FROM sync_state WHERE key IN (?1, ?2)",
+        params![STUDIED_TOP_DECKS_SYNC_KEY, REVIEWS_COUNT_SYNC_KEY],
     )
     .map_err(err)?;
+    Ok(())
+}
+
+fn read_cached_reviews_count(conn: &Connection) -> CoreResult<Option<u32>> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT value FROM sync_state WHERE key = ?1",
+            params![REVIEWS_COUNT_SYNC_KEY],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    Ok(raw.and_then(|s| s.parse::<u32>().ok()))
+}
+
+fn write_cached_reviews_count(conn: &Connection, count: u32) -> CoreResult<()> {
+    conn.execute(
+        "INSERT INTO sync_state (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![REVIEWS_COUNT_SYNC_KEY, count.to_string()],
+    )
+    .map_err(err)?;
+    Ok(())
+}
+
+fn increment_cached_reviews_count_tx(tx: &Transaction<'_>) -> CoreResult<()> {
+    if let Some(prev) = read_cached_reviews_count(tx)? {
+        write_cached_reviews_count(tx, prev.saturating_add(1))?;
+    }
     Ok(())
 }
 
@@ -598,18 +628,16 @@ fn evaluate_decks_studied_on_answer_tx(
     Ok(p > 0 || c > 0 || a > 0)
 }
 
-/// O(K log N) B-tree skip scan over `revlog.id` + `progress_ledger(user_id, deleted_at, created_at)`
-/// (+ small `tasks`/`habit_logs`) to test whether at least `threshold` distinct active study days exist.
-fn has_at_least_study_days(
+fn collect_study_days(
     conn: &Connection,
     user_id: &str,
     tz_offset_minutes: i32,
     rollover_hour: u8,
     created_ms: i64,
-    threshold: u32,
-) -> CoreResult<bool> {
-    if threshold == 0 {
-        return Ok(true);
+    early_threshold: Option<u32>,
+) -> CoreResult<HashSet<i32>> {
+    if early_threshold == Some(0) {
+        return Ok(HashSet::new());
     }
     let tz_off_ms = i64::from(tz_offset_minutes) * 60_000;
     let rollover_ms = i64::from(rollover_hour) * 3_600_000;
@@ -633,8 +661,8 @@ fn has_at_least_study_days(
     {
         let day = day_index_for_ms(rev_id, tz_offset_minutes, rollover_hour, created_day) as i32;
         days.insert(day);
-        if days.len() as u32 >= threshold {
-            return Ok(true);
+        if early_threshold.is_some_and(|th| days.len() as u32 >= th) {
+            return Ok(days);
         }
         cursor_ms = day_zero_start_ms + i64::from(day + 1) * MS_PER_DAY;
     }
@@ -650,8 +678,8 @@ fn has_at_least_study_days(
         .map_err(err)?
     {
         days.insert(row.map_err(err)?);
-        if days.len() as u32 >= threshold {
-            return Ok(true);
+        if early_threshold.is_some_and(|th| days.len() as u32 >= th) {
+            return Ok(days);
         }
     }
 
@@ -666,8 +694,8 @@ fn has_at_least_study_days(
         .map_err(err)?
     {
         days.insert(row.map_err(err)?);
-        if days.len() as u32 >= threshold {
-            return Ok(true);
+        if early_threshold.is_some_and(|th| days.len() as u32 >= th) {
+            return Ok(days);
         }
     }
 
@@ -701,8 +729,8 @@ fn has_at_least_study_days(
         };
         if let Some(d) = parsed_day {
             days.insert(d);
-            if days.len() as u32 >= threshold {
-                return Ok(true);
+            if early_threshold.is_some_and(|th| days.len() as u32 >= th) {
+                return Ok(days);
             }
         }
         ledger_cursor_ms = if parsed_day == Some(created_day_idx) {
@@ -712,6 +740,30 @@ fn has_at_least_study_days(
         };
     }
 
+    Ok(days)
+}
+
+/// O(K log N) B-tree skip scan over `revlog.id` + `progress_ledger(user_id, deleted_at, created_at)`
+/// (+ small `tasks`/`habit_logs`) to test whether at least `threshold` distinct active study days exist.
+fn has_at_least_study_days(
+    conn: &Connection,
+    user_id: &str,
+    tz_offset_minutes: i32,
+    rollover_hour: u8,
+    created_ms: i64,
+    threshold: u32,
+) -> CoreResult<bool> {
+    if threshold == 0 {
+        return Ok(true);
+    }
+    let days = collect_study_days(
+        conn,
+        user_id,
+        tz_offset_minutes,
+        rollover_hour,
+        created_ms,
+        Some(threshold),
+    )?;
     Ok(days.len() as u32 >= threshold)
 }
 
@@ -976,18 +1028,23 @@ fn evaluate_streak_freeze_milestone_tx(
     )? {
         return Ok(false);
     }
+    let frozen = frozen_study_days(tx, &ctx.user_id)?;
     let mut streak = 1_u32;
     let mut day = ctx.awarded_day.saturating_sub(1);
-    while has_active_ledger_row_on_day(
-        tx,
-        &ctx.user_id,
-        day,
-        ctx.tz_offset_minutes,
-        ctx.rollover_hour,
-        ctx.created_ms,
-        None,
-    )? {
-        streak += 1;
+    loop {
+        if has_active_ledger_row_on_day(
+            tx,
+            &ctx.user_id,
+            day,
+            ctx.tz_offset_minutes,
+            ctx.rollover_hour,
+            ctx.created_ms,
+            None,
+        )? {
+            streak += 1;
+        } else if !frozen.contains(&day) {
+            break;
+        }
         if day == i32::MIN {
             break;
         }
@@ -1001,7 +1058,7 @@ fn evaluate_streak_freeze_milestone_tx(
         .query_row(
             "SELECT EXISTS(
                  SELECT 1 FROM freeze_token_ledger
-                 WHERE user_id = ?1 AND source_key = ?2
+                 WHERE user_id = ?1 AND source_key = ?2 AND deleted_at IS NULL
              )",
             params![ctx.user_id, key],
             |r| r.get(0),
@@ -1098,6 +1155,7 @@ pub(crate) fn on_answer_committed_tx(
     if !(0..=3).contains(&review_kind) {
         return Ok(false);
     }
+    increment_cached_reviews_count_tx(tx)?;
     let mut changed = false;
     let (mut unlocks, mut achs) = existing_unlock_and_ach_keys(tx, &ctx.user_id)?;
 
@@ -1428,13 +1486,21 @@ fn load_full_depth_metrics(
     let created_day = created_epoch_day(created_ms, tz_offset_minutes, rollover_hour);
     let today = day_index_for_ms(now_ms, tz_offset_minutes, rollover_hour, created_day) as i32;
 
-    let reviews: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM revlog WHERE review_kind IN (0, 1, 2, 3)",
-            [],
-            |r| r.get(0),
-        )
-        .map_err(err)?;
+    let reviews: u32 = match read_cached_reviews_count(conn)? {
+        Some(cached) => cached,
+        None => {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM revlog WHERE review_kind IN (0, 1, 2, 3)",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(err)?;
+            let count_u32 = u32::try_from(count.max(0)).unwrap_or(u32::MAX);
+            write_cached_reviews_count(conn, count_u32)?;
+            count_u32
+        }
+    };
     let (total_xp, _) = earned_totals(conn, user_id)?;
     let level = level_from_xp(total_xp).level;
     let completed_tasks: i64 = conn
@@ -1462,44 +1528,14 @@ fn load_full_depth_metrics(
         today,
     )?;
 
-    let mut study_days_set =
-        active_ledger_days(conn, user_id, tz_offset_minutes, rollover_hour, created_ms)?;
-    let mut r_stmt = conn
-        .prepare("SELECT id FROM revlog WHERE review_kind IN (0, 1, 2, 3)")
-        .map_err(err)?;
-    for row in r_stmt.query_map([], |r| r.get::<_, i64>(0)).map_err(err)? {
-        let rev_id = row.map_err(err)?;
-        study_days_set.insert(day_index_for_ms(
-            rev_id,
-            tz_offset_minutes,
-            rollover_hour,
-            created_day,
-        ) as i32);
-    }
-    let mut t_stmt = conn
-        .prepare(
-            "SELECT DISTINCT completed_day FROM tasks
-             WHERE user_id = ?1 AND deleted_at IS NULL AND completed_day IS NOT NULL",
-        )
-        .map_err(err)?;
-    for row in t_stmt
-        .query_map(params![user_id], |r| r.get::<_, i32>(0))
-        .map_err(err)?
-    {
-        study_days_set.insert(row.map_err(err)?);
-    }
-    let mut h_stmt = conn
-        .prepare(
-            "SELECT DISTINCT day_index FROM habit_logs
-             WHERE user_id = ?1 AND deleted_at IS NULL AND completed = 1",
-        )
-        .map_err(err)?;
-    for row in h_stmt
-        .query_map(params![user_id], |r| r.get::<_, i32>(0))
-        .map_err(err)?
-    {
-        study_days_set.insert(row.map_err(err)?);
-    }
+    let study_days_set = collect_study_days(
+        conn,
+        user_id,
+        tz_offset_minutes,
+        rollover_hour,
+        created_ms,
+        None,
+    )?;
 
     let mature_cards: i64 = conn
         .query_row(
@@ -1510,7 +1546,33 @@ fn load_full_depth_metrics(
         )
         .map_err(err)?;
 
-    let studied_top = scan_studied_top_decks(conn)?;
+    let cached_decks_raw: Option<String> = conn
+        .query_row(
+            "SELECT value FROM sync_state WHERE key = ?1",
+            params![STUDIED_TOP_DECKS_SYNC_KEY],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    let studied_top: HashSet<i64> = match cached_decks_raw {
+        Some(raw) => serde_json::from_str::<Vec<i64>>(&raw)
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+        None => {
+            let scanned = scan_studied_top_decks(conn)?;
+            let mut ids: Vec<i64> = scanned.iter().copied().collect();
+            ids.sort_unstable();
+            let json = serde_json::to_string(&ids).map_err(err)?;
+            conn.execute(
+                "INSERT INTO sync_state (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![STUDIED_TOP_DECKS_SYNC_KEY, json],
+            )
+            .map_err(err)?;
+            scanned
+        }
+    };
 
     let (unlocked_pets, has_mount): (i64, bool) = conn
         .query_row(
@@ -1534,7 +1596,7 @@ fn load_full_depth_metrics(
         .map_err(err)?;
 
     Ok(DepthMetricSnapshot {
-        reviews: reviews.max(0) as u32,
+        reviews,
         level,
         completed_tasks: completed_tasks.max(0) as u32,
         completed_habit_logs: completed_habit_logs.max(0) as u32,
@@ -1649,6 +1711,33 @@ fn run_unlock_backfill_tx(
         cosmetics_granted,
         achievements_granted,
     })
+}
+
+/// Reset `backfill_version` to 0 and re-run [`run_unlock_backfill_tx`] idempotently
+/// (e.g. after importing `.apkg` review history).
+pub(crate) fn rerun_unlock_backfill_tx(
+    tx: &Transaction<'_>,
+    user_id: &str,
+    now_ms: i64,
+    tz_offset_minutes: i32,
+    rollover_hour: u8,
+    created_ms: i64,
+) -> CoreResult<BackfillOutcomeDto> {
+    tx.execute(
+        "UPDATE game_profile
+         SET backfill_version = 0
+         WHERE user_id = ?1 AND deleted_at IS NULL",
+        params![user_id],
+    )
+    .map_err(err)?;
+    run_unlock_backfill_tx(
+        tx,
+        user_id,
+        now_ms,
+        tz_offset_minutes,
+        rollover_hour,
+        created_ms,
+    )
 }
 
 // ── Public Storage Operations (R4-1) ─────────────────────────────────────────

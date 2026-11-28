@@ -42,7 +42,9 @@ let audioCtx: AudioContext | null = null;
 const bufferCache = new Map<string, AudioBuffer>();
 const pendingBuffers = new Map<string, Promise<AudioBuffer | null>>();
 let lastAnyCueAt = -Infinity;
+let nextScheduledSlotAt = -Infinity;
 const lastCuePlayedAt: Partial<Record<StyleCue, number>> = {};
+const queuedCueTimers = new Map<StyleCue, ReturnType<typeof setTimeout>>();
 
 function getAudioContextConstructor(): (new () => AudioContext) | null {
   if (typeof window === "undefined") return null;
@@ -137,12 +139,26 @@ export function playStyleCue(cue: StyleCue, options?: StyleAudioOptions): void {
     if (typeof document !== "undefined" && document.hidden) return;
 
     const now = options?.now ?? Date.now();
-    if (now - lastAnyCueAt < BURST_COALESCE_MS) return;
-
     const lastForCue = lastCuePlayedAt[cue] ?? -Infinity;
     if (now - lastForCue < CUE_COOLDOWN_MS[cue]) return;
 
+    if (now - lastAnyCueAt < BURST_COALESCE_MS) {
+      if (options?.now === undefined && !queuedCueTimers.has(cue)) {
+        const baseAt = Math.max(now, nextScheduledSlotAt, lastAnyCueAt);
+        const targetAt = baseAt + BURST_COALESCE_MS;
+        nextScheduledSlotAt = targetAt;
+        const delayMs = Math.max(1, targetAt - now);
+        const timer = setTimeout(() => {
+          queuedCueTimers.delete(cue);
+          playStyleCue(cue);
+        }, delayMs);
+        queuedCueTimers.set(cue, timer);
+      }
+      return;
+    }
+
     lastAnyCueAt = now;
+    nextScheduledSlotAt = Math.max(nextScheduledSlotAt, now);
     lastCuePlayedAt[cue] = now;
 
     const url = STYLE_CUE_URLS[style][cue];
@@ -178,6 +194,11 @@ export function resetStyleAudioForTest(): void {
   bufferCache.clear();
   pendingBuffers.clear();
   lastAnyCueAt = -Infinity;
+  nextScheduledSlotAt = -Infinity;
+  for (const timer of queuedCueTimers.values()) {
+    clearTimeout(timer);
+  }
+  queuedCueTimers.clear();
   for (const key of Object.keys(lastCuePlayedAt) as StyleCue[]) {
     delete lastCuePlayedAt[key];
   }

@@ -52,3 +52,8 @@ export const gridProps = {
  * that the colored bar stays visible.
  */
 export const tooltipCursor = { fill: "hsl(var(--foreground))", fillOpacity: 0.06 } as const;
+
+export const WORKLOAD_TICKS = {
+  30: [4, 9, 14, 19, 24, 29],
+  90: [14, 29, 44, 59, 74, 89],
+} as const;

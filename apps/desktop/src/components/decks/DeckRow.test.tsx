@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { DeckRow } from "./DeckRow";
+import { DeckGridCard } from "./DeckGridCard";
 import { CreateDeckForm } from "./CreateDeckForm";
 import { ipc } from "@/lib/ipc";
 import type { DeckSummary } from "@bibalak/ipc-types";
@@ -218,5 +219,89 @@ describe("DeckRow collapse/expand", () => {
     expect(row?.className).toContain("lg:pe-8");
     expect(screen.getByText("1,200").className).toContain("w-11");
     expect(screen.getByText("1,200").className).toContain("shrink-0");
+  });
+});
+
+describe("DeckRow & DeckGridCard visibility and labels (A1-25 / A1-26)", () => {
+  const parentDeck: DeckSummary = {
+    id: 10,
+    name: "Medicine",
+    parent_id: null,
+    new_count: 12,
+    learning_count: 5,
+    review_count: 30,
+    is_filtered: false,
+    collapsed: false,
+  };
+  const childDeck: DeckSummary = {
+    id: 11,
+    name: "Medicine::Cardiology",
+    parent_id: 10,
+    new_count: 4,
+    learning_count: 2,
+    review_count: 8,
+    is_filtered: false,
+    collapsed: false,
+  };
+
+  it("A1-25: keeps DeckRow action buttons visible without hover and labels rolled-up parent counts", () => {
+    const { container } = render(
+      <div>
+        <DeckRow
+          deck={parentDeck}
+          hasChildren={true}
+          onStudy={vi.fn()}
+          onRename={vi.fn()}
+          onOptions={vi.fn()}
+          onDelete={vi.fn()}
+          onRebuild={vi.fn()}
+          onEmpty={vi.fn()}
+        />
+        <DeckRow
+          deck={childDeck}
+          hasChildren={false}
+          onStudy={vi.fn()}
+          onRename={vi.fn()}
+          onOptions={vi.fn()}
+          onDelete={vi.fn()}
+          onRebuild={vi.fn()}
+          onEmpty={vi.fn()}
+        />
+      </div>,
+    );
+
+    const studyParent = screen.getByRole("button", { name: /Study Medicine$/i });
+    const actionsWrap = studyParent.parentElement!;
+    expect(actionsWrap.className).not.toContain("opacity-0");
+
+    expect(container.querySelectorAll('[data-testid="deck-includes-subdecks"]')).toHaveLength(1);
+    expect(screen.getByTestId("deck-includes-subdecks")).toHaveTextContent(/incl\. subdecks/i);
+  });
+
+  it("A1-26: DeckGridCard renders parent path breadcrumb, count labels, Options button, and always-visible menu", () => {
+    render(
+      <DeckGridCard
+        deck={childDeck}
+        hasChildren={false}
+        onStudy={vi.fn()}
+        onRename={vi.fn()}
+        onOptions={vi.fn()}
+        onDelete={vi.fn()}
+        onRebuild={vi.fn()}
+        onEmpty={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("deck-grid-parent")).toHaveTextContent("Medicine");
+    expect(screen.getByText("New")).toBeInTheDocument();
+    expect(screen.getByText("Learn")).toBeInTheDocument();
+    expect(screen.getByText("Due")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Settings for Medicine::Cardiology/i }),
+    ).toBeInTheDocument();
+    const moreBtn = screen.getByRole("button", {
+      name: /More actions for Medicine::Cardiology/i,
+    });
+    expect(moreBtn.parentElement?.className).not.toContain("opacity-0");
   });
 });

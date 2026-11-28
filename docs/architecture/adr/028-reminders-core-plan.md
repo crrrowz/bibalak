@@ -18,7 +18,7 @@ tab that is closed) cannot deliver at a given time.
    tokens, the style, the reminder settings and today's habits and logs, and
    returns the reminders due in the next 24 hours. Days come from the
    backend day index (rollover hour + offset), never from the UI.
-2. **One IPC command, `plan_reminders(settings, style)`** (async, ARCH3),
+2. **One IPC command, `plan_reminders(settings, style)`** (async),
    returning `ReminderPlanDto { items: PlannedReminderDto[], next_rollover_ms }`.
    Each item has a stable id per day (`daily:<day>`, `evening:<day>`,
    `habit:<id>:<HH:MM>:<day>`), `fire_at_ms`, a kind, i18n keys and args.

@@ -10,14 +10,14 @@ export type MediaLibraryPage = { items: Array<MediaLibraryItem>,
  */
 total_count: number, 
 /**
- * Total stored files in the library regardless of search filter.
+ * Total stored files matching the current search/kind/query scope.
  */
 library_count: number, 
 /**
- * Total stored files with zero references across all notes.
+ * Total stored files in the current scope with zero references across all notes.
  */
 unused_count: number, 
 /**
- * Combined size in bytes of all stored files in the library.
+ * Combined size in bytes of stored files matching the active filter.
  */
 total_bytes: number, };

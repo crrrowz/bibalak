@@ -202,7 +202,7 @@ export function UnscheduledDrawer({
                 {task.title}
               </p>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-muted-foreground">
+                <span className="min-w-0 truncate text-[11px] text-muted-foreground">
                   {task.due_date ?? task.list_name ?? t("matrix.task.inbox")}
                 </span>
                 <Button
@@ -211,7 +211,7 @@ export function UnscheduledDrawer({
                   size="sm"
                   aria-label={t("calendar.scheduleTaskAria", { title: task.title })}
                   onClick={() => onOpenScheduleDialog(task)}
-                  className="h-6 px-2 text-[11px]"
+                  className="h-6 shrink-0 px-2 text-[11px]"
                 >
                   {t("calendar.scheduleTask")}
                 </Button>

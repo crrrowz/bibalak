@@ -106,18 +106,15 @@ fn t1_t2_t4_scoped_deck_export_media_and_anki_compatibility() {
         .unwrap_err();
     assert!(matches!(err, CoreError::Invalid(_)));
 
-    // Custom notetype with CSS url(...), template <script src="_helper.js">, and keepsakePreset JSON.
+    // Custom notetype with CSS url(...), and keepsakePreset JSON.
     let nt_id = col.create_notetype("LangCard", 0).unwrap().id;
-    col.save_template(
+    col.save_template(nt_id, 0, "Card 1", "{{Front}}", "{{Back}}")
+        .unwrap();
+    col.save_notetype_css(
         nt_id,
-        0,
-        "Card 1",
-        r#"<script src="_helper.js"></script>{{Front}}"#,
-        "{{Back}}",
+        r#"@import url("_helper.css"); .card { background: url("bg.jpg"); }"#,
     )
     .unwrap();
-    col.save_notetype_css(nt_id, r#".card { background: url("bg.jpg"); }"#)
-        .unwrap();
     let rev_nt = col
         .list_notetypes()
         .unwrap()
@@ -128,7 +125,7 @@ fn t1_t2_t4_scoped_deck_export_media_and_anki_compatibility() {
 
     // Media files: used in target deck, used in template/CSS, used only in sibling, orphan, unused _font.
     store.add("in_deck.png", b"deck-img").unwrap();
-    store.add("_helper.js", b"console.log(1);").unwrap();
+    store.add("_helper.css", b".card{}").unwrap();
     store.add("bg.jpg", b"bg-bytes").unwrap();
     store.add("other_deck.png", b"other-img").unwrap();
     store.add("orphan.png", b"orphan-bytes").unwrap();
@@ -201,7 +198,7 @@ fn t1_t2_t4_scoped_deck_export_media_and_anki_compatibility() {
         .collect();
     assert_eq!(
         selected_names,
-        BTreeSet::from(["_helper.js".into(), "bg.jpg".into(), "in_deck.png".into()])
+        BTreeSet::from(["_helper.css".into(), "bg.jpg".into(), "in_deck.png".into()])
     );
 
     let out_apkg = dir.path().join("lang.apkg");

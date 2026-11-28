@@ -1,4 +1,5 @@
 use crate::error::CoreResult;
+use crate::ipc::IntegrityReport;
 
 /// Database maintenance, backup, and media-reference persistence.
 pub trait MaintenanceStore: Send + Sync {
@@ -9,8 +10,8 @@ pub trait MaintenanceStore: Send + Sync {
     /// (ms), which anchors the day-number used for scheduling.
     fn ensure_collection(&self, now_ms: i64) -> CoreResult<i64>;
 
-    /// Run `PRAGMA integrity_check`. Returns empty vec when healthy.
-    fn integrity_check(&self, now_ms: i64) -> CoreResult<Vec<String>>;
+    /// Run `PRAGMA integrity_check` and orphan subdeck repair, returning structured counts.
+    fn integrity_check(&self, now_ms: i64) -> CoreResult<IntegrityReport>;
 
     /// Run `PRAGMA optimize; VACUUM` to compact and tune the database.
     fn optimize(&self) -> CoreResult<()>;

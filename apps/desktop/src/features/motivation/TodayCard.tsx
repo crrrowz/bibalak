@@ -150,7 +150,7 @@ export function TodayCard({ decks, onStudy }: TodayCardProps) {
           <div className="flex min-w-0 flex-1 items-center gap-3.5">
             <GoalRing earned={state.today_xp} goal={state.daily_goal_xp} size={56} />
             <div className="min-w-0 flex-1 space-y-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                 <h2
                   data-testid="today-headline"
                   className="tnum text-base font-semibold tracking-tight text-foreground"
@@ -164,9 +164,6 @@ export function TodayCard({ decks, onStudy }: TodayCardProps) {
                     {t("motivation.today.title")}
                   </span>
                 )}
-                <span className="text-xs text-muted-foreground" aria-hidden="true">
-                  ·
-                </span>
                 <div className="relative" ref={goalPopoverRef}>
                   <button
                     type="button"
@@ -230,7 +227,7 @@ export function TodayCard({ decks, onStudy }: TodayCardProps) {
               {/* One short secondary line */}
               <div
                 data-testid="today-secondary-line"
-                className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground"
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
               >
                 <span
                   className={cn(
@@ -246,9 +243,7 @@ export function TodayCard({ decks, onStudy }: TodayCardProps) {
                     ? t(goalReachedKey)
                     : t("motivation.goal.remaining", { xp: formatNumber(remainingXp) })}
                 </span>
-                <span aria-hidden="true">·</span>
                 <span className="tnum">{dueSummaryText}</span>
-                <span aria-hidden="true">·</span>
                 <span>{t("motivation.today.xpGoalHint")}</span>
 
                 <a
@@ -301,7 +296,7 @@ export function TodayCard({ decks, onStudy }: TodayCardProps) {
           </div>
 
           {/* Start / Continue CTA */}
-          <div className="flex shrink-0 items-center justify-end">
+          <div data-toast-avoid="" className="flex shrink-0 items-center justify-end">
             {nextDueDeck ? (
               <Button
                 size="lg"

@@ -13,7 +13,11 @@ pub mod testkit;
 pub mod text_import;
 pub mod writer;
 
-pub use reader::{read_package, read_package_with_media, read_package_with_progress};
+pub use reader::{
+    read_package, read_package_with_limits, read_package_with_media, read_package_with_progress,
+    read_package_with_progress_stats, PackageMediaStats, PackageReadLimits, MAX_COLLECTION_BYTES,
+    MAX_MEDIA_BYTES, MAX_MEDIA_MAP_BYTES, MAX_TOTAL_PACKAGE_BYTES,
+};
 pub use writer::{
     write_apkg, write_apkg_streaming, write_apkg_with_media, ExportProgressUpdate,
     StreamingExportOutcome,

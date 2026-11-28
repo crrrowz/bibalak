@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::error::CoreResult;
-use crate::ipc::StatsDto;
+use crate::ipc::{DueForecastDto, StatsDto};
 use crate::model::{Card, Revlog, StudyCard};
 use crate::scheduling::{CardState, SchedConfig};
 
@@ -185,6 +185,16 @@ pub trait StudyStore: Send + Sync {
         created_ms: i64,
     ) -> CoreResult<StatsDto>;
 
+    /// Lightweight N-day due-review forecast + `today_date` for Calendar (A5-08).
+    fn due_forecast(
+        &self,
+        days: u32,
+        tz_offset_minutes: i32,
+        rollover_hour: u8,
+        now_ms: i64,
+        created_ms: i64,
+    ) -> CoreResult<DueForecastDto>;
+
     /// Set `queue = -1` for each card id.
     fn suspend_cards(&self, card_ids: &[i64], now_ms: i64) -> CoreResult<()>;
 
@@ -286,12 +296,13 @@ pub trait StudyStore: Send + Sync {
     }
 
     /// Soft-delete `freeze_earn:streak:<day>` if no active `progress_ledger`
-    /// rows remain on `day` after an answer undo.
+    /// rows remain on `day` after an undo.
     fn revoke_streak_freeze_if_inactive(
         &self,
         _day: i32,
-        _day_start_ms: i64,
-        _day_end_ms: i64,
+        _tz_offset_minutes: i32,
+        _rollover_hour: u8,
+        _created_ms: i64,
         _now_ms: i64,
     ) -> CoreResult<()> {
         Ok(())
@@ -336,4 +347,25 @@ pub trait StudyStore: Send + Sync {
 
     /// Active card states and recent review pace for workload simulation.
     fn workload_snapshot(&self, deck_ids: &[i64]) -> CoreResult<WorkloadSnapshot>;
+
+    /// Perform a full deck progress reset for `deck_ids`, returning a snapshot for undo.
+    fn reset_deck_progress(
+        &self,
+        deck_ids: &[i64],
+        today: i32,
+        now_ms: i64,
+    ) -> CoreResult<DeckResetSnapshot>;
+
+    /// Restore everything wiped by [`StudyStore::reset_deck_progress`].
+    fn restore_deck_reset(&self, snapshot: &DeckResetSnapshot, now_ms: i64) -> CoreResult<()>;
+}
+
+/// Complete before-state captured by [`StudyStore::reset_deck_progress`] for undo.
+#[derive(Debug, Default, Clone)]
+pub struct DeckResetSnapshot {
+    pub cards: Vec<Card>,
+    pub revlogs: Vec<Revlog>,
+    pub soft_deleted_ledger_ids: Vec<String>,
+    pub revoked_pet_credit_ids: Vec<String>,
+    pub day_limit_overrides: Vec<(i64, i32, u32)>,
 }

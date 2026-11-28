@@ -50,7 +50,7 @@ export function useNoteComposer({
   const [fields, setFields] = useState<string[]>([]);
   const [tags, setTags] = useState("");
   const [lastResult, setLastResult] = useState<string | null>(null);
-  const [duplicateWarning, setDuplicateWarning] = useState(false);
+  const [duplicateNoteId, setDuplicateNoteId] = useState<number | null>(null);
   const [formVersion, setFormVersion] = useState(0);
 
   const availableNotetypes = notetypes.data ?? [];
@@ -90,17 +90,17 @@ export function useNoteComposer({
   const firstField = fields[0] ?? "";
   useEffect(() => {
     if (!selectedNotetype || !enabled) {
-      setDuplicateWarning(false);
+      setDuplicateNoteId(null);
       return;
     }
     if (!stripHtml(firstField)) {
-      setDuplicateWarning(false);
+      setDuplicateNoteId(null);
       return;
     }
     let cancelled = false;
     const timer = setTimeout(() => {
       void ipc.checkDuplicate(selectedNotetype.id, firstField).then((dupId) => {
-        if (!cancelled) setDuplicateWarning(dupId !== null);
+        if (!cancelled) setDuplicateNoteId(dupId);
       });
     }, 300);
     return () => {
@@ -108,6 +108,16 @@ export function useNoteComposer({
       clearTimeout(timer);
     };
   }, [firstField, selectedNotetype, enabled]);
+
+  const duplicateNoteQuery = useQuery({
+    queryKey: queryKeys.notesDetail(duplicateNoteId ?? -1),
+    queryFn: () => ipc.getNote(duplicateNoteId!),
+    enabled: enabled && duplicateNoteId !== null && typeof ipc.getNote === "function",
+    staleTime: 30_000,
+  });
+  const duplicateNoteTitle = duplicateNoteQuery.data?.fields[0]?.value
+    ? stripHtml(duplicateNoteQuery.data.fields[0].value)
+    : null;
 
   const handleNotetypeChange = (id: number) => {
     const nt = notetypes.data?.find((n) => n.id === id);
@@ -146,6 +156,7 @@ export function useNoteComposer({
       if (selectedNotetype) {
         setFields(selectedNotetype.field_names.map(() => ""));
       }
+      setDuplicateNoteId(null);
       setFormVersion((v) => v + 1);
       setTags("");
       void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
@@ -182,7 +193,9 @@ export function useNoteComposer({
     tags,
     setTags,
     lastResult,
-    duplicateWarning,
+    duplicateWarning: duplicateNoteId !== null,
+    duplicateNoteId,
+    duplicateNoteTitle,
     formVersion,
     handleNotetypeChange,
     handleDeckChange,

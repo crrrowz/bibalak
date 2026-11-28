@@ -555,6 +555,7 @@ impl Collection {
             NIL_USER_ID,
             self.today_start_ms(),
             self.today_end_ms(),
+            today,
         )?;
         let reward = reward_for_task(totals.tasks_rewarded_today).map(|r| RewardGrant {
             id: ledger_id(NIL_USER_ID, &source_key),
@@ -586,6 +587,9 @@ impl Collection {
         let granted = outcome.reward_granted;
         let task_id = id.to_string();
         let revoke_key = granted.then_some(source_key);
+        let tz_offset = self.tz_offset_minutes.load(Ordering::Relaxed);
+        let rollover = self.rollover_hour.load(Ordering::Relaxed);
+        let created_ms = self.created_ms;
         self.record_undo(
             UndoAction::CompleteTask {
                 title: existing.title,
@@ -599,8 +603,13 @@ impl Collection {
                     None,
                     revoke_key.as_deref(),
                     undo_now,
-                )
-                .map(|_| ())
+                )?;
+                if revoke_key.is_some() {
+                    s.revoke_streak_freeze_if_inactive(
+                        today, tz_offset, rollover, created_ms, undo_now,
+                    )?;
+                }
+                Ok(())
             },
         );
         let _ = self.reconcile_motivation(false)?;
@@ -632,6 +641,17 @@ impl Collection {
             Some(&source_key),
             now_ms,
         )?;
+        if prev_grant.is_some() {
+            if let Some(day) = prev_completed_day {
+                self.storage.revoke_streak_freeze_if_inactive(
+                    day,
+                    self.tz_offset_minutes.load(Ordering::Relaxed),
+                    self.rollover_hour.load(Ordering::Relaxed),
+                    self.created_ms,
+                    now_ms,
+                )?;
+            }
+        }
         let task_id = id.to_string();
         self.record_undo(
             UndoAction::ReopenTask {
@@ -662,6 +682,7 @@ impl Collection {
             .ok_or_else(|| CoreError::NotFound(format!("task '{id}' not found")))?;
         let now_ms = self.clock.now_ms();
         self.storage.soft_delete_task(NIL_USER_ID, id, now_ms)?;
+        let _ = self.reconcile_motivation(true)?;
         let task_id = id.to_string();
         self.record_undo(
             UndoAction::DeleteTask {
@@ -1147,6 +1168,7 @@ impl Collection {
             .ok_or_else(|| CoreError::NotFound(format!("habit '{id}' not found")))?;
         let now_ms = self.clock.now_ms();
         let log_ids = self.storage.soft_delete_habit(NIL_USER_ID, id, now_ms)?;
+        let _ = self.reconcile_motivation(true)?;
         let habit_id = id.to_string();
         self.record_undo(
             UndoAction::DeleteHabit {
@@ -1258,6 +1280,9 @@ impl Collection {
         let revoke_on_undo =
             (outcome.reward_granted && prev_reward.is_none()).then_some(source_key);
         let habit_id = habit.id;
+        let tz_offset = self.tz_offset_minutes.load(Ordering::Relaxed);
+        let rollover = self.rollover_hour.load(Ordering::Relaxed);
+        let created_ms = self.created_ms;
         self.record_undo(
             UndoAction::LogHabit { title: habit.title },
             move |s, undo_now| {
@@ -1269,7 +1294,13 @@ impl Collection {
                     prev_reward.as_ref(),
                     revoke_on_undo.as_deref(),
                     undo_now,
-                )
+                )?;
+                if revoke_on_undo.is_some() {
+                    s.revoke_streak_freeze_if_inactive(
+                        day_index, tz_offset, rollover, created_ms, undo_now,
+                    )?;
+                }
+                Ok(())
             },
         );
         let _ = self.reconcile_motivation(!completed)?;
@@ -1891,7 +1922,7 @@ mod tests {
         .unwrap();
         let after_yesterday = c.progress_summary().unwrap();
         assert_eq!(after_yesterday.total_xp, 20);
-        assert_eq!(after_yesterday.today_xp, 20);
+        assert_eq!(after_yesterday.today_xp, 10);
 
         // Older day (today - 2) and future day (today + 1) save without reward.
         let old = c

@@ -7544,7 +7544,7 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
 | Crate | Version | License |
 | --- | --- | --- |
 | `tokio-util` | `0.7.18` | `MIT` |
-| `tokio` | `1.52.3` | `MIT` |
+| `tokio` | `1.54.1` | `MIT` |
 
 ````text
 MIT License
@@ -7803,7 +7803,7 @@ DEALINGS IN THE SOFTWARE.
 | `adler2` | `2.0.1` | `0BSD OR MIT OR Apache-2.0` |
 | `anyhow` | `1.0.105` | `MIT OR Apache-2.0` |
 | `async-channel` | `2.5.0` | `Apache-2.0 OR MIT` |
-| `async-executor` | `1.14.0` | `Apache-2.0 OR MIT` |
+| `async-executor` | `1.14.1` | `Apache-2.0 OR MIT` |
 | `async-io` | `2.6.0` | `Apache-2.0 OR MIT` |
 | `async-lock` | `3.4.2` | `Apache-2.0 OR MIT` |
 | `async-process` | `2.5.0` | `Apache-2.0 OR MIT` |
@@ -7822,7 +7822,7 @@ DEALINGS IN THE SOFTWARE.
 | `endi` | `1.1.1` | `MIT` |
 | `erased-serde` | `0.4.10` | `MIT OR Apache-2.0` |
 | `event-listener-strategy` | `0.5.4` | `Apache-2.0 OR MIT` |
-| `event-listener` | `5.4.1` | `Apache-2.0 OR MIT` |
+| `event-listener` | `5.4.2` | `Apache-2.0 OR MIT` |
 | `fastrand` | `2.5.0` | `Apache-2.0 OR MIT` |
 | `futures-lite` | `2.6.1` | `Apache-2.0 OR MIT` |
 | `hermit-abi` | `0.5.2` | `MIT OR Apache-2.0` |
@@ -7842,7 +7842,7 @@ DEALINGS IN THE SOFTWARE.
 | `proc-macro-crate` | `3.5.0` | `MIT OR Apache-2.0` |
 | `proc-macro2` | `1.0.106` | `MIT OR Apache-2.0` |
 | `quote` | `1.0.45` | `MIT OR Apache-2.0` |
-| `rustix` | `1.1.4` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` |
+| `rustix` | `1.1.6` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` |
 | `rustversion` | `1.0.22` | `MIT OR Apache-2.0` |
 | `semver` | `1.0.28` | `MIT OR Apache-2.0` |
 | `serde-untagged` | `0.1.9` | `MIT OR Apache-2.0` |

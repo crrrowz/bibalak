@@ -251,7 +251,11 @@ pub async fn preview_template(
             deck: "Preview",
             subdeck: "Preview",
             ..RenderRequest::default()
-        });
+        })
+        .map_err(|e| IpcError {
+            kind: bibalak_core::ipc::IpcErrorKind::Invalid,
+            message: e.to_string(),
+        })?;
         Ok(RenderedPreview {
             question: rendered.question,
             answer: rendered.answer,

@@ -178,8 +178,36 @@ export const mockNotetypeDetails: Record<number, NotetypeDetail> = {
   },
 };
 
+function renderTemplateHtml(tmpl: string, fieldNames: string[], values: string[]): string {
+  let out = tmpl;
+  fieldNames.forEach((name, idx) => {
+    const val = values[idx] ?? `(${name})`;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`\\{\\{(?:cloze:|type:|text:)?${escaped}\\}\\}`, "g"), val);
+  });
+  return out;
+}
+
 export const notetypeMocks = {
   list_notetypes: mockNotetypeSummaries,
   get_notetype: (args?: { notetypeId?: number }) =>
     args?.notetypeId ? (mockNotetypeDetails[args.notetypeId] ?? null) : null,
+  preview_template: (args?: {
+    notetypeId?: number;
+    templateOrd?: number;
+    sampleFields?: string[];
+    qfmt?: string | null;
+    afmt?: string | null;
+  }) => {
+    const nt = args?.notetypeId ? mockNotetypeDetails[args.notetypeId] : mockNotetypeDetails[1];
+    const ord = BigInt(args?.templateOrd ?? 0);
+    const tmpl = nt?.templates.find((t) => t.ord === ord) ?? nt?.templates[0];
+    const fieldNames = nt?.fields.map((f) => f.name) ?? ["Front", "Back"];
+    const values = args?.sampleFields ?? fieldNames.map((n) => `(${n})`);
+    const q = renderTemplateHtml(args?.qfmt ?? tmpl?.qfmt ?? "{{Front}}", fieldNames, values);
+    const rawA = args?.afmt ?? tmpl?.afmt ?? "{{FrontSide}}<hr id=answer>{{Back}}";
+    const a = renderTemplateHtml(rawA.replace(/\{\{FrontSide\}\}/g, q), fieldNames, values);
+    return { question: q, answer: a };
+  },
+  lint_notetype: () => [],
 };

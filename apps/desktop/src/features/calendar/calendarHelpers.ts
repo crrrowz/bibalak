@@ -1,4 +1,5 @@
 import type { HabitDto, HabitSection, StatsDto, WeekStart } from "@bibalak/ipc-types";
+import type { DueForecastDto } from "@/lib/ipc";
 import { formatDate } from "@/lib/i18n";
 import { isHabitScheduledForDay } from "@/features/habits/habitHelpers";
 
@@ -217,19 +218,23 @@ export function computeWindowMs(
 }
 
 /**
- * Map `StatsDto.forecast` counts to `"YYYY-MM-DD"` dates using the same
- * date resolution strategy as `StatsScreen` / `YearHeatmap`.
+ * Map `DueForecastDto.forecast` (or legacy `StatsDto.forecast`) counts to
+ * `"YYYY-MM-DD"` dates.
  */
-export function forecastByDate(stats: StatsDto | undefined): Map<string, number> {
+export function forecastByDate(source: DueForecastDto | StatsDto | undefined): Map<string, number> {
   const map = new Map<string, number>();
-  if (!stats) return map;
-  for (const item of stats.forecast) {
+  if (!source) return map;
+  for (const item of source.forecast) {
     if (item.count <= 0) continue;
     const dateStr =
       item.date ||
-      stats.dates?.[stats.today + item.day] ||
-      toIsoDateLocal(new Date(stats.day0_ms + (stats.today + item.day) * 86_400_000));
-    map.set(dateStr, (map.get(dateStr) ?? 0) + item.count);
+      ("dates" in source ? source.dates?.[source.today + item.day] : undefined) ||
+      ("day0_ms" in source
+        ? toIsoDateLocal(new Date(source.day0_ms + (source.today + item.day) * 86_400_000))
+        : "");
+    if (dateStr) {
+      map.set(dateStr, (map.get(dateStr) ?? 0) + item.count);
+    }
   }
   return map;
 }

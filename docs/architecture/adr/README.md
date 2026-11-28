@@ -34,13 +34,21 @@ only after the owner approves.
 
 ## Proposed
 
-| ADR                                  | Topic                                                                                                 |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| [028](028-reminders-core-plan.md)    | Reminders: pure rules in `bibalak-core`, `plan_reminders` IPC, `NotificationsApi` capability (16c)    |
-| [029](029-ipc-security-hardening.md) | IPC path guards, Rust-mediated file dialogs, per-window capabilities, CSP tightening                  |
-| [030](030-note-type-presets.md)      | Note type presets: Simple-mode config in `notetypes.config`, pure-core compiler, Anki compat          |
-| [031](031-deck-export.md)            | Deck export: scoped export, `MediaStore::open_reader` streaming, atomic temp write, cancel & progress |
-| [032](032-deck-reset.md)             | Deck progress reset: `deck_card_ids` IPC, reuse `forget_cards` with undo                              |
+| ADR                                       | Topic                                                                                                 |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [028](028-reminders-core-plan.md)         | Reminders: pure rules in `bibalak-core`, `plan_reminders` IPC, `NotificationsApi` capability (16c)    |
+| [029](029-ipc-security-hardening.md)      | IPC path guards, Rust-mediated file dialogs, per-window capabilities, CSP tightening                  |
+| [030](030-note-type-presets.md)           | Note type presets: Simple-mode config in `notetypes.config`, pure-core compiler, Anki compat          |
+| [031](031-deck-export.md)                 | Deck export: scoped export, `MediaStore::open_reader` streaming, atomic temp write, cancel & progress |
+| [032](032-deck-reset.md)                  | Deck progress reset: `deck_card_ids` IPC, reuse `forget_cards` with undo                              |
+| [033](033-browse-sort-index.md)           | Default Browse sort index: `idx_notes_sort_field ON notes(sort_field COLLATE NOCASE)` (schema v16)    |
+| [034](034-full-deck-reset.md)             | Full deck progress reset (`reset_deck_progress` IPC, revlog + ledger wipe + undo)                     |
+| [035](035-undo-history-and-cap.md)        | Bounded undo stack (200 steps, `VecDeque`) and paged `undo_history` IPC                               |
+| [036](036-due-forecast-ipc.md)            | Lightweight `due_forecast` IPC for Calendar without full `get_stats` scan                             |
+| [037](037-stats-deck-algorithms-batch.md) | Batch `list_deck_algorithms` IPC for Stats without N+1 `get_deck_config` round-trips                  |
+| [038](038-raw-binary-save-media.md)       | Raw binary IPC body for `save_media` (`Uint8Array` + `x-media-filename` header)                       |
+| [039](039-opaque-plugin-host.md)          | Opaque-origin sandboxed plugin host (`iframe sandbox="allow-scripts"`) and `ui:toast` / `ui:navigate` |
+| [040](040-empty-cards-check.md)           | Empty Cards check and confirmed removal (`find_empty_cards` / `delete_empty_cards`, `A2-12`)          |
 
 ## Reserved numbers (not written yet)
 
@@ -58,6 +66,6 @@ reservation is dropped, leave the number unused rather than reusing it.
 
 ## Schema version rule
 
-The live schema is **v15** (16d: [ADR-027](027-daily-motivation.md) `motivation_settings`, `monthly_badges` and index `idx_revlog_new_kind`; 14b: v12 [ADR-025](025-game-inventory-and-spending.md), v13 [ADR-026](026-game-unlocks-and-achievements.md); 14c: v14 indexes `idx_game_pet_credits_ledger` & `idx_progress_ledger_active_created`) (`crates/bibalak-db/src/schema.rs`, `MIGRATIONS`).
+The live schema is **v16** ([ADR-033](033-browse-sort-index.md) `idx_notes_sort_field`; v15: [ADR-027](027-daily-motivation.md) `motivation_settings`, `monthly_badges` and index `idx_revlog_new_kind`; 14b: v12 [ADR-025](025-game-inventory-and-spending.md), v13 [ADR-026](026-game-unlocks-and-achievements.md); 14c: v14 indexes `idx_game_pet_credits_ledger` & `idx_progress_ledger_active_created`) (`crates/bibalak-db/src/schema.rs`, `MIGRATIONS`).
 Version numbers written in blueprints (`v6→v7`, `v7→v8`) are placeholders: **v10**
 is taken by **M1** ([ADR-018](018-productivity-data-model.md)). Never edit a shipped migration.

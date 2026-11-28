@@ -16,12 +16,39 @@
  * and DIRECTION, and add it to the language picker in Settings.
  */
 import { create } from "zustand";
-import { en, type LocaleKey } from "@/locales/en";
-import { ar } from "@/locales/ar";
+import type { LocaleKey } from "@/locales/en";
 
 export type Locale = "en" | "ar";
 
-const LOCALES: Record<Locale, Record<LocaleKey, string>> = { en, ar };
+type LocaleTable = Record<LocaleKey, string>;
+
+const CACHE_SLOT = "__BIBALAK_LOCALE_CACHE__";
+const g = globalThis as Record<string, unknown>;
+const LOCALES = (g[CACHE_SLOT] ?? (g[CACHE_SLOT] = {})) as Partial<Record<Locale, LocaleTable>>;
+const pendingLoads: Partial<Record<Locale, Promise<void>>> = {};
+
+export function ensureLocaleLoaded(locale: Locale): Promise<void> {
+  if (LOCALES[locale]) return Promise.resolve();
+  if (pendingLoads[locale]) return pendingLoads[locale]!;
+  const p = (
+    locale === "ar"
+      ? import("@/locales/ar").then((m) => {
+          LOCALES.ar = m.ar;
+        })
+      : import("@/locales/en").then((m) => {
+          LOCALES.en = m.en;
+        })
+  ).finally(() => {
+    delete pendingLoads[locale];
+  });
+  pendingLoads[locale] = p;
+  return p;
+}
+
+export function hasTranslationKey(key: string): boolean {
+  const active = LOCALES[getLocale()] ?? LOCALES.en ?? LOCALES.ar;
+  return active ? Object.prototype.hasOwnProperty.call(active, key) : false;
+}
 const DIRECTION: Record<Locale, "ltr" | "rtl"> = { en: "ltr", ar: "rtl" };
 /** Latin digits in Arabic UI (`-u-nu-latn`), as most Iraqi apps use. */
 const INTL_TAG: Record<Locale, string> = { en: "en", ar: "ar-u-nu-latn" };
@@ -76,8 +103,15 @@ export const useLocale = create<LocaleState>((set) => ({
     } catch {
       // not persisted; still switch for this session
     }
-    applyToDocument(locale);
-    set({ locale });
+    if (LOCALES[locale]) {
+      applyToDocument(locale);
+      set({ locale });
+      return;
+    }
+    void ensureLocaleLoaded(locale).then(() => {
+      applyToDocument(locale);
+      set({ locale });
+    });
   },
 }));
 
@@ -106,7 +140,7 @@ export function t(
   vars?: Record<string, string | number>,
   locale: Locale = getLocale(),
 ): string {
-  return interpolate(LOCALES[locale][key] ?? en[key] ?? key, vars);
+  return interpolate(LOCALES[locale]?.[key] ?? LOCALES.en?.[key] ?? key, vars);
 }
 
 /** Keys that have plural variants: `<base>_one`, `<base>_other`, … */
@@ -134,8 +168,8 @@ export function tn(
     rules = new Intl.PluralRules(INTL_TAG[locale]);
     pluralRules.set(locale, rules);
   }
-  const table = LOCALES[locale] as Record<string, string>;
-  const str = table[`${base}_${rules.select(count)}`] ?? table[`${base}_other`] ?? base;
+  const table = (LOCALES[locale] ?? LOCALES.en) as Record<string, string> | undefined;
+  const str = table?.[`${base}_${rules.select(count)}`] ?? table?.[`${base}_other`] ?? base;
   return interpolate(str, { count: formatNumber(count, undefined, locale), ...vars });
 }
 

@@ -859,3 +859,608 @@ fn apkg_import_export_round_trip_is_lossless() {
     assert_eq!(reimported_model.notes.len(), imported_model.notes.len());
     assert_eq!(reimported_model.cards.len(), imported_model.cards.len());
 }
+
+#[test]
+fn a2_01_v18_import_preserves_css_field_config_deck_kind_and_deck_config() {
+    use bibalak_core::ipc::{parse_field_options, parse_notetype_sort_field, FieldDirection};
+    use std::io::Write;
+
+    fn pb_varint(mut v: u64, out: &mut Vec<u8>) {
+        loop {
+            let mut b = (v & 0x7f) as u8;
+            v >>= 7;
+            if v != 0 {
+                b |= 0x80;
+            }
+            out.push(b);
+            if v == 0 {
+                break;
+            }
+        }
+    }
+    fn pb_varint_field(field: u32, v: u64, out: &mut Vec<u8>) {
+        pb_varint(u64::from(field) << 3, out);
+        pb_varint(v, out);
+    }
+    fn pb_len_field(field: u32, bytes: &[u8], out: &mut Vec<u8>) {
+        pb_varint((u64::from(field) << 3) | 2, out);
+        pb_varint(bytes.len() as u64, out);
+        out.extend_from_slice(bytes);
+    }
+    fn pb_f32_field(field: u32, v: f32, out: &mut Vec<u8>) {
+        pb_varint((u64::from(field) << 3) | 5, out);
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("collection.anki21");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER, mod INTEGER, scm INTEGER,
+                ver INTEGER, dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT,
+                decks TEXT, dconf TEXT, tags TEXT);
+            CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT NOT NULL, mtime_secs INTEGER,
+                usn INTEGER, common BLOB, kind BLOB);
+            CREATE TABLE deck_config (id INTEGER PRIMARY KEY, name TEXT NOT NULL, mtime_secs INTEGER,
+                usn INTEGER, config BLOB);
+            CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT NOT NULL, mtime_secs INTEGER,
+                usn INTEGER, config BLOB);
+            CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB,
+                PRIMARY KEY (ntid, ord));
+            CREATE TABLE templates (ntid INTEGER, ord INTEGER, name TEXT, mtime_secs INTEGER,
+                usn INTEGER, config BLOB, PRIMARY KEY (ntid, ord));
+            CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER, mod INTEGER,
+                usn INTEGER, tags TEXT, flds TEXT, sfld TEXT, csum INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER,
+                mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER,
+                factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER, odue INTEGER,
+                odid INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE revlog (id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER,
+                ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER);
+            INSERT INTO col (id, crt, mod, scm, ver, dty, usn, ls, conf, models, decks, dconf, tags)
+                VALUES (1, 1600000000, 1600000000, 1600000000, 18, 0, 0, 0, '{}', '{}', '{}', '{}', '{}');
+            "#,
+        )
+        .unwrap();
+
+        // Deck 2: Normal, collapsed = true, config_id = 2
+        let mut d_common = Vec::new();
+        pb_varint_field(1, 1, &mut d_common);
+        let mut d_normal = Vec::new();
+        pb_varint_field(1, 2, &mut d_normal);
+        let mut d_kind_normal = Vec::new();
+        pb_len_field(1, &d_normal, &mut d_kind_normal);
+        conn.execute(
+            "INSERT INTO decks (id, name, mtime_secs, usn, common, kind) VALUES (2, 'Arabic', 100, 0, ?1, ?2)",
+            rusqlite::params![d_common, d_kind_normal],
+        )
+        .unwrap();
+
+        // Deck 3: Filtered
+        let mut d_kind_filtered = Vec::new();
+        pb_len_field(2, b"\x08\x01", &mut d_kind_filtered);
+        conn.execute(
+            "INSERT INTO decks (id, name, mtime_secs, usn, common, kind) VALUES (3, 'Cram', 100, 0, X'', ?1)",
+            rusqlite::params![d_kind_filtered],
+        )
+        .unwrap();
+
+        // DeckConfig 2: new_per_day = 35, reviews_per_day = 150, learn_steps = [1.0, 15.0], desired_retention = 0.88
+        let mut dc_cfg = Vec::new();
+        let mut steps_bytes = Vec::new();
+        steps_bytes.extend_from_slice(&1.0f32.to_le_bytes());
+        steps_bytes.extend_from_slice(&15.0f32.to_le_bytes());
+        pb_len_field(1, &steps_bytes, &mut dc_cfg);
+        pb_varint_field(9, 35, &mut dc_cfg);
+        pb_varint_field(10, 150, &mut dc_cfg);
+        pb_f32_field(37, 0.88, &mut dc_cfg);
+        conn.execute(
+            "INSERT INTO deck_config (id, name, mtime_secs, usn, config) VALUES (2, 'CustomConf', 50, 0, ?1)",
+            [dc_cfg],
+        )
+        .unwrap();
+
+        // Notetype: kind=0 in config, sort_field_idx=1, css=".card { color: navy; }", template uses {{cloze-only:Text}}
+        let mut nt_cfg = Vec::new();
+        pb_varint_field(1, 0, &mut nt_cfg);
+        pb_varint_field(2, 1, &mut nt_cfg);
+        pb_len_field(3, b".card { color: navy; }", &mut nt_cfg);
+        conn.execute(
+            "INSERT INTO notetypes (id, name, mtime_secs, usn, config) VALUES (1700000000000, 'ClozeOnly', 0, 0, ?1)",
+            [nt_cfg],
+        )
+        .unwrap();
+
+        // Field 0: rtl=true, font="Amiri", size=24, description="Arabic text"
+        let mut f0_cfg = Vec::new();
+        pb_varint_field(2, 1, &mut f0_cfg);
+        pb_len_field(3, b"Amiri", &mut f0_cfg);
+        pb_varint_field(4, 24, &mut f0_cfg);
+        pb_len_field(5, b"Arabic text", &mut f0_cfg);
+        conn.execute(
+            "INSERT INTO fields (ntid, ord, name, config) VALUES (1700000000000, 0, 'Text', ?1)",
+            [f0_cfg],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO fields (ntid, ord, name, config) VALUES (1700000000000, 1, 'Extra', X'')",
+            [],
+        )
+        .unwrap();
+
+        let mut tcfg = Vec::new();
+        pb_len_field(1, b"{{cloze-only:Text}}", &mut tcfg);
+        pb_len_field(2, b"{{cloze-only:Text}}{{Extra}}", &mut tcfg);
+        conn.execute(
+            "INSERT INTO templates (ntid, ord, name, mtime_secs, usn, config)
+             VALUES (1700000000000, 0, 'Cloze', 0, 0, ?1)",
+            [tcfg],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data)
+             VALUES (1001, 'g1', 1700000000000, 1600000000, -1, '', '{{c1::hi}}\x1fnote', 'note', 0, 0, '')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor,
+             reps, lapses, left, odue, odid, flags, data)
+             VALUES (2001, 1001, 2, 0, 1600000000, -1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            [],
+        )
+        .unwrap();
+    }
+    let sqlite_bytes = std::fs::read(&db_path).unwrap();
+    let compressed = zstd::stream::encode_all(&sqlite_bytes[..], 0).unwrap();
+    let apkg = dir.path().join("v18.apkg");
+    {
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&apkg).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.start_file("collection.anki21b", opts).unwrap();
+        zip.write_all(&compressed).unwrap();
+        zip.start_file("media", opts).unwrap();
+        zip.write_all(b"").unwrap();
+        zip.finish().unwrap();
+    }
+
+    let (model, _) = read_package(&apkg, None).unwrap();
+    assert_eq!(
+        model.notetypes[0].kind, 1,
+        "cloze-only v18 notetype must be detected as cloze"
+    );
+    assert_eq!(
+        parse_notetype_sort_field(&model.notetypes[0].config_json),
+        1
+    );
+    let nt_cfg: serde_json::Value = serde_json::from_str(&model.notetypes[0].config_json).unwrap();
+    assert_eq!(nt_cfg["css"], ".card { color: navy; }");
+
+    let f0_opts = parse_field_options(&model.fields[0].config_json);
+    assert_eq!(f0_opts.direction, FieldDirection::Rtl);
+    assert_eq!(f0_opts.font, "Amiri");
+    assert_eq!(f0_opts.size, 24);
+    assert_eq!(f0_opts.description, "Arabic text");
+
+    let arabic_deck = model.decks.iter().find(|d| d.name == "Arabic").unwrap();
+    assert!(arabic_deck.collapsed);
+    assert!(!arabic_deck.is_filtered);
+    assert_eq!(arabic_deck.config_id, 2);
+
+    let cram_deck = model.decks.iter().find(|d| d.name == "Cram").unwrap();
+    assert!(cram_deck.is_filtered);
+
+    assert_eq!(model.deck_configs.len(), 1);
+    let dconf: serde_json::Value =
+        serde_json::from_str(&model.deck_configs[0].config_json).unwrap();
+    assert_eq!(dconf["new"]["perDay"], 35);
+    assert_eq!(dconf["rev"]["perDay"], 150);
+    assert_eq!(dconf["new"]["delays"], serde_json::json!([1, 15]));
+    assert!((dconf["fsrs"]["desiredRetention"].as_f64().unwrap() - 0.88).abs() < 0.01);
+}
+
+#[test]
+fn a2_03_apkg_round_trip_preserves_fsrs_memory_state() {
+    use bibalak_core::model::{Card, Deck, DeckConfig, Field, Note, Notetype, Template};
+    let s = SqliteStorage::open_in_memory().unwrap();
+    s.ensure_collection(1_700_000_000_000).unwrap();
+    let m = bibalak_core::model::CanonicalModel {
+        created_ms: Some(1_700_000_000_000),
+        deck_configs: vec![DeckConfig {
+            id: 2,
+            name: "FsrsConf".into(),
+            mod_ms: 0,
+            usn: 0,
+            config_json: r#"{"algo":"fsrs","fsrs":{"desiredRetention":0.92}}"#.into(),
+        }],
+        decks: vec![Deck {
+            id: 2,
+            name: "FsrsDeck".into(),
+            parent_id: None,
+            config_id: 2,
+            mod_ms: 0,
+            usn: -1,
+            collapsed: false,
+            is_filtered: false,
+        }],
+        notetypes: vec![Notetype {
+            id: 10,
+            name: "FsrsTest".into(),
+            kind: 0,
+            mod_ms: 0,
+            usn: -1,
+            config_json: "{}".into(),
+        }],
+        fields: vec![
+            Field {
+                notetype_id: 10,
+                ord: 0,
+                name: "Front".into(),
+                config_json: "{}".into(),
+            },
+            Field {
+                notetype_id: 10,
+                ord: 1,
+                name: "Back".into(),
+                config_json: "{}".into(),
+            },
+        ],
+        templates: vec![Template {
+            notetype_id: 10,
+            ord: 0,
+            name: "Card 1".into(),
+            qfmt: "{{Front}}".into(),
+            afmt: "{{Back}}".into(),
+            config_json: "{}".into(),
+        }],
+        notes: vec![Note {
+            id: 100,
+            guid: "fsrs_guid_1".into(),
+            notetype_id: 10,
+            mod_ms: 1_000,
+            usn: -1,
+            tags: vec![],
+            fields: vec!["Q".into(), "A".into()],
+            sort_field: Some("Q".into()),
+            checksum: None,
+        }],
+        cards: vec![Card {
+            id: 200,
+            note_id: 100,
+            deck_id: 2,
+            ord: 0,
+            mod_ms: 1_000,
+            usn: -1,
+            ctype: 2,
+            queue: 2,
+            due: 10,
+            interval: 10,
+            ease_factor: 2500,
+            reps: 3,
+            lapses: 0,
+            remaining: 0,
+            original_due: 0,
+            original_deck_id: 0,
+            flags: 0,
+            fsrs_stability: Some(14.5),
+            fsrs_difficulty: Some(5.2),
+            fsrs_last_review: Some(1_700_000_000_000),
+            data: None,
+        }],
+        revlog: vec![],
+    };
+    s.import(&m, 1_700_000_000_000).unwrap();
+
+    let exported = s.dump_collection().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let apkg = dir.path().join("fsrs.apkg");
+    bibalak_ankifmt::write_apkg(&exported, &apkg, None).unwrap();
+
+    let (reimported, _) = read_package(&apkg, None).unwrap();
+    assert_eq!(reimported.cards[0].fsrs_stability, Some(14.5));
+    assert_eq!(reimported.cards[0].fsrs_difficulty, Some(5.2));
+    assert!(reimported.cards[0].fsrs_last_review.is_some());
+    let data_val: serde_json::Value =
+        serde_json::from_str(reimported.cards[0].data.as_deref().unwrap()).unwrap();
+    assert_eq!(data_val["s"], 14.5);
+    assert_eq!(data_val["d"], 5.2);
+    assert_eq!(data_val["dr"], 0.92);
+}
+
+#[test]
+fn a2_07_apkg_export_preserves_image_occlusion_kind_without_preset() {
+    use bibalak_core::notetype_preset::KEEPSAKE_PRESET_CONFIG_KEY;
+    use bibalak_core::{Collection, SystemClock};
+    use std::io::Read;
+    use std::sync::Arc;
+
+    let s = SqliteStorage::open_in_memory().unwrap();
+    s.ensure_collection(1_700_000_000_000).unwrap();
+    let col = Collection::new(Box::new(s), Arc::new(SystemClock)).unwrap();
+    let io_nt = col
+        .list_notetypes()
+        .unwrap()
+        .into_iter()
+        .find(|n| n.is_image_occlusion == Some(true))
+        .expect("stock Image Occlusion notetype seeded");
+
+    let exported = col.dump_collection().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let apkg = dir.path().join("io.apkg");
+    bibalak_ankifmt::write_apkg(&exported, &apkg, None).unwrap();
+
+    // Verify keepsakePreset is still absent from exported models JSON while originalStockKind=6 is present.
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(&apkg).unwrap()).unwrap();
+    let mut bytes = Vec::new();
+    zip.by_name("collection.anki2")
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .unwrap();
+    let db_path = dir.path().join("io_check.anki2");
+    std::fs::write(&db_path, bytes).unwrap();
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let models_json: String = conn
+        .query_row("SELECT models FROM col LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+    assert!(!models_json.contains(KEEPSAKE_PRESET_CONFIG_KEY));
+    assert!(models_json.contains(r#""originalStockKind":6"#));
+
+    let (reimported, _) = read_package(&apkg, None).unwrap();
+    let s2 = SqliteStorage::open_in_memory().unwrap();
+    s2.import(&reimported, 1_700_000_000_000).unwrap();
+    let col2 = Collection::new(Box::new(s2), Arc::new(SystemClock)).unwrap();
+    let rt_io = col2
+        .list_notetypes()
+        .unwrap()
+        .into_iter()
+        .find(|n| n.name == io_nt.name)
+        .unwrap();
+    assert_eq!(rt_io.is_image_occlusion, Some(true));
+}
+
+#[test]
+fn a4_01_apkg_reader_rejects_oversized_zstd_payload_with_clear_error() {
+    use bibalak_ankifmt::{read_package_with_limits, PackageReadLimits};
+    use std::io::{Read, Write};
+
+    let dir = tempfile::tempdir().unwrap();
+    let src_apkg = dir.path().join("source.apkg");
+    testkit::write_sample_v11_apkg(&src_apkg).unwrap();
+
+    let mut coll_bytes = Vec::new();
+    {
+        let mut src_zip = zip::ZipArchive::new(std::fs::File::open(&src_apkg).unwrap()).unwrap();
+        src_zip
+            .by_name("collection.anki2")
+            .unwrap()
+            .read_to_end(&mut coll_bytes)
+            .unwrap();
+    }
+
+    let zstd_payload = vec![0u8; 8 * 1024 * 1024];
+    let compressed_media = zstd::stream::encode_all(&zstd_payload[..], 19).unwrap();
+
+    let bomb_apkg = dir.path().join("zstd_bomb.apkg");
+    {
+        let mut w = zip::ZipWriter::new(std::fs::File::create(&bomb_apkg).unwrap());
+        let opts: zip::write::FileOptions<()> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        w.start_file("collection.anki2", opts).unwrap();
+        w.write_all(&coll_bytes).unwrap();
+        w.start_file("media", opts).unwrap();
+        w.write_all(br#"{"0":"zstd_expand.bin"}"#).unwrap();
+        w.start_file("0", opts).unwrap();
+        w.write_all(&compressed_media).unwrap();
+        w.finish().unwrap();
+    }
+
+    let media_dir = dir.path().join("media");
+    let limits = PackageReadLimits {
+        max_media_bytes: 4 * 1024 * 1024,
+        ..PackageReadLimits::default()
+    };
+    let err = read_package_with_limits(&bomb_apkg, Some(&media_dir), limits).unwrap_err();
+    assert!(
+        err.to_string().contains("exceeds maximum"),
+        "expected clear size-cap error, got: {err}"
+    );
+    assert!(!media_dir.join("zstd_expand.bin").exists());
+}
+
+#[test]
+fn a2_05_apkg_reader_rejects_media_exceeding_100_mib() {
+    use bibalak_media::FsMediaStore;
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    let payload = vec![b'x'; 105 * 1024 * 1024];
+    let compressed = zstd::stream::encode_all(&payload[..], 1).unwrap();
+    let db_path = dir.path().join("col.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+                dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, decks TEXT, dconf TEXT, tags TEXT);
+            CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER, mod INTEGER, usn INTEGER,
+                tags TEXT, flds TEXT, sfld TEXT, csum INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER, mod INTEGER,
+                usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER, factor INTEGER,
+                reps INTEGER, lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE revlog (id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER, ivl INTEGER,
+                lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER);
+            INSERT INTO col VALUES (1, 1600000000, 1600000000, 1600000000, 11, 0, 0, 0, '{}', '{}', '{"1":{"id":1,"name":"Default","conf":1}}', '{"1":{"id":1,"name":"Default"}}', '{}');
+            "#,
+        )
+        .unwrap();
+    }
+    let sqlite_bytes = std::fs::read(&db_path).unwrap();
+    let apkg = dir.path().join("bomb.apkg");
+    {
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&apkg).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.start_file("collection.anki2", opts).unwrap();
+        zip.write_all(&sqlite_bytes).unwrap();
+        zip.start_file("media", opts).unwrap();
+        zip.write_all(br#"{"0":"huge.bin"}"#).unwrap();
+        zip.start_file("0", opts).unwrap();
+        zip.write_all(&compressed).unwrap();
+        zip.finish().unwrap();
+    }
+    let store = FsMediaStore::new(dir.path().join("collection.media"));
+    let res = read_package_with_media(&apkg, Some(&store));
+    assert!(
+        res.is_err(),
+        "oversized (>100 MiB) media entry must fail with clear error"
+    );
+}
+
+#[test]
+fn a4_02_apkg_reader_rejects_untrusted_sqlite_view_during_import() {
+    use std::io::{Read, Write};
+
+    let dir = tempfile::tempdir().unwrap();
+    let src_apkg = dir.path().join("source.apkg");
+    testkit::write_sample_v11_apkg(&src_apkg).unwrap();
+
+    let mut coll_bytes = Vec::new();
+    {
+        let mut src_zip = zip::ZipArchive::new(std::fs::File::open(&src_apkg).unwrap()).unwrap();
+        src_zip
+            .by_name("collection.anki2")
+            .unwrap()
+            .read_to_end(&mut coll_bytes)
+            .unwrap();
+    }
+
+    let db_path = dir.path().join("crafted.anki2");
+    std::fs::write(&db_path, &coll_bytes).unwrap();
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "DROP TABLE revlog;
+             CREATE VIEW revlog AS
+             SELECT 9999 AS id, 1 AS cid, -1 AS usn,
+                    (SELECT count(*) FROM sqlite_master) AS ease,
+                    1 AS ivl, 1 AS lastIvl, 2500 AS factor, 100 AS time, 0 AS type;",
+        )
+        .unwrap();
+    }
+    let crafted_bytes = std::fs::read(&db_path).unwrap();
+
+    let view_apkg = dir.path().join("view.apkg");
+    {
+        let mut w = zip::ZipWriter::new(std::fs::File::create(&view_apkg).unwrap());
+        let opts: zip::write::FileOptions<()> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        w.start_file("collection.anki2", opts).unwrap();
+        w.write_all(&crafted_bytes).unwrap();
+        w.finish().unwrap();
+    }
+
+    let err = read_package(&view_apkg, None).unwrap_err();
+    assert!(
+        err.to_string().contains("revlog"),
+        "expected missing base table error for revlog view, got: {err}"
+    );
+}
+
+#[test]
+fn a2_19_import_normalizes_colon_filenames_rewrites_refs_and_reports_counts() {
+    use bibalak_ankifmt::read_package_with_progress_stats;
+    use bibalak_core::ports::MediaStore;
+    use bibalak_media::FsMediaStore;
+    use std::io::Write;
+    use std::sync::atomic::AtomicBool;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("col.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+                dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, decks TEXT, dconf TEXT, tags TEXT);
+            CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER, mod INTEGER, usn INTEGER,
+                tags TEXT, flds TEXT, sfld TEXT, csum INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER, mod INTEGER,
+                usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER, factor INTEGER,
+                reps INTEGER, lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE revlog (id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER, ivl INTEGER,
+                lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER);
+            INSERT INTO col VALUES (1, 1600000000, 1600000000, 1600000000, 11, 0, 0, 0, '{}',
+                '{"1":{"id":1,"name":"Basic","type":0,"mod":0,"flds":[{"name":"Front","ord":0},{"name":"Back","ord":1}],"tmpls":[{"name":"Card 1","ord":0,"qfmt":"{{Front}}","afmt":"{{Back}}"}]}}',
+                '{"1":{"id":1,"name":"Default","conf":1}}', '{"1":{"id":1,"name":"Default"}}', '{}');
+            INSERT INTO notes VALUES (1, 'g1', 1, 100, -1, '', '[sound:12:30.mp3]' || char(31) || '<img src="CON.png">', 'front', 0, 0, '');
+            INSERT INTO cards VALUES (1, 1, 1, 0, 100, -1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, '');
+            "#,
+        )
+        .unwrap();
+    }
+    let sqlite_bytes = std::fs::read(&db_path).unwrap();
+    let apkg = dir.path().join("colons.apkg");
+    {
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&apkg).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.start_file("collection.anki2", opts).unwrap();
+        zip.write_all(&sqlite_bytes).unwrap();
+        zip.start_file("media", opts).unwrap();
+        zip.write_all(br#"{"0":"12:30.mp3","1":"CON.png","2":".."}"#)
+            .unwrap();
+        zip.start_file("0", opts).unwrap();
+        zip.write_all(b"mp3-data").unwrap();
+        zip.start_file("1", opts).unwrap();
+        zip.write_all(b"png-data").unwrap();
+        zip.start_file("2", opts).unwrap();
+        zip.write_all(b"bad-data").unwrap();
+        zip.finish().unwrap();
+    }
+
+    let store = FsMediaStore::new(dir.path().join("collection.media"));
+    let cancel = AtomicBool::new(false);
+    let (model, stats) =
+        read_package_with_progress_stats(&apkg, Some(&store), &cancel, &mut |_, _, _| {}).unwrap();
+    assert_eq!(stats.imported, 2);
+    assert_eq!(stats.renamed, 2);
+    assert_eq!(stats.skipped, 1);
+    assert_eq!(store.read("12_30.mp3").unwrap(), b"mp3-data");
+    assert_eq!(store.read("_CON.png").unwrap(), b"png-data");
+    assert_eq!(model.notes[0].fields[0], "[sound:12_30.mp3]");
+    assert_eq!(model.notes[0].fields[1], r#"<img src="_CON.png">"#);
+}
+
+#[test]
+fn a2_38_apkg_writer_deflates_sqlite_and_compressible_media() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_apkg = dir.path().join("src.apkg");
+    testkit::write_sample_v11_apkg(&src_apkg).unwrap();
+    let (model, _) = read_package(&src_apkg, None).unwrap();
+
+    let media_dir = dir.path().join("media");
+    std::fs::create_dir_all(&media_dir).unwrap();
+    std::fs::write(media_dir.join("vector.svg"), b"<svg><rect/></svg>").unwrap();
+    std::fs::write(media_dir.join("photo.jpg"), b"jpegbytes").unwrap();
+
+    let out_apkg = dir.path().join("out.apkg");
+    bibalak_ankifmt::write_apkg(&model, &out_apkg, Some(&media_dir)).unwrap();
+
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(&out_apkg).unwrap()).unwrap();
+    assert_eq!(
+        zip.by_name("collection.anki2").unwrap().compression(),
+        zip::CompressionMethod::Deflated
+    );
+    assert_eq!(
+        zip.by_name("media").unwrap().compression(),
+        zip::CompressionMethod::Deflated
+    );
+    assert_eq!(
+        zip.by_name("0").unwrap().compression(),
+        zip::CompressionMethod::Stored
+    );
+    assert_eq!(
+        zip.by_name("1").unwrap().compression(),
+        zip::CompressionMethod::Deflated
+    );
+}

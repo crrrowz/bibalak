@@ -1,9 +1,10 @@
 use crate::error::CoreResult;
+use crate::ipc::IntegrityReport;
 use crate::model::Revlog;
 use crate::Collection;
 
 impl Collection {
-    pub fn integrity_check(&self) -> CoreResult<Vec<String>> {
+    pub fn integrity_check(&self) -> CoreResult<IntegrityReport> {
         self.storage.integrity_check(self.clock.now_ms())
     }
 

@@ -96,11 +96,12 @@ export async function runStartupUpdateCheck(
   if (Number.isFinite(last) && last > 0 && last <= now && now - last < AUTO_CHECK_INTERVAL_MS) {
     return null;
   }
-  writeStorage(LAST_CHECK_KEY, String(now));
 
   try {
     const update = await platform.updater.check();
-    if (update === null || update === "not-available") return null;
+    if (update === "not-available") return null;
+    writeStorage(LAST_CHECK_KEY, String(now));
+    if (update === null) return null;
     useUpdateCheck.getState().setResult(toResult(update));
     return update;
   } catch {

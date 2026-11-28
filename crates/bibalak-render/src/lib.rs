@@ -20,6 +20,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 pub use filters::RenderCtx;
+pub use parser::{RenderError, MAX_TEMPLATE_DEPTH};
 
 /// A card template (front/back format strings).
 pub struct Template<'a> {
@@ -74,7 +75,7 @@ pub struct Rendered {
 }
 
 /// Render a card's question and answer HTML.
-pub fn render(req: &RenderRequest<'_>) -> Rendered {
+pub fn render(req: &RenderRequest<'_>) -> Result<Rendered, RenderError> {
     let active = req.card_ord + 1;
     let ctx = RenderCtx {
         fields: req.fields,
@@ -89,13 +90,13 @@ pub fn render(req: &RenderRequest<'_>) -> Rendered {
         occlusion_mode: req.occlusion_mode,
     };
 
-    let q_nodes = parser::parse(req.template.qfmt);
-    let question = normalize_latex(&render_nodes(&q_nodes, &ctx, None, false));
+    let q_nodes = parser::parse(req.template.qfmt)?;
+    let question = normalize_latex(&render_nodes(&q_nodes, &ctx, None, false)?);
 
-    let a_nodes = parser::parse(req.template.afmt);
-    let answer = normalize_latex(&render_nodes(&a_nodes, &ctx, Some(&question), true));
+    let a_nodes = parser::parse(req.template.afmt)?;
+    let answer = normalize_latex(&render_nodes(&a_nodes, &ctx, Some(&question), true)?);
 
-    Rendered { question, answer }
+    Ok(Rendered { question, answer })
 }
 
 fn render_nodes(
@@ -103,12 +104,12 @@ fn render_nodes(
     ctx: &RenderCtx<'_>,
     front_side: Option<&str>,
     reveal: bool,
-) -> String {
+) -> Result<String, RenderError> {
     let mut out = String::new();
     for node in nodes {
-        render_node(node, ctx, front_side, reveal, &mut out);
+        render_node(node, ctx, front_side, reveal, 0, &mut out)?;
     }
-    out
+    Ok(out)
 }
 
 fn render_node(
@@ -116,16 +117,22 @@ fn render_node(
     ctx: &RenderCtx<'_>,
     front_side: Option<&str>,
     reveal: bool,
+    depth: usize,
     out: &mut String,
-) {
+) -> Result<(), RenderError> {
     match node {
         parser::Node::Text(t) => out.push_str(t),
         parser::Node::Section { negate, name, body } => {
+            if depth >= MAX_TEMPLATE_DEPTH {
+                return Err(RenderError(format!(
+                    "template section nesting exceeds maximum depth of {MAX_TEMPLATE_DEPTH}"
+                )));
+            }
             let truthy = filters::section_truthy(name, ctx);
             let show = if *negate { !truthy } else { truthy };
             if show {
                 for n in body {
-                    render_node(n, ctx, front_side, reveal, out);
+                    render_node(n, ctx, front_side, reveal, depth + 1, out)?;
                 }
             }
         }
@@ -135,6 +142,7 @@ fn render_node(
             ));
         }
     }
+    Ok(())
 }
 
 /// Convert Anki legacy LaTeX delimiters to KaTeX-compatible ones.
@@ -186,24 +194,28 @@ mod tests {
         }
     }
 
+    fn render_ok(request: &RenderRequest<'_>) -> Rendered {
+        render(request).expect("template render should succeed")
+    }
+
     #[test]
     fn basic_front_and_back_with_frontside() {
         let f = fields(&[("Front", "hola"), ("Back", "hello")]);
-        let r = render(&req("{{Front}}", "{{FrontSide}}<hr>{{Back}}", &f));
+        let r = render_ok(&req("{{Front}}", "{{FrontSide}}<hr>{{Back}}", &f));
         assert_eq!(r.question, "hola");
         assert_eq!(r.answer, "hola<hr>hello");
     }
 
     #[test]
     fn conditional_sections() {
-        let shown = render(&req(
+        let shown = render_ok(&req(
             "{{Front}}{{#Extra}} ({{Extra}}){{/Extra}}",
             "x",
             &fields(&[("Front", "q"), ("Extra", "note")]),
         ));
         assert_eq!(shown.question, "q (note)");
 
-        let hidden = render(&req(
+        let hidden = render_ok(&req(
             "{{Front}}{{#Extra}} ({{Extra}}){{/Extra}}",
             "x",
             &fields(&[("Front", "q"), ("Extra", "")]),
@@ -214,7 +226,7 @@ mod tests {
     #[test]
     fn nested_same_field_conditionals_resolve_independently() {
         let f = fields(&[("Front", "q"), ("Extra", "note")]);
-        let r = render(&req(
+        let r = render_ok(&req(
             "{{#Front}}A{{#Extra}}B{{#Front}}C{{/Front}}D{{/Extra}}E{{/Front}}",
             "x",
             &f,
@@ -225,21 +237,21 @@ mod tests {
     #[test]
     fn negated_conditional() {
         let f = fields(&[("Front", "q"), ("Extra", "")]);
-        let r = render(&req("{{^Extra}}no extra{{/Extra}}", "x", &f));
+        let r = render_ok(&req("{{^Extra}}no extra{{/Extra}}", "x", &f));
         assert_eq!(r.question, "no extra");
     }
 
     #[test]
     fn unmatched_close_tag_is_literal() {
         let f = fields(&[("Front", "q")]);
-        let r = render(&req("{{Front}}{{/Stray}}", "x", &f));
+        let r = render_ok(&req("{{Front}}{{/Stray}}", "x", &f));
         assert_eq!(r.question, "q{{/Stray}}");
     }
 
     #[test]
     fn cloze_hides_active_reveals_on_back() {
         let f = fields(&[("Text", "{{c1::Paris}} is in {{c2::France}}")]);
-        let r = render(&RenderRequest {
+        let r = render_ok(&RenderRequest {
             template: Template {
                 qfmt: "{{cloze:Text}}",
                 afmt: "{{cloze:Text}}",
@@ -259,7 +271,7 @@ mod tests {
     #[test]
     fn cloze_hint_is_used() {
         let f = fields(&[("Text", "{{c1::Paris::capital}}")]);
-        let r = render(&RenderRequest {
+        let r = render_ok(&RenderRequest {
             template: Template {
                 qfmt: "{{cloze:Text}}",
                 afmt: "{{cloze:Text}}",
@@ -275,7 +287,7 @@ mod tests {
     #[test]
     fn cloze_only_isolates_active_text() {
         let f = fields(&[("Text", "before {{c1::Paris}} after {{c2::France}}")]);
-        let r = render(&RenderRequest {
+        let r = render_ok(&RenderRequest {
             template: Template {
                 qfmt: "{{cloze-only:Text}}",
                 afmt: "{{cloze-only:Text}}",
@@ -292,7 +304,7 @@ mod tests {
     #[test]
     fn type_field_is_input_then_answer() {
         let f = fields(&[("Front", "q"), ("Back", "answer")]);
-        let r = render(&req("{{type:Back}}", "{{type:Back}}", &f));
+        let r = render_ok(&req("{{type:Back}}", "{{type:Back}}", &f));
         assert!(r.question.contains("keepsake-type-input"));
         assert!(r.answer.contains("data-expected=\"answer\""));
     }
@@ -300,7 +312,7 @@ mod tests {
     #[test]
     fn type_cloze_combo_uses_active_cloze_answer() {
         let f = fields(&[("Text", "{{c1::Paris}} is in {{c2::France}}")]);
-        let r = render(&RenderRequest {
+        let r = render_ok(&RenderRequest {
             template: Template {
                 qfmt: "{{type:cloze:Text}}",
                 afmt: "{{type:cloze:Text}}",
@@ -316,7 +328,7 @@ mod tests {
     #[test]
     fn hint_filter_renders_reveal_link() {
         let f = fields(&[("Front", "q"), ("Note", "extra info")]);
-        let r = render(&req("{{hint:Note}}", "x", &f));
+        let r = render_ok(&req("{{hint:Note}}", "x", &f));
         assert!(r.question.contains("keepsake-hint"));
         assert!(r.question.contains("extra info"));
     }
@@ -324,7 +336,7 @@ mod tests {
     #[test]
     fn special_fields_resolve() {
         let f = fields(&[("Front", "q")]);
-        let r = render(&RenderRequest {
+        let r = render_ok(&RenderRequest {
             template: Template {
                 qfmt: "{{Deck}}/{{Subdeck}} [{{Tags}}] {{Type}} {{Card}}",
                 afmt: "x",
@@ -346,7 +358,7 @@ mod tests {
     #[test]
     fn card_flag_special_field() {
         let f = fields(&[("Front", "q")]);
-        let r = render(&RenderRequest {
+        let r = render_ok(&RenderRequest {
             template: Template {
                 qfmt: "{{CardFlag}}",
                 afmt: "x",
@@ -361,23 +373,23 @@ mod tests {
     #[test]
     fn furigana_filters() {
         let f = fields(&[("Word", "食べる[たべる] 物[もの]")]);
-        let ruby = render(&req("{{furigana:Word}}", "x", &f));
+        let ruby = render_ok(&req("{{furigana:Word}}", "x", &f));
         assert_eq!(
             ruby.question,
             "<ruby>食べる<rt>たべる</rt></ruby> <ruby>物<rt>もの</rt></ruby>"
         );
 
-        let kana = render(&req("{{kana:Word}}", "x", &f));
+        let kana = render_ok(&req("{{kana:Word}}", "x", &f));
         assert_eq!(kana.question, "たべる もの");
 
-        let kanji = render(&req("{{kanji:Word}}", "x", &f));
+        let kanji = render_ok(&req("{{kanji:Word}}", "x", &f));
         assert_eq!(kanji.question, "食べる 物");
     }
 
     #[test]
     fn tts_filter_emits_marker() {
         let f = fields(&[("Front", "hola")]);
-        let r = render(&req("{{tts en_US voices=Alice:Front}}", "x", &f));
+        let r = render_ok(&req("{{tts en_US voices=Alice:Front}}", "x", &f));
         assert!(r.question.contains("data-lang=\"en_US\""));
         assert!(r.question.contains("data-voices=\"Alice\""));
         assert!(r.question.contains("data-text=\"hola\""));
@@ -386,7 +398,7 @@ mod tests {
     #[test]
     fn tts_voices_placeholder() {
         let f = fields(&[("Front", "hola")]);
-        let r = render(&req("{{tts-voices:}}", "x", &f));
+        let r = render_ok(&req("{{tts-voices:}}", "x", &f));
         assert!(r.question.contains("keepsake-tts-voices"));
     }
 
@@ -396,7 +408,7 @@ mod tests {
             "Occlusion",
             "{{c1::image-occlusion:rect:left=.1:top=.2:width=.3:height=.15}}",
         )]);
-        let r = render(&RenderRequest {
+        let r = render_ok(&RenderRequest {
             template: Template {
                 qfmt: "{{cloze:Occlusion}}",
                 afmt: "{{cloze:Occlusion}}",
@@ -431,7 +443,32 @@ mod tests {
     #[test]
     fn text_filter_strips_html() {
         let f = fields(&[("Front", "<b>bold</b> text")]);
-        let r = render(&req("{{text:Front}}", "x", &f));
+        let r = render_ok(&req("{{text:Front}}", "x", &f));
         assert_eq!(r.question, "bold text");
+    }
+
+    #[test]
+    fn a4_03_template_parser_rejects_deep_nesting() {
+        let f = fields(&[("Front", "ok")]);
+        let ok_qfmt = format!(
+            "{}x{}",
+            "{{#Front}}".repeat(MAX_TEMPLATE_DEPTH),
+            "{{/Front}}".repeat(MAX_TEMPLATE_DEPTH)
+        );
+        assert_eq!(render(&req(&ok_qfmt, "back", &f)).unwrap().question, "x");
+
+        // Inverted AUDIT4 probe: depth 250 (and > MAX_TEMPLATE_DEPTH) returns an error instead of overflowing.
+        for depth in [MAX_TEMPLATE_DEPTH + 1, 250] {
+            let qfmt = format!(
+                "{}x{}",
+                "{{#Front}}".repeat(depth),
+                "{{/Front}}".repeat(depth)
+            );
+            let err = render(&req(&qfmt, "back", &f)).unwrap_err();
+            assert!(
+                err.to_string().contains(&MAX_TEMPLATE_DEPTH.to_string()),
+                "unexpected error message: {err}"
+            );
+        }
     }
 }

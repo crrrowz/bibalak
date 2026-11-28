@@ -48,7 +48,7 @@ export function DailyGoalSetting() {
     state?.daily_goal_xp === 30 ||
     state?.daily_goal_xp === 50
       ? state.daily_goal_xp
-      : 20;
+      : 10;
 
   return (
     <div className="border-t border-border/60 pt-4 space-y-2.5">

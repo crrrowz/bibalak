@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { Loader2, Sparkles, X } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import type { AIActionRequest, AIActionResult } from "@bibalak/ipc-types";
 import {
   AINotConfiguredContent,
@@ -9,6 +9,7 @@ import {
 } from "@/components/ai/AIBlocks";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { useAiActionRunner } from "@/hooks/useAiActionRunner";
 import { t } from "@/lib/i18n";
 import { useOptionalNavigate } from "@/lib/useOptionalNavigate";
@@ -106,7 +107,7 @@ export function AIActionDialog({
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pe-1">
             {runner.phase === "loading-preview" && (
               <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                <Spinner />
                 <span>{t("ai.loadingPreview")}</span>
               </div>
             )}

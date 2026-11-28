@@ -132,6 +132,15 @@ export function DeckRow({
           ) : (
             <span className="flex-1 truncate text-sm font-medium">{deckLabel(deck.name)}</span>
           )}
+          {hasChildren && !renaming && (
+            <span
+              data-testid="deck-includes-subdecks"
+              title={t("decks.rolledUpHint")}
+              className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+            >
+              {t("decks.includesSubdecks")}
+            </span>
+          )}
           {deck.is_filtered && !renaming && (
             <span className="shrink-0 rounded bg-purple-100 px-1.5 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
               {t("decks.filteredBadge")}
@@ -139,14 +148,16 @@ export function DeckRow({
           )}
         </button>
 
-        <DeckCounts
-          newCount={deck.new_count}
-          learningCount={deck.learning_count}
-          reviewCount={deck.review_count}
-          columnWidth="w-11 shrink-0"
-        />
+        <span title={hasChildren ? t("decks.rolledUpHint") : undefined}>
+          <DeckCounts
+            newCount={deck.new_count}
+            learningCount={deck.learning_count}
+            reviewCount={deck.review_count}
+            columnWidth="w-11 shrink-0"
+          />
+        </span>
 
-        <div className="flex w-36 shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+        <div className="flex w-36 shrink-0 items-center justify-end gap-0.5">
           <Button
             variant="ghost"
             size="icon"

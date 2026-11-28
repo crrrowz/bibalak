@@ -7,7 +7,6 @@ import {
   ChevronRight,
   PanelRight,
   Plus,
-  Undo2,
 } from "lucide-react";
 import type {
   CalendarEventInput,
@@ -22,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { errorMessage, ipc, isTauri } from "@/lib/ipc";
 import { formatDate, t } from "@/lib/i18n";
 import { queryKeys } from "@/lib/queryKeys";
-import { formatUndoAction } from "@/lib/undo";
+import { pushUndoToast } from "@/lib/undoToast";
 import { useOptionalNavigate } from "@/lib/useOptionalNavigate";
 import { cn } from "@/lib/utils";
 import { useStyle } from "@/stores/style";
@@ -110,9 +109,9 @@ export function CalendarScreen() {
     enabled: tauri,
   });
 
-  const statsQuery = useQuery({
-    queryKey: queryKeys.stats(null, null),
-    queryFn: () => ipc.getStats(null, null),
+  const forecastQuery = useQuery({
+    queryKey: queryKeys.dueForecast(30),
+    queryFn: () => ipc.dueForecast(30),
     enabled: tauri,
   });
 
@@ -125,7 +124,7 @@ export function CalendarScreen() {
   const backendTodayDate =
     matrixQuery.data?.today_date ??
     habitQuery.data?.today_date ??
-    statsQuery.data?.today_date ??
+    forecastQuery.data?.today_date ??
     toIsoDateLocal(new Date());
 
   const anchorDate = anchorOverride ?? backendTodayDate;
@@ -190,7 +189,15 @@ export function CalendarScreen() {
 
   const deleteEventMut = useMutation({
     mutationFn: (id: string) => ipc.deleteCalendarEvent(id),
-    onSuccess: () => void invalidateAll(),
+    onSuccess: (_data, id) => {
+      const deletedTitle = occurrences.find((o) => o.event_id === id)?.title ?? "";
+      void invalidateAll();
+      if (deletedTitle) {
+        pushUndoToast(t("undo.action.deleteCalendarEvent", { title: deletedTitle }), () =>
+          undoMut.mutateAsync(),
+        );
+      }
+    },
     onError: onMutError,
   });
 
@@ -270,7 +277,7 @@ export function CalendarScreen() {
     return [...windowLogs, ...baseLogs.filter((l) => !seen.has(logKey(l)))];
   }, [habitQuery.data, habitWindowQuery.data]);
   const todayDayIndex = habitQuery.data?.today_day_index ?? 0;
-  const forecastMap = useMemo(() => forecastByDate(statsQuery.data), [statsQuery.data]);
+  const forecastMap = useMemo(() => forecastByDate(forecastQuery.data), [forecastQuery.data]);
   const undoAction = undoStatusQuery.data ?? null;
 
   const unscheduledTasks = useMemo(
@@ -532,34 +539,19 @@ export function CalendarScreen() {
         title={t("calendar.title")}
         description={t("calendar.description")}
         actions={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => undoMut.mutate()}
-              disabled={!tauri || undoMut.isPending || !undoAction}
-              title={
-                undoAction
-                  ? t("decks.undoAction", { action: formatUndoAction(undoAction) })
-                  : t("decks.undoEmpty")
-              }
-            >
-              <Undo2 /> {t("decks.undo")}
-            </Button>
-            <Button
-              size="sm"
-              disabled={!tauri}
-              onClick={() =>
-                setEventDialogState({
-                  open: true,
-                  defaultDate: anchorDate,
-                  occurrence: null,
-                })
-              }
-            >
-              <Plus /> {t("calendar.newEvent")}
-            </Button>
-          </>
+          <Button
+            size="sm"
+            disabled={!tauri}
+            onClick={() =>
+              setEventDialogState({
+                open: true,
+                defaultDate: anchorDate,
+                occurrence: null,
+              })
+            }
+          >
+            <Plus /> {t("calendar.newEvent")}
+          </Button>
         }
       />
 

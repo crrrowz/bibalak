@@ -16,11 +16,11 @@ decision is [ADR-003](../architecture/adr/003-plugin-worker-sandbox.md).
         │ get_plugin_entry
         ▼
  React UI: PluginHost (apps/desktop/src/lib/pluginHost.ts)
-   one Web Worker per enabled plugin
-   ┌──────────────── Worker ────────────────┐
-   │ bridge (BibalakPlugin, ctx)            │
-   │ + your index.js                        │
-   └────────────────────────────────────────┘
+   one hidden <iframe sandbox="allow-scripts"> (opaque origin) per plugin
+   ┌──────────── Opaque iframe + Worker ────────────┐
+   │ bridge (BibalakPlugin, ctx)                    │
+   │ + your index.js                                │
+   └────────────────────────────────────────────────┘
         ▲ postMessage both ways
         │
    host checks permission + rate limit ──► Tauri commands plugin_read_*
@@ -80,9 +80,11 @@ anywhere else.
 
 ## What the sandbox allows
 
-The Worker has no `window` or `document`, no access to the app's storage,
-Tauri IPC or card HTML, and the app's content security policy blocks network
-requests from it. All it can do is send messages to the host.
+The sandbox runs inside an opaque-origin `<iframe sandbox="allow-scripts">`
+containing a dedicated Web Worker: it has no `window.parent`, no access to
+the app's origin storage (`localStorage`, `indexedDB`, `caches`), Tauri IPC
+or card HTML, and the app's content security policy blocks network requests
+from it. All it can do is send messages to the host.
 
 Every message is checked **on the host**, because a plugin could skip the
 bridge and call `self.postMessage` itself:

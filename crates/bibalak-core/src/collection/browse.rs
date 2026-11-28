@@ -1,8 +1,8 @@
 use crate::error::{CoreError, CoreResult};
 use crate::events::{DomainEvent, EventSink};
 use crate::ipc::{
-    ApplyQualityFixesResult, CardRow, DuplicateGroup, FindReplacePreview, NoteRow, QualityNoteEdit,
-    QualityScanNote,
+    ApplyQualityFixesResult, CardRow, DuplicateGroup, EmptyCardItem, FindReplacePreview, NoteRow,
+    QualityNoteEdit, QualityScanNote,
 };
 use crate::model::NoteIndexRow;
 use crate::undo::UndoAction;
@@ -71,14 +71,17 @@ impl Collection {
             .count_note_rows(query, self.today(), self.clock.now_ms())
     }
 
-    /// Preview match counts for Find & Replace across selected notes.
+    /// Preview match counts and sample diff for Find & Replace across selected notes.
+    #[allow(clippy::too_many_arguments)]
     pub fn preview_find_replace(
         &self,
         note_ids: &[i64],
         field_name: Option<&str>,
         find: &str,
+        replace: &str,
         use_regex: bool,
         case_sensitive: bool,
+        include_html: bool,
     ) -> CoreResult<FindReplacePreview> {
         if find.is_empty() {
             return Err(CoreError::Invalid("search pattern cannot be empty".into()));
@@ -87,13 +90,23 @@ impl Collection {
             return Ok(FindReplacePreview {
                 notes_matched: 0,
                 occurrences: 0,
+                sample_before: None,
+                sample_after: None,
             });
         }
-        self.storage
-            .preview_find_replace(note_ids, field_name, find, use_regex, case_sensitive)
+        self.storage.preview_find_replace(
+            note_ids,
+            field_name,
+            find,
+            replace,
+            use_regex,
+            case_sensitive,
+            include_html,
+        )
     }
 
     /// Replace matching text in selected notes inside one transaction, recording undo and emitting one event.
+    #[allow(clippy::too_many_arguments)]
     pub fn find_replace_notes(
         &self,
         note_ids: &[i64],
@@ -102,6 +115,7 @@ impl Collection {
         replace: &str,
         use_regex: bool,
         case_sensitive: bool,
+        include_html: bool,
     ) -> CoreResult<u32> {
         if find.is_empty() {
             return Err(CoreError::Invalid("search pattern cannot be empty".into()));
@@ -117,6 +131,7 @@ impl Collection {
             replace,
             use_regex,
             case_sensitive,
+            include_html,
             now,
         )?;
         let count = prev.len() as u32;
@@ -139,6 +154,26 @@ impl Collection {
         field_ord: i64,
     ) -> CoreResult<Vec<DuplicateGroup>> {
         self.storage.find_duplicates(notetype_id, field_ord)
+    }
+
+    /// Find existing cards whose rendered front template is currently empty (`A2-12`).
+    pub fn find_empty_cards(&self) -> CoreResult<Vec<EmptyCardItem>> {
+        self.storage.find_empty_cards()
+    }
+
+    /// Delete confirmed empty cards inside one transaction, clearing undo and emitting schema change.
+    pub fn delete_empty_cards(&self, card_ids: &[i64]) -> CoreResult<u32> {
+        if card_ids.is_empty() {
+            return Ok(0);
+        }
+        let deleted = self
+            .storage
+            .delete_empty_cards(card_ids, self.clock.now_ms())?;
+        if deleted > 0 {
+            self.clear_undo();
+            self.events.emit(DomainEvent::SchemaChanged);
+        }
+        Ok(deleted)
     }
 
     /// Load up to 200 notes from a deck subtree or explicit selection for AI quality review.

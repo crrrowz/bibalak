@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { Check, Flame, RotateCcw, Settings } from "lucide-react";
+import { BookOpen, Check, Download, Flame, Plus, RotateCcw, Settings } from "lucide-react";
 import { AvatarStage } from "@/components/avatar/AvatarStage";
 import { ExtendTodayLimit } from "@/components/decks/IncreaseLimitControl";
 import { GoldIcon, KnowledgePointsIcon, XpIcon } from "@/components/icons/progress";
@@ -26,6 +26,10 @@ export interface SessionFinishProps {
   sessionDurationMs?: number;
   streakExtended?: boolean;
   deckId: number;
+  deckEmpty?: boolean;
+  isFiltered?: boolean;
+  canUndo?: boolean;
+  onAddNote?: () => void;
   onExit: () => void;
   onUndo: () => void;
   undoPending: boolean;
@@ -66,6 +70,10 @@ export function SessionFinish({
   sessionDurationMs = 0,
   streakExtended = false,
   deckId,
+  deckEmpty = false,
+  isFiltered = false,
+  canUndo = true,
+  onAddNote,
   onExit,
   onUndo,
   undoPending,
@@ -150,7 +158,11 @@ export function SessionFinish({
       transition={{ duration: reducedMotion ? 0 : dur.base, ease }}
       className="mx-auto flex h-full w-full max-w-lg flex-col items-center justify-center gap-5 px-4 py-8 text-center sm:px-6"
     >
-      {skin ? (
+      {deckEmpty && sessionCards === 0 ? (
+        <div className="flex size-12 items-center justify-center rounded-xl bg-secondary text-muted-foreground">
+          <BookOpen className="size-6" aria-hidden="true" />
+        </div>
+      ) : skin ? (
         <AvatarStage
           style={skin.id}
           size={64}
@@ -172,16 +184,24 @@ export function SessionFinish({
       )}
 
       <div className="space-y-1">
-        <h2 className="screen-title text-lg font-semibold text-foreground">{t(headingKey)}</h2>
-        {sessionCards === 0 && (
-          <p data-testid="session-finish-empty-line" className="text-sm text-muted-foreground">
-            {t("motivation.sessionEnd.nothingDue")}
+        <h2 className="screen-title text-lg font-semibold text-foreground">
+          {deckEmpty && sessionCards === 0 ? t("study.finish.emptyDeck.title") : t(headingKey)}
+        </h2>
+        {deckEmpty && sessionCards === 0 ? (
+          <p data-testid="session-finish-empty-deck-line" className="text-sm text-muted-foreground">
+            {t("study.finish.emptyDeck.description")}
           </p>
+        ) : (
+          sessionCards === 0 && (
+            <p data-testid="session-finish-empty-line" className="text-sm text-muted-foreground">
+              {t("motivation.sessionEnd.nothingDue")}
+            </p>
+          )
         )}
       </div>
 
-      {/* 4 session metrics when cards were reviewed; otherwise today's totals */}
-      {sessionCards > 0 ? (
+      {/* 4 session metrics when cards were reviewed; otherwise today's totals (when deck has cards) */}
+      {deckEmpty && sessionCards === 0 ? null : sessionCards > 0 ? (
         <div
           data-testid="session-finish-tiles"
           className="grid w-full grid-cols-2 gap-2.5 sm:grid-cols-4"
@@ -266,9 +286,12 @@ export function SessionFinish({
         )
       )}
 
-      {/* Daily goal ring + Streak +1 moment */}
-      {motivation && (
+      {/* Daily goal ring (all decks) + Streak +1 moment */}
+      {motivation && !(deckEmpty && sessionCards === 0) && (
         <div className="flex w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-start">
+          <p className="text-[11px] font-medium text-muted-foreground">
+            {t("motivation.goal.allDecks")}
+          </p>
           <div className="flex items-center gap-3.5">
             <GoalRing earned={motivation.today_xp} goal={motivation.daily_goal_xp} size={56} />
             <div className="min-w-0 flex-1 space-y-0.5">
@@ -338,31 +361,64 @@ export function SessionFinish({
 
       {/* Actions */}
       <div className="flex w-full flex-col items-center gap-2.5">
-        <Button className="min-h-[44px] w-full sm:w-auto sm:min-w-[180px]" onClick={onExit}>
-          {t("motivation.sessionEnd.back")}
-        </Button>
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <ExtendTodayLimit deckId={deckId} onDone={onExtended} />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-1.5 text-xs text-muted-foreground"
-            onClick={onOpenOptions}
-          >
-            <Settings className="size-3.5" aria-hidden="true" />
-            {t("motivation.sessionEnd.deckOptions")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-1.5 text-xs text-muted-foreground"
-            onClick={onUndo}
-            disabled={undoPending}
-          >
-            <RotateCcw className="size-3.5" aria-hidden="true" />
-            {t("motivation.sessionEnd.undo")}
-          </Button>
-        </div>
+        {deckEmpty && sessionCards === 0 ? (
+          <>
+            {!isFiltered && (
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  className="min-h-[44px] gap-1.5"
+                  onClick={() => (onAddNote ? onAddNote() : navigate?.("/add"))}
+                >
+                  <Plus className="size-4" aria-hidden="true" />
+                  {t("palette.addNote")}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="min-h-[44px] gap-1.5"
+                  onClick={() => navigate?.("/")}
+                >
+                  <Download className="size-4" aria-hidden="true" />
+                  {t("decks.import")}
+                </Button>
+              </div>
+            )}
+            <Button variant="ghost" size="sm" onClick={onExit}>
+              {t("motivation.sessionEnd.back")}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button className="min-h-[44px] w-full sm:w-auto sm:min-w-[180px]" onClick={onExit}>
+              {t("motivation.sessionEnd.back")}
+            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {!isFiltered && !deckEmpty && (
+                <ExtendTodayLimit deckId={deckId} onDone={onExtended} />
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-xs text-muted-foreground"
+                onClick={onOpenOptions}
+              >
+                <Settings className="size-3.5" aria-hidden="true" />
+                {t("motivation.sessionEnd.deckOptions")}
+              </Button>
+              {canUndo && !deckEmpty && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-xs text-muted-foreground"
+                  onClick={onUndo}
+                  disabled={undoPending}
+                >
+                  <RotateCcw className="size-3.5" aria-hidden="true" />
+                  {t("motivation.sessionEnd.undo")}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </motion.div>
   );

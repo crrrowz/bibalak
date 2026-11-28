@@ -7,11 +7,14 @@ import { FieldEditor } from "@/components/FieldEditor";
 import { EditorToolbar } from "@/components/editor/EditorToolbar";
 import { useActiveFieldEditor } from "@/components/editor/useActiveFieldEditor";
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/Kbd";
 import { plainTextToEditorHtml } from "@/lib/aiFormat";
 import { maxClozeIndex } from "@/lib/clozeUtils";
 import { t } from "@/lib/i18n";
 import { ipc } from "@/lib/ipc";
+import { resolveFieldMediaKind } from "@/lib/noteFieldGroups";
 import { queryKeys } from "@/lib/queryKeys";
+import { modShortcut } from "@/lib/shortcuts";
 import { isAiConfigured } from "@/stores/aiSession";
 import { toast } from "@/stores/toast";
 
@@ -90,61 +93,99 @@ export const NoteEditorPanel = forwardRef<
     return <div className="p-6 text-sm text-muted-foreground">{t("common.loading")}</div>;
   }
 
+  const dirty = isDirty();
+
   return (
-    <div className="space-y-3 p-4">
-      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {note.data.notetype_name}
-      </div>
+    <div className="flex h-full flex-col">
+      <div className="flex-1 space-y-3 overflow-auto p-4">
+        <div className="flex items-center justify-between gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <span>{note.data.notetype_name}</span>
+          {dirty && (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] normal-case text-amber-600 dark:text-amber-400"
+              aria-label={t("browse.unsaved")}
+            >
+              <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
+              {t("browse.unsaved")}
+            </span>
+          )}
+        </div>
 
-      {fields.length > 0 && (
-        <div className="sticky top-0 z-10 bg-background/95 py-1 backdrop-blur">
-          <EditorToolbar
-            editor={activeEditor}
-            nextClozeIndex={maxClozeIndex(fields.map((f) => f.value)) + 1}
+        {fields.length > 0 && (
+          <div className="sticky top-0 z-10 bg-background/95 py-1 backdrop-blur">
+            <EditorToolbar
+              editor={activeEditor}
+              nextClozeIndex={maxClozeIndex(fields.map((f) => f.value)) + 1}
+            />
+          </div>
+        )}
+
+        {fields.map((field, index) => {
+          const fieldId = `note-field-${index}`;
+          const labelId = `note-field-label-${index}`;
+          return (
+            <div key={`${noteId}:${field.name}:${aiApplyVersion}`} className="space-y-1">
+              <label id={labelId} htmlFor={fieldId} className="text-sm font-medium">
+                {field.name}
+              </label>
+              <FieldEditor
+                id={fieldId}
+                ariaLabelledBy={labelId}
+                value={field.value}
+                otherFieldsHtml={fields.filter((_, i) => i !== index).map((f) => f.value)}
+                onCtrlEnter={() => save.mutate()}
+                onFocusEditor={onFocusEditor}
+                onDestroyEditor={onDestroyEditor}
+                options={field.options}
+                mediaFieldKind={resolveFieldMediaKind(field.name, field.options)}
+                onChange={(html) =>
+                  setFields((current) =>
+                    current.map((f, i) => (i === index ? { ...f, value: html } : f)),
+                  )
+                }
+              />
+            </div>
+          );
+        })}
+
+        <div className="space-y-1.5">
+          <label htmlFor="note-editor-tags" className="text-sm font-medium">
+            {t("browse.tags")}
+          </label>
+          <input
+            id="note-editor-tags"
+            value={tags}
+            onChange={(e) => setTags(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                e.preventDefault();
+                save.mutate();
+              }
+            }}
+            placeholder={t("browse.tagsPlaceholder")}
+            className="h-8 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
-      )}
-
-      {fields.map((field, index) => (
-        <div key={`${noteId}:${field.name}:${aiApplyVersion}`} className="space-y-1">
-          <label className="text-sm font-medium">{field.name}</label>
-          <FieldEditor
-            value={field.value}
-            otherFieldsHtml={fields.filter((_, i) => i !== index).map((f) => f.value)}
-            onFocusEditor={onFocusEditor}
-            onDestroyEditor={onDestroyEditor}
-            options={field.options}
-            onChange={(html) =>
-              setFields((current) =>
-                current.map((f, i) => (i === index ? { ...f, value: html } : f)),
-              )
-            }
-          />
-        </div>
-      ))}
-
-      <div className="space-y-1.5">
-        <label htmlFor="note-editor-tags" className="text-sm font-medium">
-          {t("browse.tags")}
-        </label>
-        <input
-          id="note-editor-tags"
-          value={tags}
-          onChange={(e) => setTags(e.target.value)}
-          placeholder={t("browse.tagsPlaceholder")}
-          className="h-8 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
-          <Save className="size-3.5" /> {save.isPending ? t("common.saving") : t("common.save")}
+      <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-2 border-t border-border bg-background/95 px-4 py-2.5 backdrop-blur">
+        <Button
+          size="sm"
+          aria-label={save.isPending ? t("common.saving") : t("common.save")}
+          onClick={() => save.mutate()}
+          disabled={save.isPending}
+        >
+          <Save className="size-3.5" aria-hidden="true" />
+          <span>{save.isPending ? t("common.saving") : t("common.save")}</span>
+          <span aria-hidden="true">
+            <Kbd className="ms-1 hidden sm:inline-flex">{modShortcut("Enter")}</Kbd>
+          </span>
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={() => setRewriteOpen(true)}>
           <Sparkles className="me-1.5 size-3.5" aria-hidden />
           {t("ai.action.rewriteLeech")}
         </Button>
-        {save.isSuccess ? (
+        {save.isSuccess && !dirty ? (
           <span className="text-xs text-muted-foreground">{t("browse.saved")}</span>
         ) : null}
         {save.isError ? (

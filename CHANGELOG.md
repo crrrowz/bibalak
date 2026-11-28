@@ -9,6 +9,57 @@ up to 0.1.0-beta.3 are Synapse's history.
 
 ## [Unreleased]
 
+### Added
+
+- **Activity log & 8 s undo toasts (F4):** recent undoable actions are logged
+  with timestamps in `/activity`, and action toasts stay visible for 8 seconds
+  with an inline Undo button.
+- **Previous card button in Study (F6):** step back cleanly to the last
+  answered card (or press `z`) with its rating, counts, XP, and card order
+  restored.
+- **Empty Cards tool in Browse (A2-12):** scan for blank generated cards and
+  remove them with a confirmation preview.
+- **Media & preview controls (F7, F11):** audio/image/video fields show
+  attach, record, and inline preview controls, and Note Types templates
+  preview against real notes from that note type.
+
+### Changed
+
+- **Deck options Advanced view redesigned (F3):** chip-based learning/relearning
+  steps with unit selectors (`s`/`m`/`h`/`d`) and live cadence preview,
+  human-readable max-interval presets, plain descriptions, and inline
+  validation.
+- **Hide until tomorrow & clearer deck states (F5, F10):** study Bury is now
+  labeled "Hide until tomorrow" (noting the rollover hour), and empty decks
+  show dedicated Add/Import actions instead of "All caught up".
+- **Challenges naming (F8):** renamed "Today's challenges" to "Challenges"
+  since the view covers daily, weekly, and monthly goals.
+- **Hardened plugin host & card frames (ADR-039):** plugins run in an opaque-origin
+  sandboxed iframe with strict `ui:toast` / `ui:navigate` validation and
+  archive extraction limits.
+
+### Fixed
+
+- **Anki `.apkg` & media safety (MAINT1):** Anki v18 protobuf import, note type
+  and deck-config collision handling, FSRS memory state round-trip, read-only
+  package inspection, sandboxed SVG handling, and HTTP Range media playback.
+- **Data integrity & search (MAINT2):** atomic note deletion, `added:` /
+  `prop:due` / `tag:` search fixes, schema v16 browse sort index (ADR-033),
+  staged atomic backup restore, and streaming zip backup.
+- **Study & decks (MAINT3):** full deck progress reset (ADR-034), ancestor
+  deck daily limits, SM-2→FSRS state preservation, sibling/leech burying inside
+  one transaction, and stale-cache autoplay guard.
+- **Progress, stats & notifications (MAINT4):** unified streak/XP/freeze
+  ledger accounting, rollover-aligned stats ranges with SQL cutoff pushdown,
+  batch `list_deck_algorithms` IPC (ADR-037), Arabic chart formatting, and
+  silent sync on style switch.
+- **Editor, Add & Browse (MAINT5):** HTML-safe Find & Replace with preview, raw
+  binary `save_media` uploads (ADR-038), required first-field validation,
+  Arabic diacritic normalization, and sticky `Ctrl+Enter` save footer.
+- **Settings, Arabic shortcuts & accessibility (MAINT6):** physical key-code
+  matching for Arabic keyboard layouts, RTL tab arrows, live OS theme sync,
+  and accessible dialogs/contrast fixes.
+
 ## [1.1.1] - 2026-11-27
 
 ### Added

@@ -11,6 +11,7 @@ import {
   BrowseColumnsDialog,
   CardPreviewDialog,
   ChangeNotetypeDialog,
+  EmptyCardsDialog,
   FindDuplicatesDialog,
   FindReplaceDialog,
   ForgetCardsDialog,
@@ -37,6 +38,7 @@ import {
 import { ipc, isTauri } from "@/lib/ipc";
 import { t, tn } from "@/lib/i18n";
 import { queryKeys } from "@/lib/queryKeys";
+import { matchesShortcutCode } from "@/lib/shortcuts";
 import { toast } from "@/stores/toast";
 import { BrowseBulkBar, type BulkActionKind } from "@/features/browse/BrowseBulkBar";
 import { BrowseTable } from "@/features/browse/BrowseTable";
@@ -110,9 +112,7 @@ export function BrowseScreen() {
     enabled: tauri,
   });
 
-  const today = statsQuery.data
-    ? Math.floor((Date.now() - statsQuery.data.day0_ms) / 86_400_000)
-    : Math.floor(Date.now() / 86_400_000);
+  const today = statsQuery.data ? statsQuery.data.today : Math.floor(Date.now() / 86_400_000);
 
   function switchMode(next: BrowseMode) {
     if (next === mode) return;
@@ -174,7 +174,7 @@ export function BrowseScreen() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.cardsAll });
     void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
     void queryClient.invalidateQueries({ queryKey: queryKeys.decks });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.queueAll });
+    void queryClient.removeQueries({ queryKey: queryKeys.queueAll });
     void queryClient.invalidateQueries({ queryKey: queryKeys.deckCardIdsAll });
     void queryClient.invalidateQueries({ queryKey: queryKeys.statsAll });
     void queryClient.invalidateQueries({ queryKey: queryKeys.undoStatus });
@@ -276,8 +276,8 @@ export function BrowseScreen() {
   });
 
   const addTagMut = useMutation({
-    mutationFn: ({ noteIds, tag }: { noteIds: number[]; tag: string }) =>
-      ipc.bulkAddTag(noteIds, tag),
+    mutationFn: ({ noteIds, tags }: { noteIds: number[]; tags: string[] }) =>
+      tags.length === 1 ? ipc.bulkAddTag(noteIds, tags[0]) : ipc.bulkAddTags(noteIds, tags),
     onSuccess: () => {
       setBulkTag("");
       setBulkAction(null);
@@ -287,8 +287,8 @@ export function BrowseScreen() {
   });
 
   const removeTagMut = useMutation({
-    mutationFn: ({ noteIds, tag }: { noteIds: number[]; tag: string }) =>
-      ipc.bulkRemoveTag(noteIds, tag),
+    mutationFn: ({ noteIds, tags }: { noteIds: number[]; tags: string[] }) =>
+      tags.length === 1 ? ipc.bulkRemoveTag(noteIds, tags[0]) : ipc.bulkRemoveTags(noteIds, tags),
     onSuccess: () => {
       setBulkTag("");
       setBulkAction(null);
@@ -330,11 +330,13 @@ export function BrowseScreen() {
   const paddingBottom =
     virtualItems.length > 0 ? totalVirtualHeight - virtualItems[virtualItems.length - 1].end : 0;
 
-  async function commitDirtyEditor() {
+  async function commitDirtyEditor(): Promise<boolean> {
     try {
       await editorRef.current?.save();
+      return true;
     } catch (err) {
-      console.error("Failed to autosave note on switch:", err);
+      toast.error(err instanceof Error ? err.message : String(err));
+      return false;
     }
   }
 
@@ -342,7 +344,8 @@ export function BrowseScreen() {
     const row = currentRows[idx];
     if (!row) return;
     if (editorRef.current?.isDirty()) {
-      await commitDirtyEditor();
+      const ok = await commitDirtyEditor();
+      if (!ok) return;
     }
     const id = getRowId(row);
     setSelected(new Set([id]));
@@ -354,13 +357,13 @@ export function BrowseScreen() {
   // Keyboard: Ctrl+A, Ctrl/Cmd+F, Up/Down row nav (with B3 autosave), Space toggle, Escape.
   const keyHandler = (e: KeyboardEvent) => {
     if (isEditingTarget(e.target) || activeDialog !== null) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+    if ((e.ctrlKey || e.metaKey) && matchesShortcutCode(e, "KeyF", "f")) {
       e.preventDefault();
       searchInputRef.current?.focus();
       searchInputRef.current?.select();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "a" && currentRows.length > 0) {
+    if ((e.ctrlKey || e.metaKey) && matchesShortcutCode(e, "KeyA", "a") && currentRows.length > 0) {
       e.preventDefault();
       setSelected(
         new Set(
@@ -449,7 +452,8 @@ export function BrowseScreen() {
   async function handleRowClick(row: CardRow | NoteRow, idx: number, e: React.MouseEvent) {
     const id = getRowId(row);
     if (editorRef.current?.isDirty()) {
-      await commitDirtyEditor();
+      const ok = await commitDirtyEditor();
+      if (!ok) return;
     }
     if (e.shiftKey && lastClickIdx !== null) {
       const lo = Math.min(lastClickIdx, idx);
@@ -485,14 +489,22 @@ export function BrowseScreen() {
     mode === "cards"
       ? selectedRows.map((r) => r.card_id)
       : selectedNoteRows.flatMap((r) => r.card_ids);
-  const hasSuspended = mode === "cards" && selectedRows.some((r) => r.queue === -1);
+  const hasSuspended =
+    mode === "cards"
+      ? selectedRows.some((r) => r.queue === -1)
+      : selectedNoteRows.some((r) => Boolean(r.has_suspended));
   const hasUnsuspended =
-    mode === "cards" ? selectedRows.some((r) => r.queue !== -1) : orderedSelectedIds.length > 0;
-  const hasBuried = mode === "cards" && selectedRows.some((r) => r.queue === -2 || r.queue === -3);
+    mode === "cards"
+      ? selectedRows.some((r) => r.queue !== -1)
+      : selectedNoteRows.some((r) => r.has_unsuspended ?? r.card_ids.length > 0);
+  const hasBuried =
+    mode === "cards"
+      ? selectedRows.some((r) => r.queue === -2 || r.queue === -3)
+      : selectedNoteRows.some((r) => Boolean(r.has_buried));
   const hasUnburied =
     mode === "cards"
       ? selectedRows.some((r) => r.queue !== -2 && r.queue !== -3)
-      : orderedSelectedIds.length > 0;
+      : selectedNoteRows.some((r) => r.has_unburied ?? r.card_ids.length > 0);
   const selectedNotetypeNames =
     mode === "cards"
       ? selectedRows.map((r) => r.notetype)
@@ -604,6 +616,14 @@ export function BrowseScreen() {
           type="button"
           variant="outline"
           size="sm"
+          onClick={() => setActiveDialog("emptyCards")}
+        >
+          {t("browse.emptyCards")}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
           onClick={() => setActiveDialog("columns")}
         >
           <Columns3 className="size-3.5" /> {t("browse.columns.button")}
@@ -672,7 +692,7 @@ export function BrowseScreen() {
         />
 
         {editNoteId !== null && selected.size === 1 && (
-          <aside className="w-80 shrink-0 overflow-auto border-s border-border">
+          <aside className="w-72 shrink-0 overflow-auto border-s border-border lg:w-80 xl:w-96">
             <NoteEditorPanel
               key={editNoteId}
               ref={editorRef}
@@ -741,12 +761,11 @@ export function BrowseScreen() {
           }}
           onSetFlag={(flag) => flagMut.mutate({ cardIds: orderedSelectedIds, flag })}
           onSubmitTags={(tagList, action) => {
-            for (const tagName of tagList) {
-              if (action === "addTag") {
-                addTagMut.mutate({ noteIds: selectedNoteIds, tag: tagName });
-              } else {
-                removeTagMut.mutate({ noteIds: selectedNoteIds, tag: tagName });
-              }
+            if (tagList.length === 0) return;
+            if (action === "addTag") {
+              addTagMut.mutate({ noteIds: selectedNoteIds, tags: tagList });
+            } else {
+              removeTagMut.mutate({ noteIds: selectedNoteIds, tags: tagList });
             }
           }}
           onMoveDeck={(deckId) => moveDeckMut.mutate({ cardIds: orderedSelectedIds, deckId })}
@@ -791,6 +810,7 @@ export function BrowseScreen() {
       <FindReplaceDialog
         open={activeDialog === "findReplace"}
         noteIds={selectedNoteIds}
+        notetypeNames={selectedNotetypeNames}
         onClose={() => setActiveDialog(null)}
         onDone={() => void invalidate()}
       />
@@ -807,6 +827,11 @@ export function BrowseScreen() {
           void invalidate();
           void queryClient.invalidateQueries({ queryKey: queryKeys.tags });
         }}
+      />
+      <EmptyCardsDialog
+        open={activeDialog === "emptyCards"}
+        onClose={() => setActiveDialog(null)}
+        onDone={() => void invalidate()}
       />
       <ChangeNotetypeDialog
         open={activeDialog === "changeNotetype"}

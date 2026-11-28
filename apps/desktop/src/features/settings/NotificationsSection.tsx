@@ -1,65 +1,12 @@
 import { useId, useState } from "react";
+import {
+  SettingsCard,
+  SettingsSectionHeader,
+  SettingsToggleRow,
+} from "@/components/ui/settings-kit";
 import { t } from "@/lib/i18n";
 import { platform } from "@/lib/platform";
 import { useReminders } from "@/stores/reminders";
-
-interface SwitchRowProps {
-  id: string;
-  label: string;
-  hint: string;
-  checked: boolean;
-  disabled?: boolean;
-  onToggle: (next: boolean) => void;
-  children?: React.ReactNode;
-}
-
-function ReminderSwitchRow({
-  id,
-  label,
-  hint,
-  checked,
-  disabled = false,
-  onToggle,
-  children,
-}: SwitchRowProps) {
-  const labelId = `${id}-label`;
-  const hintId = `${id}-hint`;
-  return (
-    <div className="space-y-2 border-t border-border/60 pt-3 first:border-t-0 first:pt-0">
-      <div className="flex items-center justify-between gap-4">
-        <div className="space-y-0.5">
-          <span id={labelId} className="text-sm font-medium text-foreground">
-            {label}
-          </span>
-          <p id={hintId} className="text-xs text-muted-foreground">
-            {hint}
-          </p>
-        </div>
-        <button
-          id={id}
-          type="button"
-          role="switch"
-          aria-checked={checked}
-          aria-labelledby={labelId}
-          aria-describedby={hintId}
-          disabled={disabled}
-          onClick={() => onToggle(!checked)}
-          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${
-            checked ? "bg-primary" : "bg-muted"
-          }`}
-        >
-          <span
-            aria-hidden="true"
-            className={`pointer-events-none block size-5 rounded-full bg-background shadow-sm transition-transform ${
-              checked ? "translate-x-5 rtl:-translate-x-5" : "translate-x-0"
-            }`}
-          />
-        </button>
-      </div>
-      {children}
-    </div>
-  );
-}
 
 export function NotificationsSection() {
   const baseId = useId();
@@ -111,16 +58,12 @@ export function NotificationsSection() {
   }
 
   return (
-    <section className="rounded-xl border border-border bg-card p-5 space-y-4">
-      <div>
-        <h2 className="text-sm font-medium text-foreground">{t("settings.notifications.title")}</h2>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          {t("settings.notifications.description")}
-        </p>
-      </div>
+    <SettingsCard>
+      <SettingsSectionHeader title={t("settings.notifications.cardTitle")} />
 
       <div className="space-y-3">
-        <ReminderSwitchRow
+        <SettingsToggleRow
+          divider
           id={`${baseId}-daily`}
           label={t("settings.notifications.dailyStudy")}
           hint={t("settings.notifications.dailyStudyHint")}
@@ -143,9 +86,10 @@ export function NotificationsSection() {
               className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
-        </ReminderSwitchRow>
+        </SettingsToggleRow>
 
-        <ReminderSwitchRow
+        <SettingsToggleRow
+          divider
           id={`${baseId}-evening`}
           label={t("settings.notifications.eveningStreak")}
           hint={t("settings.notifications.eveningStreakHint")}
@@ -168,9 +112,10 @@ export function NotificationsSection() {
               className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
-        </ReminderSwitchRow>
+        </SettingsToggleRow>
 
-        <ReminderSwitchRow
+        <SettingsToggleRow
+          divider
           id={`${baseId}-habits`}
           label={t("settings.notifications.habitReminders")}
           hint={t("settings.notifications.habitRemindersHint")}
@@ -193,6 +138,6 @@ export function NotificationsSection() {
       <p className="border-t border-border/60 pt-3 text-xs text-muted-foreground">
         {t("settings.notifications.runningHint")}
       </p>
-    </section>
+    </SettingsCard>
   );
 }

@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import type { IntegrityReport } from "@bibalak/ipc-types";
 import { Button } from "@/components/ui/button";
+import { SettingsCard, SettingsSectionHeader } from "@/components/ui/settings-kit";
 import { t, tn } from "@/lib/i18n";
 import { errorMessage, ipc } from "@/lib/ipc";
 import { queryKeys } from "@/lib/queryKeys";
 import { Spinner } from "./SettingsSpinner";
 
 export function MaintenanceSection() {
-  const [integrityResult, setIntegrityResult] = useState<string[]>([]);
+  const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
   const [integrityError, setIntegrityError] = useState<string | null>(null);
   const [optimizeMsg, setOptimizeMsg] = useState<string>("");
   const [mediaResult, setMediaResult] = useState<{
@@ -20,12 +22,12 @@ export function MaintenanceSection() {
   const integrityMut = useMutation({
     mutationFn: ipc.checkIntegrity,
     onMutate: () => setIntegrityError(null),
-    onSuccess: (errs) => {
+    onSuccess: (report) => {
       setIntegrityError(null);
-      setIntegrityResult(errs);
+      setIntegrityReport(report);
     },
     onError: (e) => {
-      setIntegrityResult([]);
+      setIntegrityReport(null);
       setIntegrityError(errorMessage(e));
     },
   });
@@ -79,13 +81,8 @@ export function MaintenanceSection() {
     deleteOrphanMut.isPending;
 
   return (
-    <section id="maintenance" className="rounded-xl border border-border bg-card p-5 space-y-6">
-      <div>
-        <h2 className="text-sm font-medium text-foreground">{t("settings.maintenance.title")}</h2>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          {t("settings.maintenance.description")}
-        </p>
-      </div>
+    <SettingsCard id="maintenance" className="space-y-6">
+      <SettingsSectionHeader title={t("settings.maintenance.cardTitle")} />
 
       {/* Database Integrity */}
       <div className="space-y-2">
@@ -94,20 +91,29 @@ export function MaintenanceSection() {
             {integrityMut.isPending && <Spinner />}
             {integrityMut.isPending ? t("settings.integrity.busy") : t("settings.integrity.check")}
           </Button>
-          {integrityError === null && integrityResult.length === 0 && integrityMut.isSuccess && (
-            <span className="text-sm text-green-600 dark:text-green-400" aria-live="polite">
-              {t("settings.integrity.healthy")}
-            </span>
-          )}
+          {integrityError === null &&
+            integrityReport !== null &&
+            integrityReport.errors.length === 0 &&
+            integrityReport.repaired_orphan_subdecks === 0 && (
+              <span className="text-sm text-green-600 dark:text-green-400" aria-live="polite">
+                {t("settings.integrity.healthy")}
+              </span>
+            )}
         </div>
+        <p className="text-xs text-muted-foreground">{t("settings.integrity.hint")}</p>
         {integrityError && (
           <p role="alert" className="text-sm text-destructive">
             {integrityError}
           </p>
         )}
-        {integrityResult.length > 0 && (
+        {integrityReport && integrityReport.repaired_orphan_subdecks > 0 && (
+          <p className="text-sm text-amber-600 dark:text-amber-400" aria-live="polite">
+            {tn("settings.integrity.repairedOrphans", integrityReport.repaired_orphan_subdecks)}
+          </p>
+        )}
+        {integrityReport && integrityReport.errors.length > 0 && (
           <ul className="text-sm text-destructive space-y-0.5" aria-live="polite">
-            {integrityResult.map((e, i) => (
+            {integrityReport.errors.map((e, i) => (
               <li key={i}>{e}</li>
             ))}
           </ul>
@@ -115,26 +121,29 @@ export function MaintenanceSection() {
       </div>
 
       {/* Database Optimize */}
-      <div className="flex items-center gap-2">
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => optimizeMut.mutate()}>
-          {optimizeMut.isPending && <Spinner />}
-          {optimizeMut.isPending ? t("settings.optimize.busy") : t("settings.optimize.button")}
-        </Button>
-        {optimizeMsg && (
-          <span className="text-sm text-muted-foreground" aria-live="polite">
-            {optimizeMsg}
-            {optimizeMut.isError && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="ms-2 h-6 px-2 text-xs"
-                onClick={() => optimizeMut.mutate()}
-              >
-                {t("common.retry")}
-              </Button>
-            )}
-          </span>
-        )}
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => optimizeMut.mutate()}>
+            {optimizeMut.isPending && <Spinner />}
+            {optimizeMut.isPending ? t("settings.optimize.busy") : t("settings.optimize.button")}
+          </Button>
+          {optimizeMsg && (
+            <span className="text-sm text-muted-foreground" aria-live="polite">
+              {optimizeMsg}
+              {optimizeMut.isError && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="ms-2 h-6 px-2 text-xs"
+                  onClick={() => optimizeMut.mutate()}
+                >
+                  {t("common.retry")}
+                </Button>
+              )}
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">{t("settings.optimize.hint")}</p>
       </div>
 
       {/* Media Check */}
@@ -172,11 +181,13 @@ export function MaintenanceSection() {
               {mediaResult.orphan_files.length > 0 && (
                 <div className="space-y-2">
                   <p className="font-medium text-amber-600 dark:text-amber-400">
-                    {t("settings.media.orphansTitle", { count: mediaResult.orphan_files.length })}
+                    {tn("settings.media.orphansTitle", mediaResult.orphan_files.length)}
                   </p>
                   <ul className="max-h-48 overflow-auto text-xs text-muted-foreground ps-3 space-y-0.5">
                     {mediaResult.orphan_files.map((f) => (
-                      <li key={f}>{f}</li>
+                      <li key={f}>
+                        <bdi dir="ltr">{f}</bdi>
+                      </li>
                     ))}
                   </ul>
                   {!deleteOrphanConfirm ? (
@@ -196,10 +207,14 @@ export function MaintenanceSection() {
                       </p>
                       <ul className="max-h-32 overflow-auto text-xs text-muted-foreground ps-3 space-y-0.5">
                         {mediaResult.orphan_files.map((f) => (
-                          <li key={f}>{f}</li>
+                          <li key={f}>
+                            <bdi dir="ltr">{f}</bdi>
+                          </li>
                         ))}
                       </ul>
-                      <p className="text-xs text-muted-foreground">{t("settings.irreversible")}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t("settings.media.movedToTrash")}
+                      </p>
                       <div className="flex gap-2">
                         <Button
                           size="sm"
@@ -227,11 +242,13 @@ export function MaintenanceSection() {
               {mediaResult.missing_files.length > 0 && (
                 <div>
                   <p className="font-medium text-destructive">
-                    {t("settings.media.missingTitle", { count: mediaResult.missing_files.length })}
+                    {tn("settings.media.missingTitle", mediaResult.missing_files.length)}
                   </p>
                   <ul className="max-h-48 overflow-auto text-xs text-muted-foreground ps-3 space-y-0.5">
                     {mediaResult.missing_files.map((f) => (
-                      <li key={f}>{f}</li>
+                      <li key={f}>
+                        <bdi dir="ltr">{f}</bdi>
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -239,6 +256,6 @@ export function MaintenanceSection() {
             </div>
           )}
       </div>
-    </section>
+    </SettingsCard>
   );
 }

@@ -516,4 +516,30 @@ describe("ShopScreen (14f)", () => {
     const popup = useNotificationStore.getState().popupQueue.find((p) => p.kind === "purchase");
     expect(popup?.action?.label).toMatch(/Refund/i);
   });
+
+  it("A3-19: gates /shop in Default style and uses knowledge points instead of gold in Scholar style", async () => {
+    useStyle.getState().setStyle("default");
+    const gameSpy = vi.spyOn(ipcModule.ipc, "getGameState");
+    const { rerender } = renderShop();
+    expect(
+      screen.getByText("The shop & custom rewards are available in Game style."),
+    ).toBeInTheDocument();
+    expect(gameSpy).not.toHaveBeenCalled();
+
+    useStyle.getState().setStyle("scholar");
+    vi.spyOn(ipcModule.ipc, "getGameState").mockResolvedValue(makeGameState());
+    vi.spyOn(ipcModule.ipc, "listCustomRewards").mockResolvedValue([]);
+    vi.spyOn(ipcModule.ipc, "listSpendHistory").mockResolvedValue([]);
+    rerender(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <ShopScreen />
+      </QueryClientProvider>,
+    );
+
+    const balance = await screen.findByTestId("shop-gold-balance");
+    expect(balance.textContent).toMatch(/knowledge points/i);
+    expect(balance.textContent).not.toMatch(/\bgold\b/i);
+  });
 });

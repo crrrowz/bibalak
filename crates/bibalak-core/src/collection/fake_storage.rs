@@ -3,8 +3,8 @@ use std::sync::Mutex;
 
 use crate::error::{CoreError, CoreResult};
 use crate::ipc::{
-    DuplicateGroup, FieldOptions, FieldRemoveWarning, FindReplacePreview, NoteDetail, NoteOverview,
-    NoteRow, NotetypeDetail,
+    DuplicateGroup, EmptyCardItem, FieldOptions, FieldRemoveWarning, FindReplacePreview,
+    NoteDetail, NoteOverview, NoteRow, NotetypeDetail,
 };
 use crate::model::{
     CanonicalModel, Card, Deck, Field, ImportSummary, NoteIndexRow, NoteSnapshot,
@@ -32,6 +32,8 @@ pub struct FakeStorage {
     pub(crate) due_counts: Mutex<std::collections::HashMap<i64, (u32, u32, u32)>>,
     pub(crate) last_answered: std::sync::Arc<Mutex<std::collections::HashMap<i64, i64>>>,
     pub(crate) deck_limits_map: Mutex<std::collections::HashMap<i64, (u32, u32)>>,
+    pub(crate) deck_configs_map:
+        Mutex<std::collections::HashMap<i64, crate::scheduling::SchedConfig>>,
     pub(crate) today_studied_map: Mutex<std::collections::HashMap<i64, (u32, u32)>>,
     pub(crate) extra_new_map: Mutex<std::collections::HashMap<i64, u32>>,
     pub(crate) unbury_calls: std::sync::Arc<AtomicUsize>,
@@ -293,7 +295,20 @@ impl NoteStore for FakeStorage {
         Ok(())
     }
 
+    fn bulk_add_tags(&self, _note_ids: &[i64], _tags: &[String], _now_ms: i64) -> CoreResult<()> {
+        Ok(())
+    }
+
     fn bulk_remove_tag(&self, _note_ids: &[i64], _tag: &str, _now_ms: i64) -> CoreResult<()> {
+        Ok(())
+    }
+
+    fn bulk_remove_tags(
+        &self,
+        _note_ids: &[i64],
+        _tags: &[String],
+        _now_ms: i64,
+    ) -> CoreResult<()> {
         Ok(())
     }
 
@@ -639,21 +654,31 @@ impl StudyStore for FakeStorage {
         Ok(())
     }
 
-    fn get_deck_config(&self, _config_id: i64) -> CoreResult<crate::scheduling::SchedConfig> {
+    fn get_deck_config(&self, config_id: i64) -> CoreResult<crate::scheduling::SchedConfig> {
         if self.fail_get_deck_config.load(Ordering::SeqCst) {
             return Err(CoreError::Storage(
                 "simulated get_deck_config failure".into(),
             ));
         }
-        Ok(crate::scheduling::SchedConfig::default())
+        Ok(self
+            .deck_configs_map
+            .lock()
+            .unwrap()
+            .get(&config_id)
+            .cloned()
+            .unwrap_or_default())
     }
 
     fn set_deck_config(
         &self,
-        _config_id: i64,
-        _config: &crate::scheduling::SchedConfig,
+        config_id: i64,
+        config: &crate::scheduling::SchedConfig,
         _now_ms: i64,
     ) -> CoreResult<()> {
+        self.deck_configs_map
+            .lock()
+            .unwrap()
+            .insert(config_id, config.clone());
         Ok(())
     }
 
@@ -754,6 +779,22 @@ impl StudyStore for FakeStorage {
         _created_ms: i64,
     ) -> CoreResult<crate::ipc::StatsDto> {
         Ok(crate::ipc::StatsDto::default())
+    }
+
+    fn due_forecast(
+        &self,
+        _days: u32,
+        tz_offset_minutes: i32,
+        rollover_hour: u8,
+        now_ms: i64,
+        _created_ms: i64,
+    ) -> CoreResult<crate::ipc::DueForecastDto> {
+        let now_epoch_day =
+            crate::progress::created_epoch_day(now_ms, tz_offset_minutes, rollover_hour);
+        Ok(crate::ipc::DueForecastDto {
+            today_date: crate::ipc::epoch_days_to_date_string(now_epoch_day),
+            forecast: vec![],
+        })
     }
 
     fn suspend_cards(&self, _card_ids: &[i64], _now_ms: i64) -> CoreResult<()> {
@@ -891,12 +932,173 @@ impl StudyStore for FakeStorage {
         Ok(())
     }
 
+    fn revoke_streak_freeze_if_inactive(
+        &self,
+        day: i32,
+        tz_offset_minutes: i32,
+        rollover_hour: u8,
+        created_ms: i64,
+        now_ms: i64,
+    ) -> CoreResult<()> {
+        let active_days = self.fake_active_ledger_days(
+            crate::progress::NIL_USER_ID,
+            tz_offset_minutes,
+            rollover_hour,
+            created_ms,
+        );
+        if !active_days.contains(&day) {
+            let key = format!("freeze_earn:streak:{day}");
+            self.fake_soft_delete_freeze_entry(crate::progress::NIL_USER_ID, &key, now_ms);
+        }
+        Ok(())
+    }
+
     fn revlogs_for_optimize(&self, _deck_id: Option<i64>) -> CoreResult<Vec<crate::model::Revlog>> {
         Ok(vec![])
     }
 
     fn workload_snapshot(&self, _deck_ids: &[i64]) -> CoreResult<crate::ports::WorkloadSnapshot> {
         Ok(crate::ports::WorkloadSnapshot::default())
+    }
+
+    fn reset_deck_progress(
+        &self,
+        deck_ids: &[i64],
+        today: i32,
+        now_ms: i64,
+    ) -> CoreResult<crate::ports::DeckResetSnapshot> {
+        let mut cards_guard = self.cards.lock().unwrap();
+        let mut snap = crate::ports::DeckResetSnapshot::default();
+        let mut card_id_set = std::collections::HashSet::new();
+        for c in cards_guard.iter_mut() {
+            let in_scope = deck_ids.contains(&c.deck_id)
+                || (c.original_deck_id != 0 && deck_ids.contains(&c.original_deck_id));
+            if !in_scope {
+                continue;
+            }
+            snap.cards.push(c.clone());
+            card_id_set.insert(c.id);
+            if c.original_deck_id != 0 {
+                c.deck_id = c.original_deck_id;
+                c.original_deck_id = 0;
+            }
+            c.ctype = 0;
+            c.queue = 0;
+            c.interval = 0;
+            c.ease_factor = 0;
+            c.reps = 0;
+            c.lapses = 0;
+            c.remaining = 0;
+            c.original_due = 0;
+            c.fsrs_stability = None;
+            c.fsrs_difficulty = None;
+            c.fsrs_last_review = None;
+            c.mod_ms = now_ms;
+            c.usn = -1;
+        }
+        drop(cards_guard);
+
+        let mut revlogs_guard = self.revlogs.lock().unwrap();
+        snap.revlogs = revlogs_guard
+            .iter()
+            .filter(|r| card_id_set.contains(&r.card_id))
+            .cloned()
+            .collect();
+        revlogs_guard.retain(|r| !card_id_set.contains(&r.card_id));
+        drop(revlogs_guard);
+
+        let mut ledger_guard = self.progress_ledger.lock().unwrap();
+        for entry in ledger_guard.iter_mut() {
+            if entry.deleted_at.is_none()
+                && crate::progress::parse_review_source_key(&entry.source_key)
+                    .is_some_and(|p| card_id_set.contains(&p.card_id))
+            {
+                entry.deleted_at = Some(now_ms);
+                entry.updated_at = now_ms;
+                entry.usn = -1;
+                snap.soft_deleted_ledger_ids.push(entry.id.clone());
+            }
+        }
+        drop(ledger_guard);
+
+        let deleted_set: std::collections::HashSet<&str> = snap
+            .soft_deleted_ledger_ids
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let mut pet_guard = self.game_pet_credits.lock().unwrap();
+        for credit in pet_guard.iter_mut() {
+            if credit.deleted_at.is_none() && deleted_set.contains(credit.ledger_id.as_str()) {
+                credit.deleted_at = Some(now_ms);
+                credit.updated_at = now_ms;
+                credit.usn = -1;
+                snap.revoked_pet_credit_ids.push(credit.id.clone());
+            }
+        }
+        drop(pet_guard);
+
+        let mut extra_guard = self.extra_new_map.lock().unwrap();
+        for &did in deck_ids {
+            if let Some(extra) = extra_guard.remove(&did) {
+                snap.day_limit_overrides.push((did, today, extra));
+            }
+        }
+        Ok(snap)
+    }
+
+    fn restore_deck_reset(
+        &self,
+        snapshot: &crate::ports::DeckResetSnapshot,
+        now_ms: i64,
+    ) -> CoreResult<()> {
+        let mut cards_guard = self.cards.lock().unwrap();
+        for orig in &snapshot.cards {
+            if let Some(cur) = cards_guard.iter_mut().find(|c| c.id == orig.id) {
+                *cur = orig.clone();
+                cur.mod_ms = now_ms;
+            }
+        }
+        drop(cards_guard);
+
+        let mut revlogs_guard = self.revlogs.lock().unwrap();
+        for rl in &snapshot.revlogs {
+            if !revlogs_guard.iter().any(|existing| existing.id == rl.id) {
+                revlogs_guard.push(rl.clone());
+            }
+        }
+        drop(revlogs_guard);
+
+        let ledger_set: std::collections::HashSet<&str> = snapshot
+            .soft_deleted_ledger_ids
+            .iter()
+            .map(String::as_str)
+            .collect();
+        for entry in self.progress_ledger.lock().unwrap().iter_mut() {
+            if ledger_set.contains(entry.id.as_str()) {
+                entry.deleted_at = None;
+                entry.updated_at = now_ms;
+                entry.usn = -1;
+            }
+        }
+
+        let pet_set: std::collections::HashSet<&str> = snapshot
+            .revoked_pet_credit_ids
+            .iter()
+            .map(String::as_str)
+            .collect();
+        for credit in self.game_pet_credits.lock().unwrap().iter_mut() {
+            if pet_set.contains(credit.id.as_str()) {
+                credit.deleted_at = None;
+                credit.updated_at = now_ms;
+                credit.usn = -1;
+            }
+        }
+
+        let mut extra_guard = self.extra_new_map.lock().unwrap();
+        for &(did, _day, extra) in &snapshot.day_limit_overrides {
+            extra_guard.insert(did, extra);
+        }
+        Ok(())
     }
 }
 
@@ -950,12 +1152,16 @@ impl BrowseStore for FakeStorage {
         _note_ids: &[i64],
         _field_name: Option<&str>,
         _find: &str,
+        _replace: &str,
         _use_regex: bool,
         _case_sensitive: bool,
+        _include_html: bool,
     ) -> CoreResult<FindReplacePreview> {
         Ok(FindReplacePreview {
             notes_matched: 0,
             occurrences: 0,
+            sample_before: None,
+            sample_after: None,
         })
     }
 
@@ -967,6 +1173,7 @@ impl BrowseStore for FakeStorage {
         _replace: &str,
         _use_regex: bool,
         _case_sensitive: bool,
+        _include_html: bool,
         _now_ms: i64,
     ) -> CoreResult<Vec<NoteSnapshot>> {
         Ok(vec![])
@@ -996,6 +1203,14 @@ impl BrowseStore for FakeStorage {
         _field_ord: i64,
     ) -> CoreResult<Vec<DuplicateGroup>> {
         Ok(vec![])
+    }
+
+    fn find_empty_cards(&self) -> CoreResult<Vec<EmptyCardItem>> {
+        Ok(vec![])
+    }
+
+    fn delete_empty_cards(&self, _card_ids: &[i64], _now_ms: i64) -> CoreResult<u32> {
+        Ok(0)
     }
 
     fn list_tags(&self) -> CoreResult<Vec<String>> {
@@ -1031,8 +1246,8 @@ impl MaintenanceStore for FakeStorage {
         Ok(0)
     }
 
-    fn integrity_check(&self, _now_ms: i64) -> CoreResult<Vec<String>> {
-        Ok(vec![])
+    fn integrity_check(&self, _now_ms: i64) -> CoreResult<crate::ipc::IntegrityReport> {
+        Ok(crate::ipc::IntegrityReport::default())
     }
 
     fn optimize(&self) -> CoreResult<()> {
@@ -1107,6 +1322,7 @@ impl ProgressStore for FakeStorage {
         user_id: &str,
         today_start_ms: i64,
         today_end_ms: i64,
+        today_day: i32,
     ) -> CoreResult<crate::progress::ProgressTotals> {
         let ledger = self.progress_ledger.lock().unwrap();
         let mut totals = crate::progress::ProgressTotals::default();
@@ -1118,7 +1334,13 @@ impl ProgressStore for FakeStorage {
             let gold = e.gold_cents.max(0) as u64;
             totals.total_xp += xp;
             totals.gold_cents += gold;
-            if e.created_at >= today_start_ms && e.created_at < today_end_ms {
+            let counts_today = match crate::progress::parse_ledger_source_key(&e.source_key) {
+                Some(crate::progress::ParsedSourceKey::HabitLog { day_index, .. }) => {
+                    day_index == today_day
+                }
+                _ => e.created_at >= today_start_ms && e.created_at < today_end_ms,
+            };
+            if counts_today {
                 totals.today_xp += xp;
                 totals.today_gold_cents += gold;
                 if e.source_key.starts_with("task_done:") {
@@ -1227,8 +1449,12 @@ impl ProgressStore for FakeStorage {
         for e in self.progress_ledger.lock().unwrap().iter().filter(|e| {
             e.user_id == user_id
                 && e.deleted_at.is_none()
-                && e.created_at >= yesterday_start_ms
-                && e.created_at < yesterday_end_ms
+                && match crate::progress::parse_ledger_source_key(&e.source_key) {
+                    Some(crate::progress::ParsedSourceKey::HabitLog { day_index, .. }) => {
+                        day_index == yesterday_day
+                    }
+                    _ => e.created_at >= yesterday_start_ms && e.created_at < yesterday_end_ms,
+                }
         }) {
             xp = xp.saturating_add(e.xp.max(0) as u64);
             gold_cents = gold_cents.saturating_add(e.gold_cents.max(0) as u64);
@@ -1908,6 +2134,22 @@ impl ProductivityStore for FakeStorage {
         revoke_source_key: Option<&str>,
         now_ms: i64,
     ) -> CoreResult<()> {
+        let freeze_key = format!("freeze_use:{habit_id}:{day_index}");
+        let restoring_frozen = previous.is_some_and(|p| {
+            p.status == crate::productivity::HabitLogStatus::Frozen && p.deleted_at.is_none()
+        });
+        if restoring_frozen {
+            let already_frozen_in_ledger =
+                self.freeze_token_ledger.lock().unwrap().iter().any(|f| {
+                    f.user_id == user_id && f.source_key == freeze_key && f.deleted_at.is_none()
+                });
+            if !already_frozen_in_ledger && self.fake_freeze_tokens_held(user_id) < 1 {
+                return Err(crate::error::CoreError::Invalid(
+                    "cannot restore frozen habit status without an available streak freeze token"
+                        .into(),
+                ));
+            }
+        }
         let mut logs = self.habit_logs.lock().unwrap();
         if let Some(entry) = logs
             .iter_mut()
@@ -1955,11 +2197,8 @@ impl ProductivityStore for FakeStorage {
                 now_ms,
             );
         }
-        let freeze_key = format!("freeze_use:{habit_id}:{day_index}");
-        if previous.is_some_and(|p| p.status == crate::productivity::HabitLogStatus::Frozen) {
-            if self.fake_freeze_tokens_held(user_id) >= 1 {
-                self.fake_upsert_freeze_entry(user_id, &freeze_key, -1, now_ms);
-            }
+        if restoring_frozen {
+            self.fake_upsert_freeze_entry(user_id, &freeze_key, -1, now_ms);
         } else {
             self.fake_soft_delete_freeze_entry(user_id, &freeze_key, now_ms);
         }
@@ -2686,6 +2925,36 @@ impl GameStore for FakeStorage {
             reward_granted,
             game_changed,
             revlog_id: log.id,
+        })
+    }
+
+    fn apply_answer_atomic(
+        &self,
+        card_id: i64,
+        note_id: i64,
+        next: &CardState,
+        due: i64,
+        log: &Revlog,
+        reward: Option<&crate::progress::RewardGrant>,
+        is_leech: bool,
+        ctx: &crate::game_depth::GameEvalContext,
+    ) -> CoreResult<crate::game_depth::ApplyAnswerFullOutcome> {
+        let outcome = self.apply_answer_with_game(card_id, next, due, log, reward, ctx)?;
+        let buried_siblings = self.bury_siblings(note_id, card_id, ctx.now_ms)?;
+        let added_leech_tag = is_leech
+            && !self
+                .note_detail(note_id)?
+                .is_some_and(|n| n.tags.iter().any(|t| t == "leech"));
+        if is_leech {
+            self.add_note_tag(note_id, "leech", ctx.now_ms)?;
+            self.suspend_cards(&[card_id], ctx.now_ms)?;
+        }
+        Ok(crate::game_depth::ApplyAnswerFullOutcome {
+            reward_granted: outcome.reward_granted,
+            game_changed: outcome.game_changed,
+            revlog_id: outcome.revlog_id,
+            buried_siblings,
+            added_leech_tag,
         })
     }
 
@@ -3787,8 +4056,12 @@ impl FakeStorage {
             .filter(|e| {
                 e.user_id == user_id
                     && e.deleted_at.is_none()
-                    && e.created_at >= start_ms
-                    && e.created_at < end_ms
+                    && match crate::progress::parse_ledger_source_key(&e.source_key) {
+                        Some(crate::progress::ParsedSourceKey::HabitLog { day_index, .. }) => {
+                            day_index >= start_day && day_index <= end_day
+                        }
+                        _ => e.created_at >= start_ms && e.created_at < end_ms,
+                    }
             })
             .map(|e| e.xp.max(0) as u64)
             .sum();
@@ -4493,18 +4766,18 @@ impl FakeStorage {
             ctx.rollover_hour,
             ctx.created_ms,
         );
-        let streak = crate::game::streak_ending_at(&active_days, ctx.awarded_day);
+        let frozen_days = self.fake_frozen_study_days(&ctx.user_id);
+        let streak =
+            crate::game::streak_ending_at_with_freezes(&active_days, &frozen_days, ctx.awarded_day);
         if streak > 0
             && streak.is_multiple_of(crate::game::STREAK_FREEZE_MILESTONE_DAYS)
             && self.fake_freeze_tokens_held(&ctx.user_id) < crate::game::FREEZE_TOKEN_CAP
         {
             let key = format!("freeze_earn:streak:{}", ctx.awarded_day);
-            let exists = self
-                .freeze_token_ledger
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|f| f.user_id == ctx.user_id && f.source_key == key);
+            let exists =
+                self.freeze_token_ledger.lock().unwrap().iter().any(|f| {
+                    f.user_id == ctx.user_id && f.source_key == key && f.deleted_at.is_none()
+                });
             if !exists && self.fake_upsert_freeze_entry(&ctx.user_id, &key, 1, ctx.now_ms) {
                 changed = true;
             }

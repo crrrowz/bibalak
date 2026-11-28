@@ -176,8 +176,8 @@ fn repro_b_parent_with_two_subdecks_caps_total_and_subdeck_direct() {
     );
     assert_eq!(c.count_due_by_type(parent.id).unwrap(), (0, 0, 0));
 
-    // Studying a subdeck directly is capped by that subdeck's own limit:
-    // create a separate parent tree with distinct subdeck limits.
+    // Studying a subdeck directly is bounded by both its own limit and its
+    // ancestors' remaining daily allowances (A1-06).
     let p2 = c.create_deck("Japanese").unwrap();
     let p2_a = c.create_deck("Japanese::Kanji").unwrap();
     let p2_b = c.create_deck("Japanese::Vocab").unwrap();
@@ -196,14 +196,15 @@ fn repro_b_parent_with_two_subdecks_caps_total_and_subdeck_direct() {
     }
     assert_eq!(served_a, 10);
 
-    assert_eq!(c.count_due_by_type(p2_b.id).unwrap(), (25, 0, 0));
+    // Parent budget had 20/day; p2_a used 10, so p2_b is capped at 10 remaining today.
+    assert_eq!(c.count_due_by_type(p2_b.id).unwrap(), (10, 0, 0));
     let mut served_b = 0;
     while let Some(card) = c.next_card(p2_b.id).unwrap() {
         clock.set(clock.now_ms() + 100);
         answer(&c, &clock, card.id, Rating::Easy);
         served_b += 1;
     }
-    assert_eq!(served_b, 25);
+    assert_eq!(served_b, 10);
 }
 
 #[test]
@@ -250,16 +251,40 @@ fn repro_c_learning_again_1min_and_soonest_due() {
 #[test]
 fn repro_c_grace_never_hides_due_learning_card_for_multiple_answers() {
     let (c, clock, nt_id) = setup();
-    // 0-minute first step puts the learning card immediately due at answer time.
     let d_zero = c.create_deck("ZeroStep").unwrap();
-    let mut cfg = c.get_deck_config(d_zero.id).unwrap();
-    cfg.learning_steps_min = vec![0, 10];
-    c.set_deck_config(&cfg).unwrap();
     add_new_cards(&c, d_zero.id, nt_id, 4, "Z");
 
     clock.set(T0 + 900_000);
     let z1 = c.next_card(d_zero.id).unwrap().unwrap();
-    answer(&c, &clock, z1.id, Rating::Again); // due = now (0m), last_answered = T0 + 900_000
+    let z1_next = bibalak_core::scheduling::CardState {
+        phase: CardPhase::Learning,
+        steps_remaining: 2,
+        reps: 1,
+        ..z1.state
+    };
+    let z1_log = bibalak_core::model::Revlog {
+        id: clock.now_ms(),
+        card_id: z1.id,
+        usn: -1,
+        ease: Rating::Again as i64,
+        interval: 0,
+        last_interval: 0,
+        ease_factor: 2500,
+        taken_ms: 400,
+        review_kind: 0,
+    };
+    // Learning card due immediately (now_ms) with last_answered = T0 + 900_000.
+    c.apply_answer(
+        z1.id,
+        z1.note_id,
+        &z1.state,
+        z1.due,
+        &z1_next,
+        clock.now_ms(),
+        &z1_log,
+        8,
+    )
+    .unwrap();
 
     // Deferred once while another new card exists:
     let z2 = c.next_card(d_zero.id).unwrap().unwrap();
@@ -322,7 +347,9 @@ fn repro_d_badges_match_served_queue_counts() {
             answer(&c, &clock, card.id, Rating::Easy);
         }
     }
-    // Create 2 learning cards in A, 1 learning card in B with Again (1m step).
+    // Advance 1 day so Day 1 has fresh new-card capacity under parent Med (20/day),
+    // then create 2 learning cards in A and 1 learning card in B with Again (1m step).
+    clock.advance_days(1);
     add_new_cards(&c, sub_a.id, nt_id, 2, "CL");
     add_new_cards(&c, sub_b.id, nt_id, 1, "RL");
     for _ in 0..2 {
@@ -334,9 +361,9 @@ fn repro_d_badges_match_served_queue_counts() {
     let card = c.next_card(sub_b.id).unwrap().unwrap();
     answer(&c, &clock, card.id, Rating::Again);
 
-    // Advance 5 days: CR/RR (Easy -> +4d) are due reviews, CL/RL are overdue learning,
-    // and daily studied counts reset! Now add 15 new in A + 15 new in B.
-    clock.advance_days(5);
+    // Advance 4 more days (Day 5 total): CR/RR (Easy on Day 0 -> Day 4) are due reviews,
+    // CL/RL are overdue learning, and daily studied counts reset!
+    clock.advance_days(4);
     add_new_cards(&c, sub_a.id, nt_id, 15, "CN");
     add_new_cards(&c, sub_b.id, nt_id, 15, "RN");
 

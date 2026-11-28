@@ -1050,4 +1050,31 @@ mod tests {
         assert!(!prompt_text.contains("Front:"));
         assert!(!prompt_text.contains("Back:"));
     }
+
+    #[test]
+    fn a4_10_ai_requires_https_for_remote_origins_and_strips_script_after_scriptx() {
+        assert!(crate::ai::normalize_provider_origin("http://api.example.com/v1").is_err());
+        assert_eq!(
+            crate::ai::normalize_provider_origin("https://api.example.com/v1").unwrap(),
+            "https://api.example.com"
+        );
+        assert_eq!(
+            crate::ai::normalize_provider_origin("http://localhost:11434/v1").unwrap(),
+            "http://localhost:11434"
+        );
+        assert_eq!(
+            crate::ai::normalize_provider_origin("http://127.0.0.1:11434/v1").unwrap(),
+            "http://127.0.0.1:11434"
+        );
+        assert_eq!(
+            crate::ai::normalize_provider_origin("http://[::1]:11434/v1").unwrap(),
+            "http://[::1]:11434"
+        );
+
+        let plain = crate::ai::html_to_plain_text(
+            "<scripty>tag</scripty><script>alert(1)</script><p>safe</p>",
+        );
+        assert!(!plain.contains("alert(1)"), "got: {plain}");
+        assert!(plain.contains("safe"), "got: {plain}");
+    }
 }

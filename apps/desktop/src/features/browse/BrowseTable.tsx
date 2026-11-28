@@ -245,7 +245,7 @@ export function BrowseTable({
             description={t("browse.noResults.description")}
           />
         ) : (
-          <table className="w-full border-collapse text-sm">
+          <table className="min-w-max w-full border-collapse text-sm">
             <thead className="sticky top-0 z-10 bg-background">
               <tr>
                 <th className="w-8 border-b border-border px-2 py-2">

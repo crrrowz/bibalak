@@ -124,9 +124,15 @@ impl Collection {
         self.storage.notes_by_ids(ids)
     }
 
-    /// Delete notes (and their cards + revlogs). Clears undo history and emits SchemaChanged.
+    /// Delete notes (and their cards + revlogs). Reconciles motivation quests,
+    /// clears undo history, and emits SchemaChanged.
+    ///
+    /// A3-03 rule: already-earned XP from past reviews stays in `progress_ledger`,
+    /// while quest bonuses that no longer hold are revoked (same rule as answer
+    /// undo; unlike F1 full deck reset, which wipes the deck's earned XP).
     pub fn delete_notes(&self, note_ids: &[i64]) -> CoreResult<()> {
         self.storage.delete_notes(note_ids, self.clock.now_ms())?;
+        let _ = self.reconcile_motivation(true)?;
         self.clear_undo();
         self.events.emit(DomainEvent::SchemaChanged);
         Ok(())
@@ -162,6 +168,20 @@ impl Collection {
         Ok(())
     }
 
+    /// Bulk: add one or more tags to many notes in one transaction, emitting one NotesUpdated event.
+    pub fn bulk_add_tags(&self, note_ids: &[i64], tags: &[String]) -> CoreResult<()> {
+        if note_ids.is_empty() || tags.is_empty() {
+            return Ok(());
+        }
+        let now = self.clock.now_ms();
+        self.storage.bulk_add_tags(note_ids, tags, now)?;
+        self.clear_undo();
+        self.events.emit(DomainEvent::NotesUpdated {
+            note_ids: note_ids.to_vec(),
+        });
+        Ok(())
+    }
+
     /// Bulk: remove a tag from many notes. Runs in one transaction and emits one NotesUpdated event.
     pub fn bulk_remove_tag(&self, note_ids: &[i64], tag: &str) -> CoreResult<()> {
         if note_ids.is_empty() {
@@ -169,6 +189,20 @@ impl Collection {
         }
         let now = self.clock.now_ms();
         self.storage.bulk_remove_tag(note_ids, tag, now)?;
+        self.clear_undo();
+        self.events.emit(DomainEvent::NotesUpdated {
+            note_ids: note_ids.to_vec(),
+        });
+        Ok(())
+    }
+
+    /// Bulk: remove one or more tags from many notes in one transaction, emitting one NotesUpdated event.
+    pub fn bulk_remove_tags(&self, note_ids: &[i64], tags: &[String]) -> CoreResult<()> {
+        if note_ids.is_empty() || tags.is_empty() {
+            return Ok(());
+        }
+        let now = self.clock.now_ms();
+        self.storage.bulk_remove_tags(note_ids, tags, now)?;
         self.clear_undo();
         self.events.emit(DomainEvent::NotesUpdated {
             note_ids: note_ids.to_vec(),

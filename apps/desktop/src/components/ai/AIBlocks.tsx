@@ -1,6 +1,6 @@
-import { Loader2 } from "lucide-react";
 import type { AIActionResult, AIPreviewPayload } from "@bibalak/ipc-types";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { t } from "@/lib/i18n";
 
 export function AINotConfiguredContent({
@@ -67,7 +67,7 @@ export function AISendingBox() {
   return (
     <div className="space-y-2 rounded-xl border border-border bg-muted/40 p-3 text-xs">
       <div className="flex items-center gap-2 font-medium text-foreground">
-        <Loader2 className="size-4 animate-spin text-primary" aria-hidden />
+        <Spinner size="md" className="text-primary" />
         <span>{t("ai.sending")}</span>
       </div>
       <p className="text-muted-foreground">{t("ai.sendingHint")}</p>

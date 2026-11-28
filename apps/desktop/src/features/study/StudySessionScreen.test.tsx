@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -18,8 +18,10 @@ vi.mock("@/lib/platform", () => ({
   },
 }));
 
+let mockDeckId = 1;
+
 vi.mock("@tanstack/react-router", () => ({
-  useParams: () => ({ deckId: 1 }),
+  useParams: () => ({ deckId: mockDeckId }),
   useNavigate: () => vi.fn(),
 }));
 
@@ -91,6 +93,7 @@ describe("StudySessionScreen undo toast localization (X8)", () => {
       card_phase: "new",
       algorithm: "sm2",
       css: "",
+      flag: 0,
     });
     const previewSpy = vi.spyOn(ipc.ipc, "aiPreviewAction").mockResolvedValue({
       provider: "open-ai-compatible",
@@ -158,6 +161,7 @@ describe("StudySessionScreen undo toast localization (X8)", () => {
       card_phase: "new",
       algorithm: "sm2",
       css: "",
+      flag: 0,
     });
 
     render(
@@ -208,6 +212,7 @@ describe("StudySessionScreen undo toast localization (X8)", () => {
       card_phase: "new",
       algorithm: "sm2",
       css: "",
+      flag: 0,
     });
     const runSpy = vi.spyOn(ipc.ipc, "aiRunAction").mockClear();
     const previewSpy = vi.spyOn(ipc.ipc, "aiPreviewAction").mockClear();
@@ -271,6 +276,7 @@ describe("StudySessionScreen undo toast localization (X8)", () => {
       card_phase: "new",
       algorithm: "sm2",
       css: "",
+      flag: 0,
     });
     const answerSpy = vi.spyOn(ipc.ipc, "answerCard");
 
@@ -344,6 +350,7 @@ describe("StudySessionScreen undo toast localization (X8)", () => {
       card_phase: "new",
       algorithm: "sm2",
       css: "",
+      flag: 0,
     });
     vi.spyOn(ipc.ipc, "aiPreviewAction").mockResolvedValue({
       provider: "ollama",
@@ -453,6 +460,7 @@ describe("StudySessionScreen undo toast localization (X8)", () => {
         card_phase: "new",
         algorithm: "sm2",
         css: "",
+        flag: 0,
       });
       const answerSpy = vi.spyOn(ipc.ipc, "answerCard");
 
@@ -463,7 +471,7 @@ describe("StudySessionScreen undo toast localization (X8)", () => {
       );
 
       const user = userEvent.setup();
-      await user.click(await screen.findByRole("button", { name: /Replay/i }));
+      await screen.findByRole("button", { name: /Replay/i });
       await vi.waitFor(() => expect(mockAudio.play).toHaveBeenCalledTimes(1));
       expect(mockAudio.volume).toBe(1);
 
@@ -520,6 +528,7 @@ describe("StudySessionScreen feedback (16b)", () => {
       card_phase: "review",
       algorithm: "fsrs" as const,
       css: "",
+      flag: 0,
     };
     const card2 = {
       ...card1,
@@ -605,6 +614,7 @@ describe("StudySessionScreen feedback (16b)", () => {
       card_phase: "review",
       algorithm: "fsrs" as const,
       css: "",
+      flag: 0,
     });
 
     let seq = 400;
@@ -697,6 +707,7 @@ describe("StudySessionScreen feedback (16b)", () => {
       card_phase: "review",
       algorithm: "fsrs" as const,
       css: "",
+      flag: 0,
     };
 
     vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
@@ -714,9 +725,23 @@ describe("StudySessionScreen feedback (16b)", () => {
     vi.spyOn(ipc.ipc, "aiGetConfig").mockResolvedValue(null as never);
     vi.spyOn(ipc.ipc, "getGameState").mockResolvedValue(null as never);
     vi.spyOn(ipc.ipc, "getGameDepthState").mockResolvedValue(null as never);
-    vi.spyOn(ipc.ipc, "progressSummary").mockResolvedValue(null as never);
+    let todayXp = 0;
+    vi.spyOn(ipc.ipc, "progressSummary").mockImplementation(async () => ({
+      level: 1,
+      xp_into_level: todayXp,
+      xp_to_next_level: 100,
+      total_xp: todayXp,
+      gold_cents: 0,
+      today_xp: todayXp,
+      today_gold_cents: 0,
+      tasks_rewarded_today: 0,
+      task_reward_daily_cap: 10,
+    }));
     vi.spyOn(ipc.ipc, "getNextCard").mockResolvedValue(card);
-    vi.spyOn(ipc.ipc, "answerCard").mockResolvedValue(null);
+    vi.spyOn(ipc.ipc, "answerCard").mockImplementation(async () => {
+      todayXp = 3;
+      return null;
+    });
 
     try {
       render(
@@ -800,6 +825,7 @@ describe("StudySessionScreen feedback (16b)", () => {
       card_phase: "review",
       algorithm: "fsrs" as const,
       css: "",
+      flag: 0,
     });
 
     vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
@@ -933,6 +959,7 @@ describe("StudySessionScreen feedback (16b)", () => {
       card_phase: "review",
       algorithm: "fsrs" as const,
       css: "",
+      flag: 0,
     });
 
     vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
@@ -1073,6 +1100,7 @@ describe("StudySessionScreen feedback (16b)", () => {
       card_phase: "review",
       algorithm: "fsrs" as const,
       css: "",
+      flag: 0,
     };
 
     vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
@@ -1091,9 +1119,23 @@ describe("StudySessionScreen feedback (16b)", () => {
     vi.spyOn(ipc.ipc, "getGameState").mockResolvedValue(null as never);
     vi.spyOn(ipc.ipc, "getGameDepthState").mockResolvedValue(null as never);
     vi.spyOn(ipc.ipc, "getMotivationState").mockResolvedValue(null as never);
-    vi.spyOn(ipc.ipc, "progressSummary").mockResolvedValue(null as never);
+    let todayXp = 0;
+    vi.spyOn(ipc.ipc, "progressSummary").mockImplementation(async () => ({
+      level: 1,
+      xp_into_level: todayXp,
+      xp_to_next_level: 100,
+      total_xp: todayXp,
+      gold_cents: 0,
+      today_xp: todayXp,
+      today_gold_cents: 0,
+      tasks_rewarded_today: 0,
+      task_reward_daily_cap: 10,
+    }));
     vi.spyOn(ipc.ipc, "getNextCard").mockResolvedValue(card);
-    vi.spyOn(ipc.ipc, "answerCard").mockResolvedValueOnce(null);
+    vi.spyOn(ipc.ipc, "answerCard").mockImplementationOnce(async () => {
+      todayXp = 3;
+      return null;
+    });
 
     try {
       render(
@@ -1160,6 +1202,7 @@ describe("StudySessionScreen feedback (16b)", () => {
         card_phase: "new",
         algorithm: "fsrs",
         css: "",
+        flag: 0,
       })
       .mockResolvedValue(null);
     vi.spyOn(ipc.ipc, "answerCard").mockResolvedValueOnce(null);
@@ -1249,6 +1292,7 @@ describe("StudySessionScreen feedback (16b)", () => {
       card_phase: "new",
       algorithm: "sm2" as const,
       css: "",
+      flag: 0,
     };
     const card2AfterAgain = {
       ...card1,
@@ -1289,7 +1333,7 @@ describe("StudySessionScreen feedback (16b)", () => {
       expect(screen.getByText("0 of 16")).toBeInTheDocument();
 
       // Bury shows toast with Undo that calls ipc.unburyCards([402]).
-      await user.click(screen.getByRole("button", { name: /Bury/i }));
+      await user.click(screen.getByRole("button", { name: /Hide until tomorrow/i }));
       const undoToastBtn = await screen.findByRole("button", { name: /^Undo$/i });
       await user.click(undoToastBtn);
       await vi.waitFor(() => expect(unburySpy).toHaveBeenCalledWith([402]));
@@ -1303,6 +1347,486 @@ describe("StudySessionScreen feedback (16b)", () => {
         </QueryClientProvider>,
       );
       await vi.waitFor(() => expect(nextSpy.mock.calls.length).toBeGreaterThan(callsBeforeRemount));
+    } finally {
+      setLocale("en");
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("A1-18: derives session XP from backend today_xp delta without over-counting re-entered cards", async () => {
+    setLocale("en");
+    useStyle.getState().setStyle("default");
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
+      {
+        id: 1,
+        name: "Biology",
+        parent_id: null,
+        is_filtered: false,
+        collapsed: false,
+        new_count: 0,
+        learning_count: 1,
+        review_count: 0,
+      },
+    ]);
+    vi.spyOn(ipc.ipc, "aiGetConfig").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getGameState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getGameDepthState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getMotivationState").mockResolvedValue(null as never);
+    // Card 950 was already rewarded earlier today: backend today_xp stays at 30.
+    vi.spyOn(ipc.ipc, "progressSummary").mockResolvedValue({
+      level: 1,
+      xp_into_level: 30,
+      xp_to_next_level: 100,
+      total_xp: 30,
+      gold_cents: 100,
+      today_xp: 30,
+      today_gold_cents: 100,
+      tasks_rewarded_today: 0,
+      task_reward_daily_cap: 10,
+    });
+    vi.spyOn(ipc.ipc, "getNextCard").mockResolvedValue({
+      card_id: 950,
+      note_id: 95,
+      deck_id: 1,
+      question: "<b>Q</b>",
+      answer: "<i>A</i>",
+      again: "1m",
+      hard: "6m",
+      good: "10m",
+      easy: "4d",
+      new_count: 0,
+      learning_count: 1,
+      review_count: 0,
+      card_phase: "learning",
+      algorithm: "sm2",
+      css: "",
+      flag: 0,
+    });
+    vi.spyOn(ipc.ipc, "answerCard").mockResolvedValue(null);
+
+    try {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <StudySessionScreen />
+        </QueryClientProvider>,
+      );
+
+      await user.click(await screen.findByRole("button", { name: /Show Answer/i }));
+      await user.click(await screen.findByRole("button", { name: /Good/i }));
+
+      const finish = await screen.findByTestId("session-finish");
+      const tiles = within(finish).getByTestId("session-finish-tiles");
+      expect(tiles).toHaveTextContent("+0 XP");
+    } finally {
+      setLocale("en");
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("F6 / A1-23: shows Previous card button, accurate 1–3 vs 1–4 footer legend, and CapsLock-safe hotkeys", async () => {
+    setLocale("en");
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
+      {
+        id: 1,
+        name: "Biology",
+        parent_id: null,
+        is_filtered: false,
+        collapsed: false,
+        new_count: 1,
+        learning_count: 0,
+        review_count: 1,
+      },
+    ]);
+    vi.spyOn(ipc.ipc, "aiGetConfig").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getGameState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getGameDepthState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getMotivationState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "progressSummary").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue(null);
+    const suspendSpy = vi.spyOn(ipc.ipc, "suspendCards").mockResolvedValue(undefined);
+    const cardA = {
+      card_id: 601,
+      note_id: 61,
+      deck_id: 1,
+      question: "<b>Q A</b>",
+      answer: "<i>A A</i>",
+      again: "1m",
+      hard: "6m",
+      good: "10m",
+      easy: "4d",
+      new_count: 0,
+      learning_count: 0,
+      review_count: 1,
+      card_phase: "review",
+      algorithm: "fsrs" as const,
+      css: "",
+      flag: 0,
+    };
+    const cardB = {
+      ...cardA,
+      card_id: 602,
+      note_id: 62,
+      question: "<b>Q B</b>",
+    };
+    vi.spyOn(ipc.ipc, "getNextCard").mockResolvedValueOnce(cardA).mockResolvedValueOnce(cardA);
+    vi.spyOn(ipc.ipc, "answerCard").mockResolvedValueOnce(cardB);
+    const undoSpy = vi.spyOn(ipc.ipc, "undo").mockResolvedValueOnce({ kind: "answer-card" });
+
+    try {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <StudySessionScreen />
+        </QueryClientProvider>,
+      );
+
+      const prevBtn = await screen.findByTestId("study-prev-card");
+      expect(prevBtn).toBeDisabled();
+
+      // FSRS review renders 3 rating buttons -> footer must say 1–3, not 1–4.
+      await user.click(screen.getByRole("button", { name: /Show Answer/i }));
+      const legend = screen.getByTestId("study-shortcut-legend");
+      expect(legend).toHaveTextContent("1–3");
+      expect(legend).not.toHaveTextContent("1–4");
+
+      // Answer card A -> move to card B -> Previous card becomes enabled and undoes answer.
+      await user.click(await screen.findByRole("button", { name: /Remembered/i }));
+      await vi.waitFor(() => expect(screen.getByTestId("study-prev-card")).toBeEnabled());
+      await user.click(screen.getByTestId("study-prev-card"));
+      await vi.waitFor(() => expect(undoSpy).toHaveBeenCalledTimes(1));
+
+      // Uppercase 'S' (e.g. CapsLock active) must trigger suspend.
+      await user.keyboard("S");
+      await vi.waitFor(() => expect(suspendSpy).toHaveBeenCalledWith([601]));
+    } finally {
+      setLocale("en");
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("F5: labels Bury as Hide until tomorrow with rollover hour and explains Suspend", async () => {
+    setLocale("en");
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
+    vi.spyOn(ipc.ipc, "aiGetConfig").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getGameState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getGameDepthState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getMotivationState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "progressSummary").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue(null);
+    vi.spyOn(ipc.ipc, "getCollectionPrefs").mockResolvedValue({ rollover_hour: 5 });
+    vi.spyOn(ipc.ipc, "buryCards").mockResolvedValue(undefined);
+    vi.spyOn(ipc.ipc, "getNextCard").mockResolvedValue({
+      card_id: 650,
+      note_id: 65,
+      deck_id: 1,
+      question: "<b>Q</b>",
+      answer: "<i>A</i>",
+      again: "1m",
+      hard: "6m",
+      good: "10m",
+      easy: "4d",
+      new_count: 1,
+      learning_count: 0,
+      review_count: 0,
+      card_phase: "new",
+      algorithm: "sm2",
+      css: "",
+      flag: 0,
+    });
+
+    try {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <StudySessionScreen />
+        </QueryClientProvider>,
+      );
+
+      const hideBtn = await screen.findByRole("button", { name: /Hide until tomorrow/i });
+      expect(hideBtn.getAttribute("title")).toMatch(/5:00/);
+      const suspendBtn = screen.getByRole("button", { name: /Suspend/i });
+      expect(suspendBtn.getAttribute("title")).toMatch(/Browse/i);
+
+      await user.click(hideBtn);
+      const actionToast = await screen.findByTestId("study-action-toast");
+      expect(actionToast).toHaveAttribute("role", "status");
+      expect(actionToast).toHaveTextContent(/Card hidden until tomorrow/i);
+      expect(screen.queryByTestId("study-shortcut-legend")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() => {
+        expect(screen.queryByTestId("study-action-toast")).not.toBeInTheDocument();
+      });
+      expect(screen.getByTestId("study-shortcut-legend")).toBeInTheDocument();
+
+      // Hide until tomorrow must also enable Previous card and step back cleanly via ipc.undo().
+      expect(screen.getByTestId("study-prev-card")).toBeEnabled();
+      const undoBurySpy = vi
+        .spyOn(ipc.ipc, "undo")
+        .mockResolvedValueOnce({ kind: "bury-cards", count: 1 });
+      await user.click(screen.getByTestId("study-prev-card"));
+      await vi.waitFor(() => expect(undoBurySpy).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(screen.getByTestId("study-prev-card")).toBeDisabled());
+
+      setLocale("ar");
+      expect(await screen.findByRole("button", { name: /إخفاء لباجر/i })).toBeInTheDocument();
+    } finally {
+      setLocale("en");
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("A1-24: renders active card flag badge on load and updates immediately on flag click", async () => {
+    setLocale("en");
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
+    vi.spyOn(ipc.ipc, "aiGetConfig").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getGameState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getGameDepthState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getMotivationState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "progressSummary").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue(null);
+    vi.spyOn(ipc.ipc, "getCollectionPrefs").mockResolvedValue({ rollover_hour: 4 });
+    const flagSpy = vi.spyOn(ipc.ipc, "setCardFlag").mockResolvedValue(undefined);
+    vi.spyOn(ipc.ipc, "getNextCard").mockResolvedValue({
+      card_id: 660,
+      note_id: 66,
+      deck_id: 1,
+      question: "<b>Q</b>",
+      answer: "<i>A</i>",
+      again: "1m",
+      hard: "6m",
+      good: "10m",
+      easy: "4d",
+      new_count: 1,
+      learning_count: 0,
+      review_count: 0,
+      card_phase: "new",
+      algorithm: "sm2",
+      css: "",
+      flag: 2,
+    } as never);
+
+    try {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <StudySessionScreen />
+        </QueryClientProvider>,
+      );
+
+      const badge = await screen.findByTestId("study-card-flag");
+      expect(badge).toHaveTextContent(/Flag 2/i);
+
+      await user.click(screen.getByRole("button", { name: /Flag 2/i }));
+      await user.click(await screen.findByRole("menuitem", { name: /Flag 4/i }));
+      await vi.waitFor(() => expect(flagSpy).toHaveBeenCalledWith([660], 4));
+      await vi.waitFor(() =>
+        expect(screen.getByTestId("study-card-flag")).toHaveTextContent(/Flag 4/i),
+      );
+    } finally {
+      setLocale("en");
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("F10 / A1-27: distinguishes empty deck, nothing-due, and finished states, labels Today's goal (all decks), and hides Increase limit on empty or filtered decks", async () => {
+    setLocale("en");
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
+      {
+        id: 10,
+        name: "Brand new deck",
+        parent_id: null,
+        is_filtered: false,
+        collapsed: false,
+        new_count: 0,
+        learning_count: 0,
+        review_count: 0,
+      },
+      {
+        id: 20,
+        name: "Filtered Cram",
+        parent_id: null,
+        is_filtered: true,
+        collapsed: false,
+        new_count: 0,
+        learning_count: 0,
+        review_count: 0,
+      },
+    ]);
+    vi.spyOn(ipc.ipc, "aiGetConfig").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getGameState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getGameDepthState").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "getMotivationState").mockResolvedValue({
+      current_streak: 2,
+      best_streak: 4,
+      daily_goal_xp: 50,
+      today_xp: 20,
+      goal_met_today: false,
+      studied_today: true,
+      next_milestone: 7,
+      today_day_index: 100,
+      today_date: "2026-11-28",
+      days_remaining_in_week: 2,
+      daily_quests: [],
+      weekly_quest: {
+        id: "w_reviews_150",
+        kind: "weekly" as const,
+        metric: "reviews" as const,
+        progress: 10,
+        target: 50,
+        completed: false,
+        reward_gold_cents: 50,
+      },
+      monthly_badge: {
+        month_key: "2026-11",
+        completed_daily_quests: 5,
+        target_daily_quests: 20,
+        earned: false,
+        earned_at: null,
+        seen: false,
+        reward_gold_cents: 1000,
+      },
+      earned_monthly_badges: [],
+      comeback_offer: null,
+      onboarding_completed: true,
+      auto_frozen_day: null,
+    });
+    vi.spyOn(ipc.ipc, "progressSummary").mockResolvedValue(null as never);
+    vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue(null);
+    vi.spyOn(ipc.ipc, "getCollectionPrefs").mockResolvedValue({ rollover_hour: 4 });
+    vi.spyOn(ipc.ipc, "getNextCard").mockResolvedValue(null);
+    const cardIdsSpy = vi.spyOn(ipc.ipc, "deckCardIds").mockResolvedValue([]);
+
+    try {
+      mockDeckId = 10;
+      const { unmount } = render(
+        <QueryClientProvider client={queryClient}>
+          <StudySessionScreen />
+        </QueryClientProvider>,
+      );
+
+      const finish = await screen.findByTestId("session-finish");
+      expect(finish).toHaveTextContent(/This deck has no cards yet/i);
+      expect(within(finish).getByRole("button", { name: /Add note/i })).toBeInTheDocument();
+      expect(within(finish).getByRole("button", { name: /Import/i })).toBeInTheDocument();
+      expect(
+        within(finish).queryByRole("button", { name: /Increase today's new card limit/i }),
+      ).not.toBeInTheDocument();
+      expect(within(finish).queryByRole("button", { name: /^Undo$/i })).not.toBeInTheDocument();
+      unmount();
+
+      // Same deck with cards (caught up): shows Today's goal (all decks) & Increase limit.
+      queryClient.clear();
+      cardIdsSpy.mockResolvedValue([101, 102]);
+      const caughtUpView = render(
+        <QueryClientProvider client={queryClient}>
+          <StudySessionScreen />
+        </QueryClientProvider>,
+      );
+      const caughtUpFinish = await screen.findByTestId("session-finish");
+      expect(caughtUpFinish).toHaveTextContent(/All caught up for today/i);
+      expect(caughtUpFinish).toHaveTextContent(/Today's goal \(all decks\)/i);
+      expect(
+        within(caughtUpFinish).getByRole("button", { name: /Increase today's new card limit/i }),
+      ).toBeInTheDocument();
+      caughtUpView.unmount();
+
+      // Filtered deck caught up: hides Increase today's new card limit.
+      queryClient.clear();
+      mockDeckId = 20;
+      render(
+        <QueryClientProvider client={queryClient}>
+          <StudySessionScreen />
+        </QueryClientProvider>,
+      );
+      const filteredFinish = await screen.findByTestId("session-finish");
+      expect(
+        within(filteredFinish).queryByRole("button", { name: /Increase today's new card limit/i }),
+      ).not.toBeInTheDocument();
+    } finally {
+      mockDeckId = 1;
+      setLocale("en");
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("A5-05: handles study shortcuts by physical key code regardless of Arabic keyboard layout", async () => {
+    setLocale("ar");
+    try {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
+        {
+          id: 1,
+          name: "Arabic",
+          parent_id: null,
+          is_filtered: false,
+          collapsed: false,
+          new_count: 1,
+          learning_count: 0,
+          review_count: 0,
+        },
+      ]);
+      vi.spyOn(ipc.ipc, "getNextCard").mockResolvedValue({
+        card_id: 42,
+        note_id: 10,
+        deck_id: 1,
+        question: "<div>Q</div>",
+        answer: "<div>A</div>",
+        again: "1m",
+        hard: "6m",
+        good: "10m",
+        easy: "4d",
+        new_count: 1,
+        learning_count: 0,
+        review_count: 0,
+        card_phase: "new",
+        algorithm: "fsrs",
+        css: "",
+        flag: 0,
+      });
+      const suspendSpy = vi.spyOn(ipc.ipc, "suspendCards").mockResolvedValue(undefined);
+      const burySpy = vi.spyOn(ipc.ipc, "buryCards").mockResolvedValue(undefined);
+      const undoSpy = vi.spyOn(ipc.ipc, "undo").mockResolvedValue(null);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <StudySessionScreen />
+        </QueryClientProvider>,
+      );
+
+      await screen.findByRole("button", { name: /إظهار الإجابة/ });
+
+      fireEvent.keyDown(window, { key: "س", code: "KeyS" });
+      await waitFor(() => expect(suspendSpy).toHaveBeenCalledWith([42]));
+
+      fireEvent.keyDown(window, { key: "لا", code: "KeyB" });
+      await waitFor(() => expect(burySpy).toHaveBeenCalledWith([42]));
+
+      fireEvent.keyDown(window, { key: "ئ", code: "KeyZ" });
+      await waitFor(() => expect(undoSpy).toHaveBeenCalledTimes(1));
     } finally {
       setLocale("en");
       vi.restoreAllMocks();

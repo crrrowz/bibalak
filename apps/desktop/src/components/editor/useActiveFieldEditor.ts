@@ -28,5 +28,9 @@ export function insertClozeIntoEditor(editor: Editor, index: number) {
   const { state } = editor;
   const { from, to, empty } = state.selection;
   const text = empty ? "…" : state.doc.textBetween(from, to);
-  editor.chain().focus().insertContent(`{{c${index}::${text}}}`).run();
+  editor
+    .chain()
+    .focus()
+    .insertContent({ type: "text", text: `{{c${index}::${text}}}` })
+    .run();
 }

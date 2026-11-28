@@ -19,7 +19,7 @@ export function ScreenHeader({ title, description, actions, breadcrumb }: Screen
       data-toast-anchor
       className="glass-panel sticky top-0 z-20 flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-2 sm:px-6"
     >
-      <div className="flex min-w-0 flex-1 items-baseline gap-3">
+      <div className="flex min-w-[10rem] max-w-full flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
         {breadcrumb ? (
           <nav
             aria-label={t("ai.breadcrumb.ariaLabel")}
@@ -36,15 +36,15 @@ export function ScreenHeader({ title, description, actions, breadcrumb }: Screen
               className="size-3.5 shrink-0 text-muted-foreground rtl:-scale-x-100"
               aria-hidden="true"
             />
-            <h1 className="screen-title min-w-0 truncate text-foreground">{title}</h1>
+            <h1 className="screen-title shrink-0 text-foreground">{title}</h1>
           </nav>
         ) : (
-          <h1 className="screen-title min-w-0 truncate text-[15px] font-semibold tracking-tight">
+          <h1 className="screen-title shrink-0 text-[15px] font-semibold tracking-tight">
             {title}
           </h1>
         )}
         {description ? (
-          <span className="hidden min-w-0 truncate text-[13px] text-muted-foreground md:inline">
+          <span className="hidden min-w-0 truncate text-[13px] text-muted-foreground xl:inline">
             {description}
           </span>
         ) : null}

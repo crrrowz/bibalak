@@ -2,7 +2,7 @@
 //! `CoreError` into the serialisable [`IpcError`] union returned to the UI.
 
 use bibalak_core::ipc::{
-    CollectionPrefs, DeckConfig, DeckSummary, IpcError, IpcErrorKind, UndoAction,
+    CollectionPrefs, DeckConfig, DeckSummary, IpcError, IpcErrorKind, UndoAction, UndoHistoryPage,
 };
 use tauri::AppHandle;
 
@@ -56,6 +56,14 @@ pub async fn undo(app: AppHandle) -> IpcResult<Option<UndoAction>> {
 #[tauri::command]
 pub async fn undo_status(app: AppHandle) -> IpcResult<Option<UndoAction>> {
     with_collection(app, |collection| Ok(collection.undo_status())).await
+}
+
+#[tauri::command]
+pub async fn undo_history(app: AppHandle, page: Option<u32>) -> IpcResult<UndoHistoryPage> {
+    with_collection(app, move |collection| {
+        Ok(collection.undo_history(page.unwrap_or(0)))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -121,8 +129,13 @@ pub async fn get_today_extra_new(app: AppHandle, deck_id: i64) -> IpcResult<u32>
     .await
 }
 
+pub(crate) fn clamp_extra_new(extra_new: u32) -> u32 {
+    extra_new.clamp(1, 9999)
+}
+
 #[tauri::command]
 pub async fn increase_today_limit(app: AppHandle, deck_id: i64, extra_new: u32) -> IpcResult<()> {
+    let extra_new = clamp_extra_new(extra_new);
     with_collection(app, move |collection| {
         collection.increase_today_new_limit(deck_id, extra_new)?;
         Ok(())
@@ -138,6 +151,18 @@ pub async fn deck_card_ids(
 ) -> IpcResult<Vec<i64>> {
     with_collection(app, move |collection| {
         Ok(collection.deck_card_ids(deck_id, include_subdecks)?)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn reset_deck_progress(
+    app: AppHandle,
+    deck_id: i64,
+    include_subdecks: Option<bool>,
+) -> IpcResult<u32> {
+    with_collection(app, move |collection| {
+        Ok(collection.reset_deck_progress_scoped(deck_id, include_subdecks.unwrap_or(true))?)
     })
     .await
 }

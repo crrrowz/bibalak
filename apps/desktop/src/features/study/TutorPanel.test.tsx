@@ -32,6 +32,7 @@ const BASE_CARD: StudyCardDto = {
   card_phase: "review",
   algorithm: "fsrs",
   css: "",
+  flag: 0,
 };
 
 describe("TutorPanel (AI2)", () => {

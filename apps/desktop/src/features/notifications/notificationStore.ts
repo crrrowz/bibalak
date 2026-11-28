@@ -56,12 +56,36 @@ export interface PushNotificationInput {
 
 const STORAGE_KEY_ITEMS = "keepsake-notifications-v1";
 const STORAGE_KEY_SEEN = "keepsake-notifications-seen-v1";
+const STORAGE_KEY_DURABLE_SEEN = "keepsake-notifications-unlock-seen-v1";
 export const MAX_NOTIFICATIONS = 100;
 const MAX_SEEN_KEYS = 250;
 const RECENT_BODY_DEDUPE_MS = 3000;
 
 let nextSeq = 1;
+let collectionScopeSuffix = "";
 const recentBodyTimestamps = new Map<string, number>();
+
+function hashScope(raw: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < raw.length; i++) {
+    h ^= raw.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
+function scopedKey(base: string): string {
+  return collectionScopeSuffix ? `${base}:${collectionScopeSuffix}` : base;
+}
+
+function isDurableDedupeKey(key: string): boolean {
+  return (
+    key.startsWith("unlock:") ||
+    key.startsWith("backfill:") ||
+    key.startsWith("level_up:") ||
+    key.startsWith("title_up:")
+  );
+}
 
 function defaultDurationForKind(kind: NotificationKind): number {
   if (kind === "achievement") return 5000;
@@ -118,7 +142,7 @@ function isValidKind(v: unknown): v is NotificationKind {
 function readStoredItems(): NotificationItem[] {
   if (typeof localStorage === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_ITEMS);
+    const raw = localStorage.getItem(scopedKey(STORAGE_KEY_ITEMS));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -156,16 +180,19 @@ function readStoredItems(): NotificationItem[] {
 function writeStoredItems(items: NotificationItem[]): void {
   if (typeof localStorage === "undefined") return;
   try {
-    localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(items.slice(0, MAX_NOTIFICATIONS)));
+    localStorage.setItem(
+      scopedKey(STORAGE_KEY_ITEMS),
+      JSON.stringify(items.slice(0, MAX_NOTIFICATIONS)),
+    );
   } catch {
     // storage unavailable
   }
 }
 
-function readSeenKeys(): string[] {
+function readSeenKeys(storageKey: string): string[] {
   if (typeof localStorage === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_SEEN);
+    const raw = localStorage.getItem(scopedKey(storageKey));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [];
@@ -177,9 +204,20 @@ function readSeenKeys(): string[] {
 function recordSeenKey(key: string): void {
   if (typeof localStorage === "undefined") return;
   try {
-    const existing = readSeenKeys().filter((k) => k !== key);
+    if (isDurableDedupeKey(key)) {
+      const durable = readSeenKeys(STORAGE_KEY_DURABLE_SEEN);
+      if (!durable.includes(key)) {
+        durable.unshift(key);
+        localStorage.setItem(scopedKey(STORAGE_KEY_DURABLE_SEEN), JSON.stringify(durable));
+      }
+      return;
+    }
+    const existing = readSeenKeys(STORAGE_KEY_SEEN).filter((k) => k !== key);
     existing.unshift(key);
-    localStorage.setItem(STORAGE_KEY_SEEN, JSON.stringify(existing.slice(0, MAX_SEEN_KEYS)));
+    localStorage.setItem(
+      scopedKey(STORAGE_KEY_SEEN),
+      JSON.stringify(existing.slice(0, MAX_SEEN_KEYS)),
+    );
   } catch {
     // storage unavailable
   }
@@ -187,7 +225,8 @@ function recordSeenKey(key: string): void {
 
 function hasSeenKey(key: string, items: NotificationItem[]): boolean {
   if (items.some((item) => item.dedupeKey === key)) return true;
-  return readSeenKeys().includes(key);
+  if (isDurableDedupeKey(key) && readSeenKeys(STORAGE_KEY_DURABLE_SEEN).includes(key)) return true;
+  return readSeenKeys(STORAGE_KEY_SEEN).includes(key);
 }
 
 interface NotificationState {
@@ -314,8 +353,22 @@ export function pushNotification(input: PushNotificationInput): NotificationItem
   return useNotificationStore.getState().push(input);
 }
 
+/** Scope notification storage keys to the active collection (empty for default/unscoped). */
+export function setNotificationCollectionScope(scope: string | null): void {
+  const nextSuffix = scope ? hashScope(scope) : "";
+  if (nextSuffix === collectionScopeSuffix) return;
+  collectionScopeSuffix = nextSuffix;
+  recentBodyTimestamps.clear();
+  useNotificationStore.setState({
+    items: readStoredItems(),
+    popupQueue: [],
+    panelOpen: false,
+  });
+}
+
 /** Reload notification state from localStorage and reset transient queue (tests). */
-export function initNotificationsFromStorage(): void {
+export function initNotificationsFromStorage(scope: string | null = null): void {
+  collectionScopeSuffix = scope ? hashScope(scope) : "";
   recentBodyTimestamps.clear();
   useNotificationStore.setState({
     items: readStoredItems(),

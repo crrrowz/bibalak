@@ -43,4 +43,18 @@ describe("prepareCard", () => {
     expect(out).toContain('src="data:image/png;base64,AAA"');
     expect(out).toContain('src="https://x.test/a.png"');
   });
+
+  it("A1-24: renders video [sound:clip.mp4] as <video controls> instead of queuing it as audio", () => {
+    const { html, queue } = prepareCard(
+      "Watch [sound:clip.mp4] and listen [sound:voice.mp3]",
+      true,
+    );
+    expect(queue).toEqual([{ kind: "file", name: "voice.mp3" }]);
+    expect(html).not.toContain("[sound:");
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const video = doc.querySelector("video");
+    expect(video).not.toBeNull();
+    expect(video?.hasAttribute("controls")).toBe(true);
+    expect(video?.getAttribute("src")).toContain("clip.mp4");
+  });
 });

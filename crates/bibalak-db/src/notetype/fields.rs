@@ -597,4 +597,18 @@ mod tests {
             Some("Front")
         );
     }
+
+    #[test]
+    fn rename_field_rewrites_template_refs_case_insensitively() {
+        let Setup { s, nt_id, .. } = setup();
+        s.save_template(nt_id, 0, "Card 1", "{{front}}", "{{Back}}", 1_000)
+            .unwrap();
+        s.rename_field(nt_id, 0, "Prompt", 2_000).unwrap();
+        let detail = s.get_notetype_detail(nt_id).unwrap().unwrap();
+        assert!(
+            detail.templates[0].qfmt.contains("{{Prompt}}"),
+            "rename_field must rewrite template refs case-insensitively: {}",
+            detail.templates[0].qfmt
+        );
+    }
 }

@@ -2,10 +2,33 @@
 
 use crate::error::{CoreError, CoreResult};
 
+fn is_loopback_authority(authority: &str) -> bool {
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    if host.eq_ignore_ascii_case("localhost") || host == "::1" {
+        return true;
+    }
+    let mut octets = host.split('.');
+    matches!(
+        (
+            octets.next().and_then(|s| s.parse::<u8>().ok()),
+            octets.next().and_then(|s| s.parse::<u8>().ok()),
+            octets.next().and_then(|s| s.parse::<u8>().ok()),
+            octets.next().and_then(|s| s.parse::<u8>().ok()),
+            octets.next(),
+        ),
+        (Some(127), Some(_), Some(_), Some(_), None)
+    )
+}
+
 /// Validate an AI provider base URL and return its canonical origin (`scheme://host[:port]`).
 ///
-/// Rejects non-HTTP(S) schemes, embedded credentials (`user:pass@`), whitespace/control
-/// characters, and missing hosts so outbound traffic can be pinned to one origin.
+/// Rejects non-HTTP(S) schemes, plaintext `http://` for non-loopback hosts,
+/// embedded credentials (`user:pass@`), whitespace/control characters, and missing
+/// hosts so outbound traffic can be pinned to one origin.
 pub fn normalize_provider_origin(raw_url: &str) -> CoreResult<String> {
     let trimmed = raw_url.trim();
     if trimmed.is_empty() {
@@ -34,6 +57,12 @@ pub fn normalize_provider_origin(raw_url: &str) -> CoreResult<String> {
     if authority.contains('@') {
         return Err(CoreError::Invalid(
             "AI provider URL must not contain embedded credentials".into(),
+        ));
+    }
+    if scheme_lower == "http" && !is_loopback_authority(authority) {
+        return Err(CoreError::Invalid(
+            "remote AI provider URLs must use https:// (http:// is only allowed for loopback hosts)"
+                .into(),
         ));
     }
     Ok(format!("{scheme_lower}://{authority}"))
@@ -113,11 +142,13 @@ fn strip_tag_blocks(input: &str, tags: &[&str]) -> String {
     for tag in tags {
         let open_pat = format!("<{tag}");
         let close_pat = format!("</{tag}>");
+        let mut cursor = 0usize;
         loop {
             let lower = out.to_ascii_lowercase();
-            let Some(start) = lower.find(&open_pat) else {
+            let Some(rel_start) = lower[cursor..].find(&open_pat) else {
                 break;
             };
+            let start = cursor + rel_start;
             let after_open = &lower[start + open_pat.len()..];
             // Ensure tag boundary (space, '>', or '/') so <stylex> is not confused with <style>.
             if !after_open
@@ -125,11 +156,13 @@ fn strip_tag_blocks(input: &str, tags: &[&str]) -> String {
                 .next()
                 .is_some_and(|c| c.is_whitespace() || c == '>' || c == '/')
             {
-                break;
+                cursor = start + open_pat.len();
+                continue;
             }
             if let Some(rel_end) = lower[start..].find(&close_pat) {
                 let end = start + rel_end + close_pat.len();
                 out.replace_range(start..end, " ");
+                cursor = start + 1;
             } else {
                 out.truncate(start);
                 break;

@@ -15,6 +15,10 @@ use thiserror::Error;
 
 /// Current plugin API version supported by this host.
 pub const PLUGIN_API_VERSION: &str = "0.2.0";
+/// Maximum total files permitted in an installed plugin (folder or `.zip`).
+pub const MAX_PLUGIN_FILES: usize = 256;
+/// Maximum total uncompressed/copied bytes permitted in an installed plugin (10 MiB).
+pub const MAX_PLUGIN_BYTES: u64 = 10 * 1024 * 1024;
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
@@ -51,6 +55,10 @@ pub enum Capability {
     UiPanel,
     #[serde(rename = "ui:command")]
     UiCommand,
+    #[serde(rename = "ui:toast")]
+    UiToast,
+    #[serde(rename = "ui:navigate")]
+    UiNavigate,
     #[serde(rename = "ui:review-button")]
     UiReviewButton,
     #[serde(rename = "net:fetch")]
@@ -73,6 +81,8 @@ impl Capability {
             Self::ReadDecks => "read:decks",
             Self::UiPanel => "ui:panel",
             Self::UiCommand => "ui:command",
+            Self::UiToast => "ui:toast",
+            Self::UiNavigate => "ui:navigate",
             Self::UiReviewButton => "ui:review-button",
             Self::NetFetch => "net:fetch",
             Self::EventsListen => "events:listen",
@@ -90,6 +100,8 @@ impl Capability {
                 | Self::ReadDecks
                 | Self::UiPanel
                 | Self::UiCommand
+                | Self::UiToast
+                | Self::UiNavigate
                 | Self::EventsListen
         )
     }
@@ -208,13 +220,46 @@ pub fn is_supported_api_version(version: &str) -> bool {
     !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())
 }
 
+fn is_windows_reserved_device_name(stem: &str) -> bool {
+    matches!(
+        stem.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
+}
+
 pub fn is_safe_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 128
-        && !id.starts_with('.')
-        && id
+    if id.is_empty()
+        || id.len() > 128
+        || id.starts_with('.')
+        || !id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return false;
+    }
+    let stem = id.split('.').next().unwrap_or(id);
+    !is_windows_reserved_device_name(stem)
 }
 
 /// Relative, platform-neutral, no `..`/`.` segments, no drive or root prefix.
@@ -352,7 +397,11 @@ impl PluginManager {
             std::fs::remove_dir_all(&dest)?;
         }
         std::fs::create_dir_all(&dest)?;
-        copy_dir_all(src_dir, &dest)?;
+        let mut budget = CopyBudget::default();
+        if let Err(err) = copy_dir_all(src_dir, &dest, &mut budget) {
+            let _ = std::fs::remove_dir_all(&dest);
+            return Err(err);
+        }
         // Ensure a newly installed/updated plugin starts disabled until user consent.
         self.disable(&manifest.id)?;
         Ok(PluginRecord {
@@ -476,7 +525,13 @@ impl PluginManager {
     }
 }
 
-fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+#[derive(Default)]
+struct CopyBudget {
+    files: usize,
+    bytes: u64,
+}
+
+fn copy_dir_all(src: &Path, dst: &Path, budget: &mut CopyBudget) -> PluginResult<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)?.flatten() {
         let ty = entry.file_type()?;
@@ -486,8 +541,21 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
         let dest = dst.join(entry.file_name());
         if ty.is_dir() {
-            copy_dir_all(&entry.path(), &dest)?;
+            copy_dir_all(&entry.path(), &dest, budget)?;
         } else if ty.is_file() {
+            budget.files = budget.files.saturating_add(1);
+            if budget.files > MAX_PLUGIN_FILES {
+                return Err(PluginError::InvalidManifest(format!(
+                    "plugin folder contains too many files (max {MAX_PLUGIN_FILES})"
+                )));
+            }
+            let file_len = entry.metadata()?.len();
+            budget.bytes = budget.bytes.saturating_add(file_len);
+            if budget.bytes > MAX_PLUGIN_BYTES {
+                return Err(PluginError::InvalidManifest(
+                    "plugin folder exceeds maximum total size (10 MB)".into(),
+                ));
+            }
             std::fs::copy(entry.path(), dest)?;
         }
     }
@@ -714,5 +782,37 @@ mod tests {
             "dist/index.js",
         );
         assert!(PluginManifest::from_dir(&dir).is_ok());
+    }
+
+    #[test]
+    fn a4_06_plugin_folder_install_enforces_caps_and_rejects_device_ids() {
+        for bad in ["con", "NUL", "Prn", "aux", "com1", "LPT9", "con.plugin"] {
+            assert!(!is_safe_id(bad), "device id {bad:?} must be rejected");
+        }
+        assert!(is_safe_id("console-helper"));
+
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("many-files");
+        fs::create_dir_all(src.join("assets")).unwrap();
+        fs::write(
+            src.join("plugin.json"),
+            r#"{"id":"oversized-dir-plugin","name":"Many","version":"1.0.0","entry":"index.js","apiVersion":"0.2.0"}"#,
+        )
+        .unwrap();
+        fs::write(src.join("index.js"), "BibalakPlugin.definePlugin({});").unwrap();
+        for i in 0..270 {
+            fs::write(src.join("assets").join(format!("f_{i}.txt")), "x").unwrap();
+        }
+
+        let app_data = tmp.path().join("app-data");
+        let mgr = PluginManager::new(&app_data);
+        let res = mgr.install(&src);
+        assert!(
+            matches!(res, Err(PluginError::InvalidManifest(ref msg)) if msg.contains("too many files")),
+            "expected file-count rejection, got {res:?}"
+        );
+        assert!(!app_data
+            .join("plugins/installed/oversized-dir-plugin")
+            .exists());
     }
 }

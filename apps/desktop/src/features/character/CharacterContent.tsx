@@ -15,6 +15,7 @@ import { useGameState } from "@/features/game/useGameState";
 import { useProgressSummary } from "@/features/progress/useProgressSummary";
 import { formatNumber, t } from "@/lib/i18n";
 import { getStyleSkin } from "@/lib/styles/skins";
+import { useOptionalNavigate } from "@/lib/useOptionalNavigate";
 import { cn } from "@/lib/utils";
 import type { LocaleKey } from "@/locales/en";
 import { useStyle } from "@/stores/style";
@@ -47,13 +48,15 @@ const SCHOLAR_TABS: ReadonlyArray<{ id: CharacterTab; labelKey: LocaleKey }> = [
  */
 export function CharacterContent() {
   const style = useStyle((s) => s.style);
+  const navigate = useOptionalNavigate();
+  const isDefaultStyle = style === "default";
   const skin = getStyleSkin(style);
   const skinId = skin?.id ?? "game";
   const isScholar = skinId === "scholar";
 
-  const gameQuery = useGameState(true);
+  const gameQuery = useGameState(!isDefaultStyle);
   const progressQuery = useProgressSummary(isScholar);
-  const depthQuery = useGameDepthState(true);
+  const depthQuery = useGameDepthState(!isDefaultStyle);
   const updateAvatar = useUpdateAvatarProfileMutation();
   const unequipSlot = useUnequipGameSlotMutation();
 
@@ -66,6 +69,27 @@ export function CharacterContent() {
 
   const tabs = isScholar ? SCHOLAR_TABS : GAME_TABS;
   const activeTab: CharacterTab = tabs.some((entry) => entry.id === tab) ? tab : "appearance";
+
+  if (isDefaultStyle) {
+    const openAppearanceSettings = () => {
+      try {
+        sessionStorage.setItem("keepsake-settings-category", "general");
+      } catch {
+        // ignore sessionStorage failures
+      }
+      navigate?.("/settings");
+    };
+    return (
+      <div className="mx-auto w-full max-w-3xl p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card p-5">
+          <p className="text-sm text-foreground">{t("game.character.defaultStyleNote")}</p>
+          <Button type="button" size="sm" onClick={openAppearanceSettings}>
+            {t("scholar.transcript.openAppearance")}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const isLoading = gameQuery.isLoading || (isScholar && progressQuery.isLoading);
   const isError = gameQuery.isError || (isScholar && progressQuery.isError);

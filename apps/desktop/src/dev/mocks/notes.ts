@@ -1,5 +1,7 @@
 import type { NoteDetail, NoteOverview } from "@bibalak/ipc-types";
 import { htmlToText } from "@/lib/htmlText";
+import { mockCards } from "./cards";
+import { mockNotetypeDetails } from "./notetypes";
 
 const RAW_NOTES: Array<{
   id: number;
@@ -357,6 +359,29 @@ export const mockNoteDetails: Record<number, NoteDetail> = Object.fromEntries(
   ]),
 );
 
+function getOrBuildNoteDetail(noteId: number): NoteDetail | null {
+  if (!noteId) return null;
+  if (mockNoteDetails[noteId]) return mockNoteDetails[noteId]!;
+  const card = mockCards.find((c) => c.note_id === noteId);
+  if (!card) return null;
+  const nt =
+    Object.values(mockNotetypeDetails).find((n) => n.name === card.notetype) ??
+    mockNotetypeDetails[1];
+  const fields = (nt?.fields ?? [{ name: "Front" }, { name: "Back" }]).map((f, idx) => ({
+    name: f.name,
+    value: idx === 0 ? card.sort_field : `${card.deck} - ${f.name} note #${noteId}`,
+    options: { direction: "auto" as const, font: "", size: 0, description: "" },
+  }));
+  const detail: NoteDetail = {
+    note_id: noteId,
+    notetype_name: card.notetype,
+    fields,
+    tags: [...card.tags],
+  };
+  mockNoteDetails[noteId] = detail;
+  return detail;
+}
+
 export const noteMocks = {
   list_notes: (args?: { query?: string | null }) => {
     const q = args?.query?.toLowerCase() ?? "";
@@ -375,10 +400,10 @@ export const noteMocks = {
     );
   },
   get_note: (args?: { noteId: number }) =>
-    args?.noteId ? (mockNoteDetails[args.noteId] ?? null) : null,
+    args?.noteId ? getOrBuildNoteDetail(args.noteId) : null,
   save_note: (args?: { noteId: number; fields: string[]; tags: string[] }) => {
     if (!args?.noteId) return null;
-    const existing = mockNoteDetails[args.noteId];
+    const existing = getOrBuildNoteDetail(args.noteId);
     if (!existing) return null;
     mockNoteDetails[args.noteId] = {
       ...existing,

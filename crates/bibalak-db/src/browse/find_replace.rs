@@ -90,19 +90,135 @@ fn target_field_indices(
         .collect())
 }
 
+fn split_html_text_segments(input: &str) -> Vec<(bool, &str)> {
+    let mut segments = Vec::new();
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    let mut text_start = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            let mut j = i + 1;
+            let mut quote: Option<u8> = None;
+            let mut closed = false;
+            while j < bytes.len() {
+                let b = bytes[j];
+                match quote {
+                    Some(q) if b == q => quote = None,
+                    None if b == b'\'' || b == b'"' => quote = Some(b),
+                    None if b == b'>' => {
+                        closed = true;
+                        j += 1;
+                        break;
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            if closed {
+                if i > text_start {
+                    segments.push((true, &input[text_start..i]));
+                }
+                segments.push((false, &input[i..j]));
+                i = j;
+                text_start = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    if text_start < input.len() {
+        segments.push((true, &input[text_start..]));
+    }
+    segments
+}
+
+fn count_matches_in_field(re: &regex::Regex, value: &str, include_html: bool) -> u32 {
+    if include_html {
+        return re.find_iter(value).count() as u32;
+    }
+    split_html_text_segments(value)
+        .into_iter()
+        .filter(|(is_text, _)| *is_text)
+        .map(|(_, seg)| re.find_iter(seg).count() as u32)
+        .sum()
+}
+
+fn replace_in_field(
+    re: &regex::Regex,
+    value: &str,
+    replace: &str,
+    use_regex: bool,
+    include_html: bool,
+) -> Option<String> {
+    if include_html {
+        let replaced = if use_regex {
+            re.replace_all(value, replace)
+        } else {
+            re.replace_all(value, regex::NoExpand(replace))
+        };
+        return match replaced {
+            Cow::Owned(next) if next != value => Some(next),
+            _ => None,
+        };
+    }
+
+    let mut out = String::with_capacity(value.len());
+    let mut changed = false;
+    for (is_text, seg) in split_html_text_segments(value) {
+        if !is_text {
+            out.push_str(seg);
+            continue;
+        }
+        let replaced = if use_regex {
+            re.replace_all(seg, replace)
+        } else {
+            re.replace_all(seg, regex::NoExpand(replace))
+        };
+        if let Cow::Owned(next_seg) = replaced {
+            if next_seg != seg {
+                changed = true;
+            }
+            out.push_str(&next_seg);
+        } else {
+            out.push_str(seg);
+        }
+    }
+    changed.then_some(out)
+}
+
+fn sample_snippet(s: &str) -> String {
+    const MAX_CHARS: usize = 160;
+    let mut out = String::new();
+    for (idx, ch) in s.chars().enumerate() {
+        if idx >= MAX_CHARS {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn preview_find_replace(
     conn: &Connection,
     note_ids: &[i64],
     field_name: Option<&str>,
     find: &str,
+    replace: &str,
     use_regex: bool,
     case_sensitive: bool,
+    include_html: bool,
 ) -> CoreResult<FindReplacePreview> {
     let re = compile_find_regex(find, use_regex, case_sensitive)?;
     let notes = load_notes_for_edit(conn, note_ids)?;
     let mut field_cache = HashMap::new();
     let mut notes_matched = 0u32;
     let mut occurrences = 0u32;
+    let mut sample_before = None;
+    let mut sample_after = None;
 
     for note in &notes {
         let indices = target_field_indices(
@@ -114,7 +230,17 @@ pub fn preview_find_replace(
         )?;
         let mut note_hits = 0u32;
         for idx in indices {
-            note_hits += re.find_iter(&note.fields[idx]).count() as u32;
+            let hits = count_matches_in_field(&re, &note.fields[idx], include_html);
+            if hits > 0 {
+                note_hits += hits;
+                if sample_before.is_none() {
+                    let after_val =
+                        replace_in_field(&re, &note.fields[idx], replace, use_regex, include_html)
+                            .unwrap_or_else(|| note.fields[idx].clone());
+                    sample_before = Some(sample_snippet(&note.fields[idx]));
+                    sample_after = Some(sample_snippet(&after_val));
+                }
+            }
         }
         if note_hits > 0 {
             notes_matched += 1;
@@ -125,6 +251,8 @@ pub fn preview_find_replace(
     Ok(FindReplacePreview {
         notes_matched,
         occurrences,
+        sample_before,
+        sample_after,
     })
 }
 
@@ -137,6 +265,7 @@ pub fn find_replace_notes(
     replace: &str,
     use_regex: bool,
     case_sensitive: bool,
+    include_html: bool,
     now_ms: i64,
 ) -> CoreResult<Vec<NoteSnapshot>> {
     let re = compile_find_regex(find, use_regex, case_sensitive)?;
@@ -160,16 +289,11 @@ pub fn find_replace_notes(
         let mut updated_fields = note.fields.clone();
         let mut changed = false;
         for idx in indices {
-            let replaced = if use_regex {
-                re.replace_all(&updated_fields[idx], replace)
-            } else {
-                re.replace_all(&updated_fields[idx], regex::NoExpand(replace))
-            };
-            if let Cow::Owned(next_val) = replaced {
-                if next_val != updated_fields[idx] {
-                    updated_fields[idx] = next_val;
-                    changed = true;
-                }
+            if let Some(next_val) =
+                replace_in_field(&re, &updated_fields[idx], replace, use_regex, include_html)
+            {
+                updated_fields[idx] = next_val;
+                changed = true;
             }
         }
         if changed {
@@ -228,10 +352,20 @@ mod tests {
 
         // Preview across selected notes, all fields, case-insensitive plain
         let preview = col
-            .preview_find_replace(&[r1.note_id, r2.note_id], None, "alpha", false, false)
+            .preview_find_replace(
+                &[r1.note_id, r2.note_id],
+                None,
+                "alpha",
+                "gamma",
+                false,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(preview.notes_matched, 2);
         assert_eq!(preview.occurrences, 3);
+        assert_eq!(preview.sample_before.as_deref(), Some("Beta alpha"));
+        assert_eq!(preview.sample_after.as_deref(), Some("Beta gamma"));
 
         // Replace only Back field case-insensitively
         let changed_back = col
@@ -240,6 +374,7 @@ mod tests {
                 Some("Back"),
                 "alpha",
                 "gamma",
+                false,
                 false,
                 false,
             )
@@ -270,6 +405,7 @@ mod tests {
                 "$1 omega",
                 true,
                 true,
+                false,
             )
             .unwrap();
         assert_eq!(changed_front, 1);
@@ -296,12 +432,84 @@ mod tests {
                 "Alpha one",
                 "   ",
                 false,
-                true
+                true,
+                false
             )
             .is_err());
         assert_eq!(
             col.note_detail(r2.note_id).unwrap().unwrap().fields[0].value,
             "Alpha one"
+        );
+    }
+
+    #[test]
+    fn a2_14_skips_html_tags_by_default_and_replaces_tags_only_when_include_html() {
+        use bibalak_core::ports::FixedClock;
+        use bibalak_core::Collection;
+        use std::sync::Arc;
+
+        let s = SqliteStorage::open_in_memory().unwrap();
+        s.import(&model(), 1_700_000_000_000).unwrap();
+        let nt_id = s.list_notetypes().unwrap()[0].id;
+        let col = Collection::new(Box::new(s), Arc::new(FixedClock(1_700_000_000_000))).unwrap();
+
+        let note = col
+            .add_note(
+                nt_id,
+                1,
+                &[
+                    r#"<span class="cls">cls text</span>"#.into(),
+                    "Plain".into(),
+                ],
+                &[],
+            )
+            .unwrap();
+
+        let prev_safe = col
+            .preview_find_replace(
+                &[note.note_id],
+                Some("Front"),
+                "cls",
+                "new",
+                false,
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(prev_safe.occurrences, 1);
+        assert_eq!(
+            prev_safe.sample_after.as_deref(),
+            Some(r#"<span class="cls">new text</span>"#)
+        );
+
+        col.find_replace_notes(
+            &[note.note_id],
+            Some("Front"),
+            "cls",
+            "new",
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            col.note_detail(note.note_id).unwrap().unwrap().fields[0].value,
+            r#"<span class="cls">new text</span>"#
+        );
+
+        col.find_replace_notes(
+            &[note.note_id],
+            Some("Front"),
+            "cls",
+            "updated",
+            false,
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            col.note_detail(note.note_id).unwrap().unwrap().fields[0].value,
+            r#"<span class="updated">new text</span>"#
         );
     }
 }

@@ -1,13 +1,17 @@
 /**
- * Plugin host: creates one sandboxed Web Worker per enabled plugin (ADR-003).
+ * Plugin host: creates one opaque-origin sandboxed iframe + Web Worker per enabled
+ * plugin (ADR-003, ADR-039).
  *
- * Each plugin runs its entry-point JS inside a dedicated Web Worker. The host
- * injects a bridge preamble before the plugin code that exposes a
- * capability-scoped `BibalakPlugin.definePlugin(...)` API and constructs the
- * `PluginContext` passed to `activate(ctx)`.
+ * Each plugin runs its entry-point JS inside a Web Worker spawned inside a hidden
+ * `<iframe sandbox="allow-scripts">` (opaque `null` origin, no `allow-same-origin`).
+ * This isolates plugin code from the app origin (`localStorage`, `indexedDB`,
+ * `caches`, cookies, Tauri IPC, and app-origin `fetch`). The host injects a
+ * bridge preamble before the plugin code that exposes a capability-scoped
+ * `BibalakPlugin.definePlugin(...)` API and constructs the `PluginContext` passed
+ * to `activate(ctx)`.
  *
  * All capabilities, input limits, and per-plugin rate limits are enforced here
- * on the host (and again in Rust IPC commands), never trusting the Worker.
+ * on the host (and again in Rust IPC commands), never trusting the sandbox.
  */
 import type {
   Capability,
@@ -65,6 +69,8 @@ export interface PluginHostHandlers {
   onCrash: (pluginId: string, error: string) => void;
 }
 
+export const PLUGIN_CHANNEL = "bibalak-plugin";
+
 const DATA_RATE_WINDOW_MS = 10_000;
 const DATA_RATE_MAX_CALLS = 30;
 const MAX_NOTES_LIMIT = 200;
@@ -72,11 +78,82 @@ const MAX_QUERY_CHARS = 500;
 const MAX_TOAST_CHARS = 500;
 const MAX_PANEL_BLOCKS = 100;
 
-/** Manages the lifecycle of one plugin Worker. */
+function safeJsonForInlineScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/\//g, "\\u002f")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+function buildSandboxFrameDocument(code: string): string {
+  const safeCode = safeJsonForInlineScript(code);
+  const safeChannel = safeJsonForInlineScript(PLUGIN_CHANNEL);
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' blob:; worker-src blob:; connect-src 'none';">
+</head>
+<body>
+<script>
+(function () {
+  var CHANNEL = ${safeChannel};
+  var worker = null;
+  function sendToHost(payload) {
+    window.parent.postMessage(Object.assign({}, payload, { channel: CHANNEL }), "*");
+  }
+  try {
+    var blob = new Blob([${safeCode}], { type: "application/javascript" });
+    var url = URL.createObjectURL(blob);
+    worker = new Worker(url);
+    URL.revokeObjectURL(url);
+    worker.onmessage = function (e) {
+      if (e && typeof e.data === "object" && e.data !== null) {
+        sendToHost(e.data);
+      }
+    };
+    worker.onerror = function (e) {
+      sendToHost({
+        type: "plugin:error",
+        message: (e && e.message) ? String(e.message) : "Uncaught worker error"
+      });
+    };
+  } catch (err) {
+    sendToHost({
+      type: "plugin:error",
+      message: err && err.message ? String(err.message) : String(err)
+    });
+  }
+  window.addEventListener("message", function (event) {
+    if (event.source !== window.parent) return;
+    var d = event.data;
+    if (!d || typeof d !== "object" || d.channel !== CHANNEL) return;
+    if (d.type === "host:terminate") {
+      if (worker) worker.terminate();
+      worker = null;
+      return;
+    }
+    if (worker) {
+      worker.postMessage(d.payload);
+    }
+  });
+  sendToHost({ type: "host:ready" });
+})();
+</script>
+</body>
+</html>`;
+}
+
+/** Manages the lifecycle of one opaque-origin sandboxed plugin Worker host. */
 export class PluginWorker {
-  private worker: Worker;
+  private frame: HTMLIFrameElement;
   private readonly permissions: ReadonlySet<string>;
   private readonly requestTimes: number[] = [];
+  private readonly pendingOutbound: unknown[] = [];
+  private readonly onWindowMessage: (event: MessageEvent) => void;
+  private ready = false;
   private destroyed = false;
 
   constructor(
@@ -99,17 +176,41 @@ export class PluginWorker {
       permissions: permissions as Capability[],
     };
     const code = buildBridge(permissions, resolvedManifest) + "\n;\n" + entryCode;
-    const blob = new Blob([code], { type: "application/javascript" });
-    const url = URL.createObjectURL(blob);
-    this.worker = new Worker(url);
-    URL.revokeObjectURL(url);
 
-    this.worker.onmessage = (e: MessageEvent) => this.onMessage(e.data);
-    this.worker.onerror = (e) => {
-      const msg = e?.message || "Uncaught worker error";
-      console.error(`[plugin:${pluginId}] worker error:`, msg);
-      this.handleCrash(msg);
+    const frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "allow-scripts");
+    frame.setAttribute("aria-hidden", "true");
+    frame.dataset.pluginId = pluginId;
+    frame.style.display = "none";
+    frame.srcdoc = buildSandboxFrameDocument(code);
+    document.body.appendChild(frame);
+    this.frame = frame;
+
+    this.onWindowMessage = (event: MessageEvent) => {
+      if (this.destroyed || event.source !== this.frame.contentWindow) return;
+      const data = event.data;
+      if (typeof data !== "object" || data === null) return;
+      if ((data as Record<string, unknown>).channel !== PLUGIN_CHANNEL) return;
+      if ((data as Record<string, unknown>).type === "host:ready") {
+        this.ready = true;
+        while (this.pendingOutbound.length > 0 && !this.destroyed) {
+          const next = this.pendingOutbound.shift();
+          this.frame.contentWindow?.postMessage({ channel: PLUGIN_CHANNEL, payload: next }, "*");
+        }
+        return;
+      }
+      this.onMessage(data);
     };
+    window.addEventListener("message", this.onWindowMessage);
+  }
+
+  private postToSandbox(payload: unknown) {
+    if (this.destroyed) return;
+    if (!this.ready) {
+      this.pendingOutbound.push(payload);
+      return;
+    }
+    this.frame.contentWindow?.postMessage({ channel: PLUGIN_CHANNEL, payload }, "*");
   }
 
   private handleCrash(message: string) {
@@ -172,6 +273,7 @@ export class PluginWorker {
         this.handlers.onDisposePanel(this.pluginId, m.id);
         break;
       case "show:toast":
+        if (!this.permissions.has("ui:toast")) return this.denied("ui:toast");
         if (typeof m.message !== "string") return;
         this.handlers.onToast({
           pluginId: this.pluginId,
@@ -179,12 +281,14 @@ export class PluginWorker {
         });
         break;
       case "navigate:deck": {
+        if (!this.permissions.has("ui:navigate")) return this.denied("ui:navigate");
         const deckId = Number(m.deckId);
         if (!Number.isSafeInteger(deckId) || deckId <= 0) return;
         this.bridge.onNavigateDeck?.(deckId);
         break;
       }
       case "navigate:browse": {
+        if (!this.permissions.has("ui:navigate")) return this.denied("ui:navigate");
         const query = typeof m.query === "string" ? m.query.slice(0, MAX_QUERY_CHARS) : "";
         this.bridge.onNavigateBrowse?.(query);
         break;
@@ -202,8 +306,7 @@ export class PluginWorker {
     const reqId = typeof m.reqId === "string" ? m.reqId : "";
     const op = typeof m.op === "string" ? m.op : "";
     const reply = (ok: boolean, data?: unknown, error?: string) => {
-      if (this.destroyed) return;
-      this.worker.postMessage({ type: "data:response", reqId, ok, data, error });
+      this.postToSandbox({ type: "data:response", reqId, ok, data, error });
     };
 
     if (!reqId) return;
@@ -289,24 +392,25 @@ export class PluginWorker {
   }
 
   invokeCommand(id: string) {
-    if (this.destroyed) return;
-    this.worker.postMessage({ type: "invoke:command", id });
+    this.postToSandbox({ type: "invoke:command", id });
   }
 
   invokePanelAction(panelId: string, actionId: string, payload?: unknown) {
-    if (this.destroyed) return;
-    this.worker.postMessage({ type: "invoke:panel-action", panelId, actionId, payload });
+    this.postToSandbox({ type: "invoke:panel-action", panelId, actionId, payload });
   }
 
   sendEvent(event: PluginEvent | unknown) {
     if (this.destroyed || !this.permissions.has("events:listen")) return;
-    this.worker.postMessage({ type: "event", event });
+    this.postToSandbox({ type: "event", event });
   }
 
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.worker.terminate();
+    this.pendingOutbound.length = 0;
+    window.removeEventListener("message", this.onWindowMessage);
+    this.frame.contentWindow?.postMessage({ channel: PLUGIN_CHANNEL, type: "host:terminate" }, "*");
+    this.frame.remove();
   }
 }
 
@@ -709,6 +813,7 @@ function buildBridge(permissions: string[], manifest: PluginManifest): string {
       };
     },
     showToast: function(message) {
+      _check("ui:toast");
       self.postMessage({ type: "show:toast", message: String(message) });
     },
     onEvent: function(handler) {
@@ -748,9 +853,11 @@ function buildBridge(permissions: string[], manifest: PluginManifest): string {
     },
     navigation: {
       openDeck: function(deckId) {
+        _check("ui:navigate");
         self.postMessage({ type: "navigate:deck", deckId: deckId });
       },
       openBrowse: function(query) {
+        _check("ui:navigate");
         self.postMessage({ type: "navigate:browse", query: query == null ? "" : String(query) });
       },
     },

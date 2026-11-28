@@ -93,12 +93,19 @@ describe("update check on start (UPD1)", () => {
     expect(checkMock).not.toHaveBeenCalled();
   });
 
-  it("stays quiet on a failed start-up check (Settings shows errors on a manual check)", async () => {
+  it("stays quiet on a failed start-up check and does not suppress retries for 24 hours (A5-02)", async () => {
     signedBuild();
     checkMock.mockRejectedValueOnce(new Error("offline"));
     expect(await runStartupUpdateCheck(NOW)).toBeNull();
     expect(useUpdateCheck.getState().result).toBeNull();
-    expect(localStorage.getItem(LAST_CHECK_KEY)).toBe(String(NOW));
+    expect(localStorage.getItem(LAST_CHECK_KEY)).toBeNull();
+
+    // Coming back online 5 minutes later should still check and stamp on success.
+    checkMock.mockResolvedValueOnce({ version: "1.2.0" });
+    const found = await runStartupUpdateCheck(NOW + 5 * 60_000);
+    expect(found).toEqual({ version: "1.2.0" });
+    expect(checkMock).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem(LAST_CHECK_KEY)).toBe(String(NOW + 5 * 60_000));
   });
 
   it("a manual check shows errors plainly", async () => {

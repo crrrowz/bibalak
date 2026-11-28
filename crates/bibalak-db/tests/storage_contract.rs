@@ -451,7 +451,7 @@ macro_rules! storage_contract_tests {
                 .unwrap();
                 assert!(granted);
 
-                let totals = ProgressStore::progress_totals(&s, NIL_USER_ID, 0, 10_000).unwrap();
+                let totals = ProgressStore::progress_totals(&s, NIL_USER_ID, 0, 10_000, 1).unwrap();
                 assert_eq!(totals.total_xp, 25);
                 assert_eq!(totals.today_xp, 25);
                 assert_eq!(totals.gold_cents, 50);
@@ -485,7 +485,7 @@ macro_rules! storage_contract_tests {
                 assert!(!granted_after);
 
                 let totals_after =
-                    ProgressStore::progress_totals(&s, NIL_USER_ID, 0, 10_000).unwrap();
+                    ProgressStore::progress_totals(&s, NIL_USER_ID, 0, 10_000, 1).unwrap();
                 assert_eq!(totals_after.total_xp, 0);
                 assert_eq!(totals_after.gold_cents, 0);
                 assert_eq!(totals_after.tasks_rewarded_today, 0);

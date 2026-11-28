@@ -158,7 +158,7 @@ fn v11_to_v12_to_v13_migrates_cleanly_and_preserves_progress_ledger() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(version, MIGRATIONS.len() as i64);
-    assert_eq!(MIGRATIONS.len(), 15);
+    assert_eq!(MIGRATIONS.len(), 16);
 
     for table in [
         "avatar_profile",

@@ -7,4 +7,4 @@ export type NoteRow = { note_id: number, card_ids: number[],
 /**
  * Plaintext of the note's sort field (HTML stripped).
  */
-sort_field: string, notetype: string, deck: string, card_count: number, tags: Array<string>, mod_ms: number, };
+sort_field: string, notetype: string, deck: string, card_count: number, tags: Array<string>, mod_ms: number, has_suspended: boolean, has_unsuspended: boolean, has_buried: boolean, has_unburied: boolean, };

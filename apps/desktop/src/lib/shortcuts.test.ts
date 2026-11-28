@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isMac, modKeyLabel, modShortcut } from "./shortcuts";
+import { isMac, matchesShortcutCode, modKeyLabel, modShortcut } from "./shortcuts";
 
 describe("shortcuts helper (OT-10)", () => {
   it("detects macOS platform from platform string", () => {
@@ -20,5 +20,12 @@ describe("shortcuts helper (OT-10)", () => {
     expect(modShortcut("K", false)).toBe("Ctrl+K");
     expect(modShortcut("A", true)).toBe("⌘A");
     expect(modShortcut("A", false)).toBe("Ctrl+A");
+  });
+
+  it("matches physical e.code for Arabic keyboard layouts (A5-05)", () => {
+    expect(matchesShortcutCode({ code: "KeyF", key: "ب" }, "KeyF", "f")).toBe(true);
+    expect(matchesShortcutCode({ code: "KeyA", key: "ش" }, "KeyA", "a")).toBe(true);
+    expect(matchesShortcutCode({ code: "KeyG", key: "f" }, "KeyF", "f")).toBe(false);
+    expect(matchesShortcutCode({ key: "f" }, "KeyF", "f")).toBe(true);
   });
 });

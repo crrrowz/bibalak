@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { useUi } from "@/stores/ui";
@@ -91,5 +91,20 @@ describe("CommandPalette completeness (U4)", () => {
 
     await user.click(await screen.findByText("Export collection as .apkg"));
     expect(await screen.findByRole("heading", { name: "Export collection" })).toBeInTheDocument();
+  });
+
+  it("A5-05: toggles CommandPalette with physical Ctrl+KeyK under Arabic keyboard layout", async () => {
+    useUi.setState({ paletteOpenSignal: 0 });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <CommandPalette />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.keyDown(document, { key: "ن", code: "KeyK", ctrlKey: true });
+    expect(await screen.findByText("Add note")).toBeInTheDocument();
   });
 });

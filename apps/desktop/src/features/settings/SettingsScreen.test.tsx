@@ -4,9 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppInfo, BackupInfo, MediaReport, PluginInfo } from "@bibalak/ipc-types";
 import { SettingsScreen } from "./SettingsScreen";
+import { fmt_date, fmt_size } from "./settingsUtils";
 import { setLocale } from "@/lib/i18n";
 import * as ipcModule from "@/lib/ipc";
-import { pluginHost } from "@/lib/pluginHost";
+import { PLUGIN_CHANNEL, pluginHost } from "@/lib/pluginHost";
 import * as releasesModule from "@/lib/releases";
 import { useStyle } from "@/stores/style";
 import { useTheme } from "@/stores/theme";
@@ -17,6 +18,7 @@ const {
   isAvailableMock,
   pickPathMock,
   pickSavePathMock,
+  openPathMock,
   invokeMock,
   updaterCheckMock,
   updaterDownloadAndInstallMock,
@@ -30,6 +32,7 @@ const {
   isAvailableMock: vi.fn(() => true),
   pickPathMock: vi.fn<() => Promise<string | null>>(async () => null),
   pickSavePathMock: vi.fn<() => Promise<string | null>>(async () => null),
+  openPathMock: vi.fn<(path: string) => Promise<void>>(async () => {}),
   invokeMock: vi.fn(),
   updaterCheckMock: vi.fn<
     () => Promise<{ version: string; notes?: string; date?: string } | null | "not-available">
@@ -57,6 +60,7 @@ vi.mock("@/lib/platform", () => ({
     listen: () => () => {},
     pickPath: () => pickPathMock(),
     pickSavePath: () => pickSavePathMock(),
+    openPath: (path: string) => openPathMock(path),
     window: null,
     globalShortcut: null,
     notifications: {
@@ -80,21 +84,14 @@ vi.mock("@/lib/platform", () => ({
   },
 }));
 
-class FakeWorker {
-  static all: FakeWorker[] = [];
-  onmessage: ((e: MessageEvent) => void) | null = null;
-  onerror: ((e: ErrorEvent) => void) | null = null;
-  posted: unknown[] = [];
-  constructor() {
-    FakeWorker.all.push(this);
-  }
-  postMessage(msg: unknown) {
-    this.posted.push(msg);
-  }
-  terminate() {}
-  emit(msg: unknown) {
-    this.onmessage?.({ data: msg } as MessageEvent);
-  }
+function emitPluginMessage(pluginId: string, payload: Record<string, unknown>) {
+  const frame = document.querySelector<HTMLIFrameElement>(`iframe[data-plugin-id="${pluginId}"]`);
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      data: { channel: PLUGIN_CHANNEL, ...payload },
+      source: frame?.contentWindow,
+    }),
+  );
 }
 
 const DEFAULT_APP_INFO: AppInfo = {
@@ -148,10 +145,10 @@ function setupDefaultTauriIpc(overrides?: {
 
 describe("SettingsScreen (Q2)", () => {
   beforeEach(() => {
-    FakeWorker.all = [];
     isAvailableMock.mockReturnValue(true);
     pickPathMock.mockReset().mockResolvedValue(null);
     pickSavePathMock.mockReset().mockResolvedValue(null);
+    openPathMock.mockReset().mockResolvedValue(undefined);
     invokeMock.mockReset();
     updaterCheckMock.mockReset().mockResolvedValue(null);
     updaterDownloadAndInstallMock.mockReset().mockResolvedValue(undefined);
@@ -163,9 +160,6 @@ describe("SettingsScreen (Q2)", () => {
     notifRequestPermissionMock.mockReset().mockResolvedValue("granted");
     notifSendMock.mockReset().mockResolvedValue(undefined);
     useReminders.getState().reset();
-    vi.stubGlobal("Worker", FakeWorker);
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fake");
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -519,9 +513,12 @@ describe("SettingsScreen (Q2)", () => {
     expect(
       await screen.findByText("Backup restored. Restart Bibalak to apply."),
     ).toBeInTheDocument();
+    const restartBtn = screen.getByRole("button", { name: "Restart now" });
+    await user.click(restartBtn);
+    expect(updaterRelaunchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("8. delete backup calls deleteBackup with the right name", async () => {
+  it("8. delete backup asks for confirmation with name and date before calling deleteBackup (A5-03)", async () => {
     sessionStorage.setItem("keepsake-settings-category", "data");
     const backups: BackupInfo[] = [
       { name: "old-snap.colpkg", created_ms: 1700000000000, size_bytes: 1024 },
@@ -533,6 +530,20 @@ describe("SettingsScreen (Q2)", () => {
     renderScreen();
 
     await user.click(await screen.findByRole("button", { name: "Delete" }));
+    expect(deleteSpy).not.toHaveBeenCalled();
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText('Delete backup "old-snap.colpkg"?')).toBeInTheDocument();
+    expect(dialog.textContent).toContain("old-snap.colpkg");
+    expect(dialog.textContent).toContain(fmt_date(1700000000000));
+
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(deleteSpy).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const confirmDialog = await screen.findByRole("alertdialog");
+    await user.click(within(confirmDialog).getByRole("button", { name: "Delete" }));
     expect(deleteSpy).toHaveBeenCalledWith("old-snap.colpkg");
   });
 
@@ -588,8 +599,11 @@ describe("SettingsScreen (Q2)", () => {
     setupDefaultTauriIpc();
     const integritySpy = vi
       .spyOn(ipcModule.ipc, "checkIntegrity")
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce(["Missing deck row 42", "Orphan card 99"]);
+      .mockResolvedValueOnce({ errors: [], repaired_orphan_subdecks: 0 })
+      .mockResolvedValueOnce({
+        errors: ["Missing deck row 42", "Orphan card 99"],
+        repaired_orphan_subdecks: 0,
+      });
     const user = userEvent.setup();
 
     renderScreen();
@@ -642,12 +656,16 @@ describe("SettingsScreen (Q2)", () => {
     expect(screen.getByText("unused-a.png")).toBeInTheDocument();
     expect(screen.getByText("unused-b.mp3")).toBeInTheDocument();
     expect(
-      screen.getByText("Missing files (1) — referenced in notes but not on disk:"),
+      screen.getByText("Missing file (1) — referenced in notes but not on disk:"),
     ).toBeInTheDocument();
     expect(screen.getByText("lost-diagram.svg")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Delete orphan files…" }));
     expect(screen.getByText("Delete 2 orphan files?")).toBeInTheDocument();
+    expect(
+      screen.getByText("Unused files are moved to .trash inside your media folder."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("This cannot be undone.")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Yes, delete" }));
     expect(deleteOrphanSpy).toHaveBeenCalledWith(["unused-a.png", "unused-b.mp3"]);
@@ -738,7 +756,7 @@ describe("SettingsScreen (Q2)", () => {
 
     // Plugin commands registered on pluginHost can be invoked via Run
     pluginHost.load("cmd-plugin", ["ui:command"], "");
-    FakeWorker.all[FakeWorker.all.length - 1]?.emit({
+    emitPluginMessage("cmd-plugin", {
       type: "register:command",
       id: "say-hi",
       title: "Say Hi",
@@ -757,8 +775,13 @@ describe("SettingsScreen (Q2)", () => {
 
     const { unmount } = renderScreen();
     expect(
-      await screen.findByText(
-        "Automatic updates are not available in this build. Get new versions from the Releases page: github.com/crrrowz/bibalak/releases",
+      await screen.findByText((_c, node) =>
+        Boolean(
+          node?.tagName === "P" &&
+          node.textContent?.includes(
+            "Automatic updates are not available in this build. Get new versions from the Releases page: github.com/crrrowz/bibalak/releases",
+          ),
+        ),
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();
@@ -855,12 +878,12 @@ describe("SettingsScreen (Q2)", () => {
 
     renderScreen();
 
-    const toggle = await screen.findByRole("checkbox", {
+    const toggle = await screen.findByRole("switch", {
       name: "Check for updates when Bibalak starts (at most once a day)",
     });
-    expect(toggle).toBeChecked();
+    expect(toggle).toHaveAttribute("aria-checked", "true");
     await user.click(toggle);
-    expect(toggle).not.toBeChecked();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
     expect(localStorage.getItem("keepsake-update-auto-check")).toBe("off");
     expect(updaterCheckMock).not.toHaveBeenCalled();
   });
@@ -871,7 +894,11 @@ describe("SettingsScreen (Q2)", () => {
 
     renderScreen();
 
-    expect(await screen.findByText(/Build test · /)).toBeInTheDocument();
+    expect(
+      await screen.findByText((_c, node) =>
+        Boolean(node?.tagName === "P" && /Build test · /.test(node.textContent ?? "")),
+      ),
+    ).toBeInTheDocument();
   });
 
   it("14. rollover shows current hour and saves changed hour via setCollectionPrefs", async () => {
@@ -925,6 +952,8 @@ describe("SettingsScreen (Q2)", () => {
     expect(await screen.findByText("Restore failed")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Delete" }));
+    const deleteDialog = await screen.findByRole("alertdialog");
+    await user.click(within(deleteDialog).getByRole("button", { name: "Delete" }));
     expect(await screen.findByText("Delete backup failed")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Maintenance" }));
@@ -1033,7 +1062,7 @@ describe("SettingsScreen (Q2)", () => {
       .mockResolvedValueOnce({ orphan_files: [], missing_files: [] });
     vi.spyOn(ipcModule.ipc, "checkIntegrity")
       .mockRejectedValueOnce({ message: "Lock timeout" })
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce({ errors: [], repaired_orphan_subdecks: 0 });
     const user = userEvent.setup();
 
     renderScreen();
@@ -1059,8 +1088,8 @@ describe("SettingsScreen (Q2)", () => {
     setupDefaultTauriIpc();
     renderScreen();
 
-    const heading = await screen.findByRole("heading", { name: "AI assistant" });
-    const section = heading.closest("section")!;
+    await screen.findByRole("heading", { name: "AI assistant" });
+    const section = screen.getByRole("tabpanel");
     expect(within(section).getByRole("button", { name: /Open AI assistant/i })).toBeInTheDocument();
     expect(await within(section).findByLabelText(/API key/i)).toBeInTheDocument();
   });
@@ -1189,8 +1218,8 @@ describe("SettingsScreen (Q2)", () => {
     const { unmount } = renderScreen();
 
     await user.click(screen.getByRole("tab", { name: "Sound" }));
-    const soundHeading = await screen.findByRole("heading", { name: "Sound" });
-    const soundSection = soundHeading.closest("section")!;
+    await screen.findByRole("heading", { name: "Sound" });
+    const soundSection = screen.getByRole("tabpanel");
     const toggle = within(soundSection).getByRole("switch", { name: "Style sound effects" });
 
     expect(toggle).toHaveAttribute("aria-checked", "true");
@@ -1214,8 +1243,8 @@ describe("SettingsScreen (Q2)", () => {
     renderScreen();
 
     await user.click(screen.getByRole("tab", { name: "Sound" }));
-    const soundHeading = await screen.findByRole("heading", { name: "Sound" });
-    const soundSection = soundHeading.closest("section")!;
+    await screen.findByRole("heading", { name: "Sound" });
+    const soundSection = screen.getByRole("tabpanel");
 
     expect(within(soundSection).queryAllByRole("slider")).toHaveLength(0);
     expect(
@@ -1240,8 +1269,8 @@ describe("SettingsScreen (Q2)", () => {
     expect(notifRequestPermissionMock).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("tab", { name: "Notifications" }));
-    const heading = await screen.findByRole("heading", { name: "Notifications" });
-    const section = heading.closest("section")!;
+    await screen.findByRole("heading", { name: "Notifications" });
+    const section = screen.getByRole("tabpanel");
     const switches = within(section).getAllByRole("switch");
     expect(switches).toHaveLength(3);
 
@@ -1284,9 +1313,8 @@ describe("SettingsScreen (Q2)", () => {
     renderScreen();
 
     await user.click(screen.getByRole("tab", { name: "Notifications" }));
-    const reloadedSection = (await screen.findByRole("heading", { name: "Notifications" })).closest(
-      "section",
-    )!;
+    await screen.findByRole("heading", { name: "Notifications" });
+    const reloadedSection = screen.getByRole("tabpanel");
     const reloadedSwitches = within(reloadedSection).getAllByRole("switch");
     expect(reloadedSwitches[0]).toHaveAttribute("aria-checked", "true");
     expect(reloadedSwitches[1]).toHaveAttribute("aria-checked", "true");
@@ -1304,9 +1332,8 @@ describe("SettingsScreen (Q2)", () => {
     renderScreen();
 
     await user.click(screen.getByRole("tab", { name: "Notifications" }));
-    const section = (await screen.findByRole("heading", { name: "Notifications" })).closest(
-      "section",
-    )!;
+    await screen.findByRole("heading", { name: "Notifications" });
+    const section = screen.getByRole("tabpanel");
     const dailySwitch = within(section).getAllByRole("switch")[0];
 
     await user.click(dailySwitch);
@@ -1343,5 +1370,104 @@ describe("SettingsScreen (Q2)", () => {
     await user.click(within(nav).getByRole("tab", { name: "About" }));
     expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
     expect(screen.getByText(/1\.0\.0/)).toBeInTheDocument();
+  });
+
+  it("A5-06: Arabic Settings tablist mirrors ArrowLeft, localizes Web/sizes/counts, and wraps LTR tokens in bdi", async () => {
+    isAvailableMock.mockReturnValue(false);
+    setLocale("ar");
+    const user = userEvent.setup();
+    renderScreen();
+
+    const generalTab = screen.getByRole("tab", { name: "عام" });
+    generalTab.focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: "الدراسة" })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "عام" })).toHaveAttribute("aria-selected", "true");
+
+    await user.click(screen.getByRole("tab", { name: "حول" }));
+    expect(screen.queryByText("Web")).not.toBeInTheDocument();
+    expect(screen.queryByText("1.0.0")).not.toBeInTheDocument();
+    expect(screen.getByText("معاينة الويب")).toBeInTheDocument();
+
+    const noticesEl = screen.getByText("THIRD_PARTY_NOTICES.md");
+    expect(noticesEl.tagName).toBe("BDI");
+    expect(fmt_size(2048)).toContain("ك.ب");
+  });
+
+  it("A5-11: About shows Portable/Installed badge and Data/Media folders with Copy and Open", async () => {
+    sessionStorage.setItem("keepsake-settings-category", "about");
+    setupDefaultTauriIpc({
+      appInfo: { ...DEFAULT_APP_INFO, media_dir: "C:/Users/me/AppData/bibalak/collection.media" },
+    });
+    updaterIsPortableMock.mockResolvedValue(true);
+    const user = userEvent.setup();
+    const writeTextMock = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    renderScreen();
+
+    expect(await screen.findByText("Portable")).toBeInTheDocument();
+    expect(screen.getByText("C:/Users/me/AppData/bibalak")).toBeInTheDocument();
+    expect(screen.getByText("C:/Users/me/AppData/bibalak/collection.media")).toBeInTheDocument();
+
+    const copyButtons = screen.getAllByRole("button", { name: /^Copy/i });
+    const openButtons = screen.getAllByRole("button", { name: /^Open/i });
+    expect(copyButtons).toHaveLength(2);
+    expect(openButtons).toHaveLength(2);
+
+    await user.click(copyButtons[0]);
+    expect(writeTextMock).toHaveBeenCalledWith("C:/Users/me/AppData/bibalak");
+
+    await user.click(openButtons[0]);
+    expect(openPathMock).toHaveBeenCalledWith("C:/Users/me/AppData/bibalak");
+    await user.click(openButtons[1]);
+    expect(openPathMock).toHaveBeenCalledWith("C:/Users/me/AppData/bibalak/collection.media");
+  });
+
+  it("A5-12: uses semantic category heading, unifies toggles as switches, filters settings by search, and resets preferences without touching data", async () => {
+    setupDefaultTauriIpc();
+    useTheme.getState().setTheme("dark");
+    useStyle.getState().setStyle("scholar");
+    const user = userEvent.setup();
+    renderScreen();
+
+    // Active category header is a semantic heading, not a plain div.
+    const panel = screen.getByRole("tabpanel");
+    const headerTitle = within(panel).getByText("General");
+    expect(headerTitle.tagName).toMatch(/^H[1-6]$/);
+
+    // Search filters the settings categories.
+    const searchInput = screen.getByRole("searchbox", { name: "Search settings" });
+    await user.type(searchInput, "backup");
+    expect(screen.getByRole("tab", { name: "Data & backup" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Sound" })).not.toBeInTheDocument();
+
+    await user.clear(searchInput);
+
+    // Reset preferences confirms and resets UI prefs without calling data deletion IPCs.
+    await user.click(screen.getByRole("button", { name: "Reset preferences" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Reset preferences" }));
+    expect(useTheme.getState().theme).toBe("system");
+    expect(useStyle.getState().style).toBe("game");
+  });
+
+  it("A5-17: MaintenanceSection localizes integrity_check repaired_orphan_subdecks count in EN and AR", async () => {
+    sessionStorage.setItem("keepsake-settings-category", "maintenance");
+    setupDefaultTauriIpc();
+    vi.spyOn(ipcModule.ipc, "checkIntegrity").mockResolvedValue({
+      errors: [],
+      repaired_orphan_subdecks: 2,
+    } as unknown as Awaited<ReturnType<typeof ipcModule.ipc.checkIntegrity>>);
+
+    const user = userEvent.setup();
+    const { unmount } = renderScreen();
+    await user.click(screen.getByRole("button", { name: "Check integrity" }));
+    expect(await screen.findByText(/Repaired 2 orphan subdecks/i)).toBeInTheDocument();
+
+    unmount();
+    setLocale("ar");
+    renderScreen();
+    await user.click(screen.getByRole("button", { name: "فحص السلامة" }));
+    expect(await screen.findByText(/مجموعتين فرعيتين|2/)).toBeInTheDocument();
   });
 });

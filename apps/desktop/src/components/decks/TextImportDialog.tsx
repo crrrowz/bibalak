@@ -167,6 +167,11 @@ export function TextImportDialog({
   const effectiveFormat: TextImportFormat =
     options.format === "auto" ? (preview?.detected_format ?? "csv") : options.format;
   const isMarkdown = effectiveFormat === "markdown";
+  const firstFieldName = fields[0]?.name ?? "";
+  const hasFirstFieldMapped = columnTargets.some(
+    (target) => target.kind === "field" && target.ord === 0,
+  );
+  const missingFirstField = Boolean(preview && fields.length > 0 && !hasFirstFieldMapped);
 
   return (
     <Dialog
@@ -437,24 +442,35 @@ export function TextImportDialog({
         )}
       </div>
 
-      <div className="flex items-center justify-end gap-2 border-t border-border px-6 py-4">
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
-          {t("common.close")}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={
-            importMut.isPending ||
-            filePath === null ||
-            effectiveDeckId === null ||
-            effectiveNotetypeId === null ||
-            !preview
-          }
-          onClick={() => importMut.mutate()}
-        >
-          {importMut.isPending ? t("textImport.importing") : t("textImport.import")}
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-6 py-4">
+        <div className="space-y-0.5 text-xs">
+          <p className="text-muted-foreground">{t("textImport.cannotUndoNotice")}</p>
+          {missingFirstField && (
+            <p role="status" className="text-destructive">
+              {t("textImport.firstFieldRequired", { field: firstFieldName })}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+            {t("common.close")}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={
+              importMut.isPending ||
+              filePath === null ||
+              effectiveDeckId === null ||
+              effectiveNotetypeId === null ||
+              !preview ||
+              missingFirstField
+            }
+            onClick={() => importMut.mutate()}
+          >
+            {importMut.isPending ? t("textImport.importing") : t("textImport.import")}
+          </Button>
+        </div>
       </div>
     </Dialog>
   );

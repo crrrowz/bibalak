@@ -4,7 +4,10 @@ use std::sync::atomic::Ordering;
 use crate::error::{CoreError, CoreResult};
 use crate::events::{DomainEvent, EventSink};
 use crate::ipc::{DuplicatePolicy, ExportEstimate, ExportScope, TextImportSummary};
-use crate::media_refs::{canonical_media_key, extract_media_refs};
+use crate::media_refs::{
+    canonical_media_key, extract_field_media_value, extract_media_refs,
+    extract_template_media_fields,
+};
 use crate::model::{CanonicalModel, ImportSummary};
 use crate::ports::{MediaStore, ParsedTextNote};
 use crate::Collection;
@@ -21,17 +24,44 @@ pub struct PreparedExport {
 }
 
 /// Extract all unique local media references from exported notes, templates,
-/// and notetype CSS.
+/// and notetype CSS (including template-wrapped fields like `<img src="{{Field}}"`).
 pub fn collect_export_media_refs(model: &CanonicalModel) -> BTreeSet<String> {
     let mut refs = BTreeSet::new();
+    let mut tmpl_field_names_by_nt: HashMap<i64, BTreeSet<String>> = HashMap::new();
+    for tpl in &model.templates {
+        refs.extend(extract_media_refs(&tpl.qfmt));
+        refs.extend(extract_media_refs(&tpl.afmt));
+        let entry = tmpl_field_names_by_nt.entry(tpl.notetype_id).or_default();
+        entry.extend(extract_template_media_fields(&tpl.qfmt));
+        entry.extend(extract_template_media_fields(&tpl.afmt));
+    }
+    let mut media_ords_by_nt: HashMap<i64, BTreeSet<usize>> = HashMap::new();
+    for field in &model.fields {
+        if let Some(names) = tmpl_field_names_by_nt.get(&field.notetype_id) {
+            if names
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(field.name.trim()))
+            {
+                media_ords_by_nt
+                    .entry(field.notetype_id)
+                    .or_default()
+                    .insert(field.ord as usize);
+            }
+        }
+    }
     for note in &model.notes {
         for field in &note.fields {
             refs.extend(extract_media_refs(field));
         }
-    }
-    for tpl in &model.templates {
-        refs.extend(extract_media_refs(&tpl.qfmt));
-        refs.extend(extract_media_refs(&tpl.afmt));
+        if let Some(ords) = media_ords_by_nt.get(&note.notetype_id) {
+            for &ord in ords {
+                if let Some(val) = note.fields.get(ord) {
+                    if let Some(name) = extract_field_media_value(val) {
+                        refs.insert(name);
+                    }
+                }
+            }
+        }
     }
     for nt in &model.notetypes {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&nt.config_json) {
@@ -387,6 +417,60 @@ mod tests {
                 "banner.png".into(),
                 "bg.jpg".into(),
             ])
+        );
+    }
+
+    #[test]
+    fn a2_04_collect_export_media_refs_includes_template_wrapped_fields() {
+        let model = CanonicalModel {
+            notetypes: vec![crate::model::Notetype {
+                id: 1,
+                name: "PicWrap".into(),
+                kind: 0,
+                mod_ms: 0,
+                usn: 0,
+                config_json: "{}".into(),
+            }],
+            fields: vec![
+                crate::model::Field {
+                    notetype_id: 1,
+                    ord: 0,
+                    name: "Picture".into(),
+                    config_json: "{}".into(),
+                },
+                crate::model::Field {
+                    notetype_id: 1,
+                    ord: 1,
+                    name: "Audio".into(),
+                    config_json: "{}".into(),
+                },
+            ],
+            templates: vec![crate::model::Template {
+                notetype_id: 1,
+                ord: 0,
+                name: "Card 1".into(),
+                qfmt: r#"<img src="{{Picture}}">[sound:{{Audio}}]"#.into(),
+                afmt: "{{Back}}".into(),
+                config_json: "{}".into(),
+            }],
+            notes: vec![crate::model::Note {
+                id: 1,
+                guid: "g1".into(),
+                notetype_id: 1,
+                mod_ms: 0,
+                usn: 0,
+                tags: vec![],
+                fields: vec!["diagram.png".into(), "voice%201.mp3".into()],
+                sort_field: None,
+                checksum: None,
+            }],
+            ..Default::default()
+        };
+
+        let refs = collect_export_media_refs(&model);
+        assert_eq!(
+            refs,
+            BTreeSet::from(["diagram.png".into(), "voice 1.mp3".into()])
         );
     }
 }

@@ -16,7 +16,19 @@ pub(super) fn strip_tags(html: &str) -> String {
 }
 
 pub(crate) fn clean_sort_value(raw: &str) -> String {
-    strip_tags(raw).replace("&nbsp;", " ").trim().to_string()
+    let plain = decode_entities(&strip_tags(raw)).replace('\u{a0}', " ");
+    let trimmed = plain.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+    // A1-07/A2-10: image, audio, and video tags with a filename still count as content.
+    let with_media = decode_entities(&strip_tags(&keep_media_names(raw))).replace('\u{a0}', " ");
+    let media_trimmed = with_media.trim();
+    if media_trimmed.is_empty() {
+        String::new()
+    } else {
+        media_trimmed.to_string()
+    }
 }
 
 /// Compute `sort_field` (from `sort_ord`, falling back to field 0) and Anki

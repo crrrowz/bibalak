@@ -1,10 +1,12 @@
+import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
-import type { FieldDirection, FieldOptions, NotetypeDetail } from "@bibalak/ipc-types";
+import type { FieldDirection, FieldKind, FieldOptions, NotetypeDetail } from "@bibalak/ipc-types";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { fieldNameProblem } from "@/lib/fieldName";
 import { t, tn } from "@/lib/i18n";
 import { ipc } from "@/lib/ipc";
+import { resolveFieldKind } from "@/lib/noteFieldGroups";
 
 const EMPTY_FIELD_OPTIONS: FieldOptions = {
   direction: "auto",
@@ -20,12 +22,12 @@ interface FieldsTabProps {
   onRenameField: (ord: number, name: string) => void;
   onRemoveField: (ord: number) => void;
   onSaveFieldOptions: (ord: number, options: FieldOptions) => void;
-  onAddField: () => void;
+  onAddField: (name: string, kind: FieldKind) => void;
   onValidationError: (message: string) => void;
   onRequestConfirm: (opts: { title: string; description: string; onConfirm: () => void }) => void;
 }
 
-/** Field ordering, inline rename, per-field RTL/font options, and removal checks. */
+/** Field ordering, inline rename, per-field type/RTL/font options, and removal checks. */
 export function FieldsTab({
   nt,
   onSetSortField,
@@ -37,6 +39,32 @@ export function FieldsTab({
   onValidationError,
   onRequestConfirm,
 }: FieldsTabProps) {
+  const [addingField, setAddingField] = useState(false);
+  const [newFieldName, setNewFieldName] = useState("");
+  const [newFieldKind, setNewFieldKind] = useState<FieldKind>("text");
+
+  useEffect(() => {
+    setAddingField(false);
+    setNewFieldName("");
+    setNewFieldKind("text");
+  }, [nt.id]);
+
+  const submitNewField = () => {
+    const clean = newFieldName.trim();
+    const problem = fieldNameProblem(
+      clean,
+      nt.fields.map((f) => f.name),
+    );
+    if (problem) {
+      onValidationError(t(`notetypes.fieldName.${problem}` as const));
+      return;
+    }
+    onAddField(clean, newFieldKind);
+    setNewFieldName("");
+    setNewFieldKind("text");
+    setAddingField(false);
+  };
+
   return (
     <div
       id="notetype-panel-fields"
@@ -156,121 +184,218 @@ export function FieldsTab({
               </Button>
             </div>
 
-            <div className="mt-2 grid grid-cols-1 gap-2 border-t border-border/60 pt-2 sm:grid-cols-4">
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] text-muted-foreground">
-                  {t("notetypes.field.direction")}
-                </span>
-                <Select
-                  selectSize="xs"
-                  aria-label={`${t("notetypes.field.direction")}: ${field.name}`}
-                  value={opts.direction}
-                  onChange={(e) =>
-                    onSaveFieldOptions(fieldOrd, {
-                      ...opts,
-                      direction: e.target.value as FieldDirection,
-                    })
+            {(() => {
+              const effectiveKind = resolveFieldKind(field.name, opts, nt.templates);
+              const isTextField = effectiveKind === "text";
+              return (
+                <div
+                  className={
+                    isTextField
+                      ? "mt-2 grid grid-cols-1 gap-2 border-t border-border/60 pt-2 sm:grid-cols-2 lg:grid-cols-5"
+                      : "mt-2 grid grid-cols-1 gap-2 border-t border-border/60 pt-2 sm:grid-cols-2"
                   }
                 >
-                  <option value="auto">{t("notetypes.field.direction.auto")}</option>
-                  <option value="rtl">{t("notetypes.field.direction.rtl")}</option>
-                  <option value="ltr">{t("notetypes.field.direction.ltr")}</option>
-                </Select>
-              </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      {t("notetypes.field.kind")}
+                    </span>
+                    <Select
+                      selectSize="xs"
+                      aria-label={`${t("notetypes.field.kind")}: ${field.name}`}
+                      value={effectiveKind}
+                      onChange={(e) =>
+                        onSaveFieldOptions(fieldOrd, {
+                          ...opts,
+                          kind: e.target.value as FieldKind,
+                        })
+                      }
+                    >
+                      <option value="text">{t("notetypes.field.kind.text")}</option>
+                      <option value="image">{t("notetypes.field.kind.image")}</option>
+                      <option value="audio">{t("notetypes.field.kind.audio")}</option>
+                      <option value="video">{t("notetypes.field.kind.video")}</option>
+                    </Select>
+                  </label>
 
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] text-muted-foreground">
-                  {t("notetypes.field.font")}
-                </span>
-                <input
-                  key={`${nt.id}:font:${fieldOrd}:${opts.font}`}
-                  type="text"
-                  aria-label={`${t("notetypes.field.font")}: ${field.name}`}
-                  defaultValue={opts.font}
-                  placeholder={t("notetypes.field.fontPlaceholder")}
-                  onBlur={(e) => {
-                    const font = e.target.value.trim();
-                    if (font === opts.font) return;
-                    onSaveFieldOptions(fieldOrd, { ...opts, font });
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.currentTarget.blur();
-                    } else if (e.key === "Escape") {
-                      e.currentTarget.value = opts.font;
-                      e.currentTarget.blur();
-                    }
-                  }}
-                  className="h-7 rounded border border-input bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                />
-              </label>
+                  {isTextField && (
+                    <>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] text-muted-foreground">
+                          {t("notetypes.field.direction")}
+                        </span>
+                        <Select
+                          selectSize="xs"
+                          aria-label={`${t("notetypes.field.direction")}: ${field.name}`}
+                          value={opts.direction}
+                          onChange={(e) =>
+                            onSaveFieldOptions(fieldOrd, {
+                              ...opts,
+                              direction: e.target.value as FieldDirection,
+                            })
+                          }
+                        >
+                          <option value="auto">{t("notetypes.field.direction.auto")}</option>
+                          <option value="rtl">{t("notetypes.field.direction.rtl")}</option>
+                          <option value="ltr">{t("notetypes.field.direction.ltr")}</option>
+                        </Select>
+                      </label>
 
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] text-muted-foreground">
-                  {t("notetypes.field.size")}
-                </span>
-                <input
-                  key={`${nt.id}:size:${fieldOrd}:${opts.size}`}
-                  type="number"
-                  min={0}
-                  max={200}
-                  aria-label={`${t("notetypes.field.size")}: ${field.name}`}
-                  defaultValue={opts.size > 0 ? String(opts.size) : ""}
-                  placeholder={t("notetypes.field.sizePlaceholder")}
-                  onBlur={(e) => {
-                    const raw = Number(e.target.value.trim() || "0");
-                    const size =
-                      Number.isFinite(raw) && raw > 0 ? Math.min(200, Math.round(raw)) : 0;
-                    if (size === opts.size) return;
-                    onSaveFieldOptions(fieldOrd, { ...opts, size });
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.currentTarget.blur();
-                    } else if (e.key === "Escape") {
-                      e.currentTarget.value = opts.size > 0 ? String(opts.size) : "";
-                      e.currentTarget.blur();
-                    }
-                  }}
-                  className="h-7 rounded border border-input bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                />
-              </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] text-muted-foreground">
+                          {t("notetypes.field.font")}
+                        </span>
+                        <input
+                          key={`${nt.id}:font:${fieldOrd}:${opts.font}`}
+                          type="text"
+                          aria-label={`${t("notetypes.field.font")}: ${field.name}`}
+                          defaultValue={opts.font}
+                          placeholder={t("notetypes.field.fontPlaceholder")}
+                          onBlur={(e) => {
+                            const font = e.target.value.trim();
+                            if (font === opts.font) return;
+                            onSaveFieldOptions(fieldOrd, { ...opts, font });
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.currentTarget.blur();
+                            } else if (e.key === "Escape") {
+                              e.currentTarget.value = opts.font;
+                              e.currentTarget.blur();
+                            }
+                          }}
+                          className="h-7 rounded border border-input bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        />
+                      </label>
 
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] text-muted-foreground">
-                  {t("notetypes.field.description")}
-                </span>
-                <input
-                  key={`${nt.id}:desc:${fieldOrd}:${opts.description}`}
-                  type="text"
-                  aria-label={`${t("notetypes.field.description")}: ${field.name}`}
-                  defaultValue={opts.description}
-                  placeholder={t("notetypes.field.descriptionPlaceholder")}
-                  onBlur={(e) => {
-                    const description = e.target.value.trim();
-                    if (description === opts.description) return;
-                    onSaveFieldOptions(fieldOrd, { ...opts, description });
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.currentTarget.blur();
-                    } else if (e.key === "Escape") {
-                      e.currentTarget.value = opts.description;
-                      e.currentTarget.blur();
-                    }
-                  }}
-                  className="h-7 rounded border border-input bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                />
-              </label>
-            </div>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] text-muted-foreground">
+                          {t("notetypes.field.size")}
+                        </span>
+                        <input
+                          key={`${nt.id}:size:${fieldOrd}:${opts.size}`}
+                          type="number"
+                          min={0}
+                          max={200}
+                          aria-label={`${t("notetypes.field.size")}: ${field.name}`}
+                          defaultValue={opts.size > 0 ? String(opts.size) : ""}
+                          placeholder={t("notetypes.field.sizePlaceholder")}
+                          onBlur={(e) => {
+                            const raw = Number(e.target.value.trim() || "0");
+                            const size =
+                              Number.isFinite(raw) && raw > 0 ? Math.min(200, Math.round(raw)) : 0;
+                            if (size === opts.size) return;
+                            onSaveFieldOptions(fieldOrd, { ...opts, size });
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.currentTarget.blur();
+                            } else if (e.key === "Escape") {
+                              e.currentTarget.value = opts.size > 0 ? String(opts.size) : "";
+                              e.currentTarget.blur();
+                            }
+                          }}
+                          className="h-7 rounded border border-input bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        />
+                      </label>
+                    </>
+                  )}
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      {t("notetypes.field.description")}
+                    </span>
+                    <input
+                      key={`${nt.id}:desc:${fieldOrd}:${opts.description}`}
+                      type="text"
+                      aria-label={`${t("notetypes.field.description")}: ${field.name}`}
+                      defaultValue={opts.description}
+                      placeholder={t("notetypes.field.descriptionPlaceholder")}
+                      onBlur={(e) => {
+                        const description = e.target.value.trim();
+                        if (description === opts.description) return;
+                        onSaveFieldOptions(fieldOrd, { ...opts, description });
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.currentTarget.blur();
+                        } else if (e.key === "Escape") {
+                          e.currentTarget.value = opts.description;
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      className="h-7 rounded border border-input bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    />
+                  </label>
+                </div>
+              );
+            })()}
           </div>
         );
       })}
 
-      <Button variant="outline" size="sm" className="mt-1 w-fit" onClick={onAddField}>
-        <Plus className="me-1.5 size-3.5" />
-        {t("notetypes.addField")}
-      </Button>
+      {addingField ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            submitNewField();
+          }}
+          className="mt-1 flex flex-wrap items-center gap-2"
+        >
+          <input
+            autoFocus
+            type="text"
+            aria-label={t("notetypes.newFieldName")}
+            placeholder={t("notetypes.newFieldPlaceholder")}
+            value={newFieldName}
+            onChange={(e) => setNewFieldName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setAddingField(false);
+                setNewFieldName("");
+                setNewFieldKind("text");
+              }
+            }}
+            className="h-8 rounded border border-input bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          <Select
+            selectSize="sm"
+            aria-label={t("notetypes.newFieldKind")}
+            value={newFieldKind}
+            onChange={(e) => setNewFieldKind(e.target.value as FieldKind)}
+            className="w-28 text-xs"
+          >
+            <option value="text">{t("notetypes.field.kind.text")}</option>
+            <option value="image">{t("notetypes.field.kind.image")}</option>
+            <option value="audio">{t("notetypes.field.kind.audio")}</option>
+            <option value="video">{t("notetypes.field.kind.video")}</option>
+          </Select>
+          <Button type="submit" size="sm">
+            {t("common.add")}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setAddingField(false);
+              setNewFieldName("");
+              setNewFieldKind("text");
+            }}
+          >
+            {t("common.cancel")}
+          </Button>
+        </form>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-1 w-fit"
+          onClick={() => setAddingField(true)}
+        >
+          <Plus className="me-1.5 size-3.5" />
+          {t("notetypes.addField")}
+        </Button>
+      )}
     </div>
   );
 }

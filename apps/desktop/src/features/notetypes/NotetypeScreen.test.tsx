@@ -262,7 +262,10 @@ describe("NotetypeScreen N1-N10 & X1-X4", () => {
     expect(fieldsTab).toHaveAttribute("aria-selected", "true");
 
     await user.click(screen.getByRole("button", { name: /add field/i }));
+    await user.type(screen.getByLabelText(/new field name/i), "Notes");
+    await user.click(screen.getByRole("button", { name: /^Add$/i }));
     await waitFor(() => {
+      expect(ipc.addField).toHaveBeenCalledWith(1, "Notes");
       expect(useToastStore.getState().items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ tone: "error", message: "field limit reached" }),
@@ -287,7 +290,12 @@ describe("NotetypeScreen N1-N10 & X1-X4", () => {
 
     // Sidebar should not expose a duplicate Add note type button alongside the <select>
     expect(screen.queryByRole("button", { name: /add note type/i })).toBeNull();
-    expect(screen.getByRole("combobox", { name: /add note type/i })).toBeInTheDocument();
+    const addSelect = screen.getByRole("combobox", { name: /add note type/i });
+    expect(addSelect).toBeInTheDocument();
+    // A5-13: visible, shared <Select> (not an opacity-0 overlay)
+    expect(addSelect).toHaveAttribute("data-styled-select", "true");
+    expect(addSelect.className).not.toContain("opacity-0");
+    expect(addSelect.className).toContain("focus-visible:ring-2");
 
     // Active notetype item exposes aria-current="true"
     const activeItem = screen.getByRole("button", { name: /Basic/i });
@@ -312,5 +320,68 @@ describe("NotetypeScreen N1-N10 & X1-X4", () => {
     fireEvent.keyDown(tabs[1], { key: "Home" });
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(tabs[0]).toHaveFocus();
+  });
+
+  it("lets the user set field type (text/image/audio/video), hides text-only options on media fields, and saves type on Add Field", async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <NotetypeScreen />
+      </QueryClientProvider>,
+    );
+
+    const kindSelect = await screen.findByLabelText(/Field type: Front/i);
+    await user.selectOptions(kindSelect, "audio");
+    await waitFor(() => {
+      expect(ipc.saveFieldOptions).toHaveBeenCalledWith(
+        1,
+        0,
+        expect.objectContaining({ kind: "audio" }),
+      );
+    });
+
+    // Updating queried data to reflect kind='audio' hides text direction, font, and size
+    (ipc.getNotetype as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 1,
+      name: "Basic",
+      kind: 0,
+      sort_field: 0,
+      fields: [
+        {
+          ord: 0,
+          name: "Front",
+          options: { direction: "auto", font: "", size: 0, description: "", kind: "audio" },
+        },
+        {
+          ord: 1,
+          name: "Back",
+          options: { direction: "auto", font: "", size: 0, description: "" },
+        },
+      ],
+      templates: [{ ord: 0, name: "Card 1", qfmt: "{{Front}}", afmt: "{{Back}}" }],
+      css: "",
+    });
+    await qc.invalidateQueries();
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/Text direction: Front/i)).toBeNull();
+      expect(screen.queryByLabelText(/Editor font: Front/i)).toBeNull();
+      expect(screen.queryByLabelText(/Font size \(px\): Front/i)).toBeNull();
+    });
+    expect(screen.getByLabelText(/Field description: Front/i)).toBeInTheDocument();
+
+    // Add a new field with explicit type 'image'
+    await user.click(screen.getByRole("button", { name: /add field/i }));
+    await user.type(screen.getByLabelText(/new field name/i), "Diagram");
+    await user.selectOptions(screen.getByLabelText(/new field type/i), "image");
+    await user.click(screen.getByRole("button", { name: /^Add$/i }));
+    await waitFor(() => {
+      expect(ipc.addField).toHaveBeenCalledWith(1, "Diagram");
+      expect(ipc.saveFieldOptions).toHaveBeenCalledWith(
+        1,
+        2,
+        expect.objectContaining({ kind: "image" }),
+      );
+    });
   });
 });

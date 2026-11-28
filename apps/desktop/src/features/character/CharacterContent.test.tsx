@@ -228,4 +228,16 @@ describe("CharacterContent (14e)", () => {
       "bg_night_library",
     );
   });
+
+  it("A3-19: gates /character in Default style and does not fetch Game state or render Wardrobe", () => {
+    useStyle.getState().setStyle("default");
+    const gameSpy = vi.spyOn(ipcModule.ipc, "getGameState");
+    renderCharacter();
+
+    expect(
+      screen.getByText("Character & academic portrait are available in Game or Scholar style."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Wardrobe" })).toBeNull();
+    expect(gameSpy).not.toHaveBeenCalled();
+  });
 });

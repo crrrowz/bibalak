@@ -1,11 +1,11 @@
 import type { SpendHistoryEntryDto } from "@bibalak/ipc-types";
-import { t } from "@/lib/i18n";
-import { en, type LocaleKey } from "@/locales/en";
+import { hasTranslationKey, t } from "@/lib/i18n";
+import type { LocaleKey } from "@/locales/en";
 
 /** Resolve a localized display name for a shop/game item key, falling back to `fallback` or the raw key. */
 export function gameItemTitle(itemKey: string, fallback?: string): string {
   const key = `game.item.${itemKey}`;
-  if (Object.prototype.hasOwnProperty.call(en, key)) {
+  if (hasTranslationKey(key)) {
     return t(key as LocaleKey);
   }
   return fallback ?? itemKey;

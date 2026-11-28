@@ -30,6 +30,8 @@ vi.mock("@/lib/ipc", () => ({
     previewFindReplace: vi.fn(),
     findReplaceNotes: vi.fn(),
     findDuplicates: vi.fn(),
+    findEmptyCards: vi.fn(),
+    deleteEmptyCards: vi.fn(),
     changeNoteType: vi.fn(),
     renameTag: vi.fn(),
     deleteTag: vi.fn(),
@@ -45,7 +47,9 @@ vi.mock("@/lib/ipc", () => ({
     moveCardsToDeck: vi.fn(),
     deleteNotes: vi.fn(),
     bulkAddTag: vi.fn(),
+    bulkAddTags: vi.fn(),
     bulkRemoveTag: vi.fn(),
+    bulkRemoveTags: vi.fn(),
     getNote: vi.fn(),
     saveNote: vi.fn(),
   },
@@ -157,6 +161,7 @@ describe("BrowseScreen", () => {
     ]);
     vi.mocked(ipc.getStats).mockResolvedValue({
       day0_ms: Date.now() - 365 * 86_400_000,
+      today: 365,
     } as never);
     vi.mocked(ipc.searchCards).mockResolvedValue(mockCards);
     vi.mocked(ipc.searchNoteRows).mockResolvedValue([
@@ -169,6 +174,10 @@ describe("BrowseScreen", () => {
         card_count: 2,
         tags: ["tag1"],
         mod_ms: 1_700_000_000_000,
+        has_suspended: false,
+        has_unsuspended: true,
+        has_buried: false,
+        has_unburied: true,
       },
       {
         note_id: 202,
@@ -179,9 +188,18 @@ describe("BrowseScreen", () => {
         card_count: 1,
         tags: [],
         mod_ms: 1_700_000_100_000,
+        has_suspended: true,
+        has_unsuspended: false,
+        has_buried: false,
+        has_unburied: true,
       },
     ]);
-    vi.mocked(ipc.previewFindReplace).mockResolvedValue({ notes_matched: 2, occurrences: 3 });
+    vi.mocked(ipc.previewFindReplace).mockResolvedValue({
+      notes_matched: 2,
+      occurrences: 3,
+      sample_before: null,
+      sample_after: null,
+    });
     vi.mocked(ipc.findReplaceNotes).mockResolvedValue(2);
     vi.mocked(ipc.findDuplicates).mockResolvedValue([
       {
@@ -191,6 +209,7 @@ describe("BrowseScreen", () => {
       },
     ]);
     vi.mocked(ipc.bulkAddTag).mockResolvedValue(undefined);
+    vi.mocked(ipc.bulkAddTags).mockResolvedValue(undefined);
     vi.mocked(ipc.suspendCards).mockResolvedValue(undefined);
     vi.mocked(ipc.aiGetConfig).mockResolvedValue({
       enabled: false,
@@ -433,8 +452,8 @@ describe("BrowseScreen", () => {
     fireEvent.submit(tagInput.closest("form")!);
 
     await waitFor(() => {
-      expect(ipc.bulkAddTag).toHaveBeenCalledWith([201], "tagA");
-      expect(ipc.bulkAddTag).toHaveBeenCalledWith([201], "tagB");
+      expect(ipc.bulkAddTags).toHaveBeenCalledWith([201], ["tagA", "tagB"]);
+      expect(ipc.bulkAddTags).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -679,7 +698,15 @@ describe("BrowseScreen", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /Preview/i }));
 
     await waitFor(() => {
-      expect(ipc.previewFindReplace).toHaveBeenCalledWith([201, 202], null, "alpha", true, true);
+      expect(ipc.previewFindReplace).toHaveBeenCalledWith(
+        [201, 202],
+        null,
+        "alpha",
+        true,
+        true,
+        "beta",
+        false,
+      );
     });
     expect(within(dialog).getByText("3 matches across 2 notes.")).toBeInTheDocument();
 
@@ -692,6 +719,7 @@ describe("BrowseScreen", () => {
         "beta",
         true,
         true,
+        false,
       );
     });
   });
@@ -1124,6 +1152,114 @@ describe("BrowseScreen", () => {
     fireEvent.click(within(footer).getByRole("button", { name: /Previous page/i }));
     await waitFor(() => {
       expect(footer).toHaveTextContent("Showing 1–50 of 250");
+    });
+  });
+
+  it("A1-04: aborts row switch, shows toast error, and preserves dirty draft when autosave fails", async () => {
+    vi.mocked(ipc.saveNote).mockRejectedValueOnce(new Error("first field cannot be empty"));
+    renderWithQuery(<BrowseScreen />);
+    await waitFor(() => {
+      expect(screen.getByText("Normal card Front")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Normal card Front"));
+    const tagsInput = (await screen.findByDisplayValue("tag1")) as HTMLInputElement;
+    fireEvent.change(tagsInput, { target: { value: "unsaved_tag" } });
+
+    fireEvent.click(screen.getByText("Suspended card"));
+
+    await waitFor(() => {
+      expect(ipc.saveNote).toHaveBeenCalledTimes(1);
+    });
+    expect(useToastStore.getState().items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tone: "error", message: "first field cannot be empty" }),
+      ]),
+    );
+    expect(screen.getByDisplayValue("unsaved_tag")).toBeInTheDocument();
+  });
+
+  it("F13: shows unsaved changes indicator in NoteEditorPanel and saves on Ctrl+Enter", async () => {
+    renderWithQuery(<BrowseScreen />);
+    await waitFor(() => {
+      expect(screen.getByText("Normal card Front")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Normal card Front"));
+    const tagsInput = await screen.findByLabelText(/^Tags$/i);
+    fireEvent.change(tagsInput, { target: { value: "updated_tag" } });
+
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    fireEvent.keyDown(tagsInput, { key: "Enter", ctrlKey: true });
+
+    await waitFor(() => {
+      expect(ipc.saveNote).toHaveBeenCalledWith(201, expect.any(Array), ["updated_tag"]);
+    });
+  });
+
+  it("A1-28: enables Unsuspend action in Notes mode when selected note has suspended cards", async () => {
+    renderWithQuery(<BrowseScreen />);
+    await waitFor(() => {
+      expect(screen.getByText("Normal card Front")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Notes$/i }));
+    await waitFor(() => {
+      expect(screen.getByText("Suspended card")).toBeInTheDocument();
+    });
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    fireEvent.click(checkboxes[2]); // note 202 (has_suspended: true)
+
+    expect(screen.getByRole("button", { name: /Unsuspend/i })).toBeInTheDocument();
+  });
+
+  it("A5-05: handles Arabic keyboard Ctrl+F and Ctrl+A in Browse using physical e.code", async () => {
+    renderWithQuery(<BrowseScreen />);
+    await waitFor(() => {
+      expect(screen.getByText("Normal card Front")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "ب", code: "KeyF", ctrlKey: true });
+    expect(screen.getByRole("textbox", { name: /^Search$/i })).toHaveFocus();
+    (document.activeElement as HTMLElement)?.blur();
+
+    fireEvent.keyDown(window, { key: "ش", code: "KeyA", ctrlKey: true });
+    expect(screen.getByText(/4 selected/i)).toBeInTheDocument();
+  });
+
+  it("A2-12: lists empty cards in Browse Empty cards dialog and deletes only after confirmation", async () => {
+    vi.mocked(ipc.findEmptyCards).mockResolvedValue([
+      {
+        card_id: 901,
+        note_id: 201,
+        deck_name: "Default",
+        notetype_name: "Basic (and reversed)",
+        template_name: "Reverse",
+        sort_field: "Normal card Front",
+        ord: 1,
+      },
+    ]);
+    vi.mocked(ipc.deleteEmptyCards).mockResolvedValue(1);
+
+    renderWithQuery(<BrowseScreen />);
+    await waitFor(() => {
+      expect(screen.getByText("Normal card Front")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Empty cards/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Empty cards/i });
+    expect(await within(dialog).findByText(/Reverse/)).toBeInTheDocument();
+
+    const deleteBtn = within(dialog).getByRole("button", { name: /Delete empty cards/i });
+    expect(deleteBtn).toBeDisabled();
+
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /delete these empty cards/i }));
+    expect(deleteBtn).toBeEnabled();
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(ipc.deleteEmptyCards).toHaveBeenCalledWith([901]);
     });
   });
 });

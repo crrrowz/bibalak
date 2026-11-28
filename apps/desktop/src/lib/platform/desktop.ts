@@ -16,7 +16,7 @@ import {
   requestPermission as tauriRequestNotificationPermission,
   sendNotification as tauriSendNotification,
 } from "@tauri-apps/plugin-notification";
-import { openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
+import { openPath as tauriOpenPath, openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
 import { relaunch as tauriRelaunch } from "@tauri-apps/plugin-process";
 import { check as tauriCheckUpdate, type Update } from "@tauri-apps/plugin-updater";
 import type {
@@ -38,8 +38,16 @@ export const desktopPlatform: Platform = {
     return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   },
 
-  invoke<T>(command: string, args?: Record<string, unknown>) {
-    return tauriInvoke<T>(command, args);
+  invoke<T>(
+    command: string,
+    args?: Record<string, unknown> | number[] | ArrayBuffer | Uint8Array,
+    options?: { headers?: Record<string, string> },
+  ) {
+    return tauriInvoke<T>(
+      command,
+      args,
+      options?.headers ? { headers: options.headers } : undefined,
+    );
   },
 
   listen<T>(event: string, handler: (payload: T) => void) {
@@ -62,6 +70,11 @@ export const desktopPlatform: Platform = {
       defaultPath,
       filters: filters ?? [],
     });
+  },
+
+  async openPath(path: string) {
+    if (!path.trim() || !this.isAvailable()) return;
+    await tauriOpenPath(path);
   },
 
   // Null outside the Tauri webview (e.g. `pnpm dev:web` without mocks), so the

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, RotateCcw, Sparkles } from "lucide-react";
+import { CheckCircle2, RotateCcw, Sparkles } from "lucide-react";
 import type { AIActionRequest, BatchNoteInput, GeneratedNoteKind } from "@bibalak/ipc-types";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { AIActionDialog } from "@/components/ai/AIActionDialog";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import {
   buildGeneratedBrowseQuery,
   DEFAULT_GENERATE_COUNT,
@@ -564,7 +565,7 @@ export function GenerateCardsScreen() {
                   disabled={addingStockCloze}
                   onClick={() => void handleAddStockCloze()}
                 >
-                  {addingStockCloze ? <Loader2 className="me-1.5 size-3.5 animate-spin" /> : null}
+                  {addingStockCloze ? <Spinner className="me-1.5" /> : null}
                   {t("ai.generate.addStockCloze")}
                 </Button>
               </div>
@@ -587,7 +588,7 @@ export function GenerateCardsScreen() {
                 onClick={() => void handleGenerateClick()}
               >
                 {preparingConsent ? (
-                  <Loader2 className="me-1.5 size-4 animate-spin" aria-hidden />
+                  <Spinner size="md" className="me-1.5" />
                 ) : (
                   <Sparkles className="me-1.5 size-4" aria-hidden />
                 )}
@@ -634,7 +635,7 @@ export function GenerateCardsScreen() {
               className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-border bg-card p-4"
             >
               <div className="flex items-center gap-2.5 text-sm font-medium text-foreground">
-                <Loader2 className="size-4 animate-spin text-primary" aria-hidden />
+                <Spinner size="md" className="text-primary" />
                 <span>
                   {t("ai.generate.partProgress", {
                     current: runPartIndex + 1,

@@ -7,10 +7,12 @@ import { formatNumber, t, tn } from "@/lib/i18n";
 import { errorMessage, ipc } from "@/lib/ipc";
 import { queryKeys } from "@/lib/queryKeys";
 import { invalidateTodayCounts } from "@/lib/queryRefresh";
+import { pushUndoToast } from "@/lib/undoToast";
 
 /**
- * Confirmation dialog to reset a deck's progress back to new via the existing
- * `forget_cards` path (undoable). Fetches the exact card IDs via `deckCardIds`.
+ * Confirmation dialog for a full deck progress reset (`reset_deck_progress`,
+ * undoable). Shows exact card count, lists every wiped state, and explains
+ * that gold balance never goes below zero while levels and achievements remain.
  */
 export function ResetDeckProgressDialog({
   deck,
@@ -25,12 +27,10 @@ export function ResetDeckProgressDialog({
 }) {
   const queryClient = useQueryClient();
   const [includeSubdecks, setIncludeSubdecks] = useState(true);
-  const [resetCounts, setResetCounts] = useState(false);
 
   useEffect(() => {
     if (deck) {
       setIncludeSubdecks(true);
-      setResetCounts(false);
     }
   }, [deck]);
 
@@ -43,11 +43,20 @@ export function ResetDeckProgressDialog({
   const cardIds = cardIdsQuery.data ?? [];
 
   const resetMut = useMutation({
-    mutationFn: () => ipc.forgetCards(cardIds, resetCounts),
-    onSuccess: () => {
+    mutationFn: () => ipc.resetDeckProgress(deck!.id, includeSubdecks),
+    onSuccess: (count) => {
+      const targetName = deck?.name ?? "";
+      const resetCount = count ?? cardIds.length;
       void invalidateTodayCounts(queryClient);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.queueAll });
+      void queryClient.removeQueries({ queryKey: queryKeys.queueAll });
       void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
+      pushUndoToast(tn("undo.action.resetDeckProgress", resetCount, { name: targetName }), () =>
+        ipc.undo().then(() => {
+          void invalidateTodayCounts(queryClient);
+          void queryClient.removeQueries({ queryKey: queryKeys.queueAll });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
+        }),
+      );
       onDone();
       onClose();
     },
@@ -57,7 +66,7 @@ export function ResetDeckProgressDialog({
     <DialogFrame open={Boolean(deck)} title={t("decks.reset.title")} onClose={onClose}>
       <h2 className="mb-2 text-base font-semibold">{t("decks.reset.title")}</h2>
       {deck && (
-        <p className="mb-4 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+        <p className="mb-3 text-sm text-muted-foreground [overflow-wrap:anywhere]">
           {cardIdsQuery.isLoading
             ? t("decks.reset.loading")
             : tn("decks.reset.description", cardIds.length, {
@@ -66,6 +75,15 @@ export function ResetDeckProgressDialog({
               })}
         </p>
       )}
+      <div className="mb-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-xs text-muted-foreground">
+        <p className="mb-1.5 font-medium text-foreground">{t("decks.reset.wipeListTitle")}</p>
+        <ul className="list-disc space-y-1 ps-4">
+          <li>{t("decks.reset.wipeCards")}</li>
+          <li>{t("decks.reset.wipeHistory")}</li>
+          <li>{t("decks.reset.wipeXp")}</li>
+        </ul>
+        <p className="mt-2 text-foreground/80">{t("decks.reset.goldNote")}</p>
+      </div>
       <div className="mb-4 space-y-2">
         <label
           className={
@@ -80,14 +98,6 @@ export function ResetDeckProgressDialog({
             onChange={(e) => setIncludeSubdecks(e.target.checked)}
           />
           <span>{t("decks.reset.includeSubdecks")}</span>
-        </label>
-        <label className="flex cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={resetCounts}
-            onChange={(e) => setResetCounts(e.target.checked)}
-          />
-          <span>{t("decks.reset.resetCounts")}</span>
         </label>
       </div>
       {!cardIdsQuery.isLoading && !cardIdsQuery.isError && cardIds.length === 0 && (

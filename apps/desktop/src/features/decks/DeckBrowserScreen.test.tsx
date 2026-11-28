@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { DeckBrowserScreen } from "./DeckBrowserScreen";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as ipc from "@/lib/ipc";
-import { setLocale } from "@/lib/i18n";
 import { useStyle } from "@/stores/style";
 
 const { platformListeners } = vi.hoisted(() => ({
@@ -35,33 +34,17 @@ vi.mock("@tanstack/react-router", () => ({
   useSearch: () => ({ create: false }),
 }));
 
-describe("DeckBrowserScreen Undo & Empty failures", () => {
-  it("disables Undo and sets title when undoStatus is null", async () => {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
-    vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue(null);
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <DeckBrowserScreen />
-      </QueryClientProvider>,
-    );
-
-    const undoBtn = await screen.findByRole("button", { name: /undo/i });
-    expect(undoBtn).toBeDisabled();
-    expect(undoBtn.getAttribute("title")).toBe("Nothing to undo");
-  });
-
-  it("enables Undo and displays action description in title when undoStatus exists", async () => {
+describe("DeckBrowserScreen Undo & Empty failures (F4)", () => {
+  it("removes generic toolbar Undo button and supports Ctrl+Z undo", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
 
     vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
     vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue({ kind: "delete-deck", name: "Math" });
+    const undoSpy = vi
+      .spyOn(ipc.ipc, "undo")
+      .mockResolvedValue({ kind: "delete-deck", name: "Math" });
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -69,40 +52,14 @@ describe("DeckBrowserScreen Undo & Empty failures", () => {
       </QueryClientProvider>,
     );
 
-    const undoBtn = await screen.findByRole("button", { name: /undo/i });
-    await waitFor(() => {
-      expect(undoBtn).toBeEnabled();
-      expect(undoBtn.getAttribute("title")).toBe('Undo: Delete deck "Math"');
-    });
+    await screen.findByRole("button", { name: /Import text/i });
+    expect(screen.queryByRole("button", { name: /^Undo$/i })).not.toBeInTheDocument();
+
+    await userEvent.keyboard("{Control>}z{/Control}");
+    await waitFor(() => expect(undoSpy).toHaveBeenCalledTimes(1));
   });
 
-  it("translates Undo tooltip into Arabic instead of showing English", async () => {
-    setLocale("ar");
-    try {
-      const queryClient = new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      });
-
-      vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
-      vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue({ kind: "delete-deck", name: "Math" });
-
-      render(
-        <QueryClientProvider client={queryClient}>
-          <DeckBrowserScreen />
-        </QueryClientProvider>,
-      );
-
-      const undoBtn = await screen.findByRole("button", { name: "تراجع" });
-      await waitFor(() => {
-        expect(undoBtn).toBeEnabled();
-        expect(undoBtn.getAttribute("title")).toBe('تراجع: حذف المجموعة "Math"');
-      });
-    } finally {
-      setLocale("en");
-    }
-  });
-
-  it("shows error message when undo fails", async () => {
+  it("shows error message when Ctrl+Z undo fails", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -117,8 +74,8 @@ describe("DeckBrowserScreen Undo & Empty failures", () => {
       </QueryClientProvider>,
     );
 
-    const undoBtn = await screen.findByRole("button", { name: /undo/i });
-    await userEvent.click(undoBtn);
+    await screen.findByRole("button", { name: /Import text/i });
+    await userEvent.keyboard("{Control>}z{/Control}");
 
     const errorMsg = await screen.findByText(/Undo failed: Database locked/i);
     expect(errorMsg).toBeInTheDocument();
@@ -661,14 +618,14 @@ describe("DeckBrowserScreen Undo & Empty failures", () => {
     });
 
     invalidateSpy.mockClear();
-    await user.click(screen.getByRole("button", { name: /undo/i }));
+    await user.keyboard("{Control>}z{/Control}");
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["motivation-state"] });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["stats"] });
     });
   });
 
-  it("STUDY1 / BW2-23: Reset progress… in deck menu opens confirm dialog with count, options, and calls forgetCards", async () => {
+  it("F1 / BW2-23: Reset progress… opens confirm dialog listing wiped state, calls resetDeckProgress, and fires Undo toast", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -679,7 +636,7 @@ describe("DeckBrowserScreen Undo & Empty failures", () => {
         name: "Biology",
         parent_id: null,
         new_count: 5,
-        learning_count: 0,
+        learning_count: 2,
         review_count: 0,
         is_filtered: false,
         collapsed: false,
@@ -704,7 +661,14 @@ describe("DeckBrowserScreen Undo & Empty failures", () => {
       .mockImplementation(async (_id, includeSubdecks) =>
         includeSubdecks ? [101, 102, 201] : [101, 102],
       );
-    const forgetSpy = vi.spyOn(ipc.ipc, "forgetCards").mockResolvedValue();
+    const resetSpy = vi
+      .spyOn(
+        ipc.ipc as {
+          resetDeckProgress?: (deckId: number, includeSubdecks?: boolean) => Promise<number>;
+        },
+        "resetDeckProgress",
+      )
+      .mockResolvedValue(2);
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -719,21 +683,48 @@ describe("DeckBrowserScreen Undo & Empty failures", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(/3 cards/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/review history/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Gold never drops below zero/i)).toBeInTheDocument();
     const includeSubdecksCb = within(dialog).getByRole("checkbox", { name: /Include subdecks/i });
-    const resetCountsCb = within(dialog).getByRole("checkbox", { name: /Reset reps and lapses/i });
     expect(includeSubdecksCb).toBeChecked();
-    expect(resetCountsCb).not.toBeChecked();
 
     await user.click(includeSubdecksCb);
     expect(await within(dialog).findByText(/2 cards/i)).toBeInTheDocument();
-    await user.click(resetCountsCb);
     await user.click(within(dialog).getByRole("button", { name: /^Reset progress$/i }));
 
     await waitFor(() => {
       expect(deckCardIdsSpy).toHaveBeenCalledWith(1, true);
       expect(deckCardIdsSpy).toHaveBeenCalledWith(1, false);
-      expect(forgetSpy).toHaveBeenCalledWith([101, 102], true);
+      expect(resetSpy).toHaveBeenCalledWith(1, false);
     });
+  });
+
+  it("G1: explains in deck UI that Learn includes learning and relearning cards", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([
+      {
+        id: 1,
+        name: "Biology",
+        parent_id: null,
+        new_count: 5,
+        learning_count: 7,
+        review_count: 3,
+        is_filtered: false,
+        collapsed: false,
+      },
+    ]);
+    vi.spyOn(ipc.ipc, "undoStatus").mockResolvedValue(null);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DeckBrowserScreen />
+      </QueryClientProvider>,
+    );
+
+    const hint = await screen.findByTestId("decks-learn-hint");
+    expect(hint).toHaveTextContent(/relearning/i);
   });
 
   it("EXP1: shows Export deck in menu for normal decks and hides it for filtered decks", async () => {

@@ -32,6 +32,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { Kbd } from "@/components/Kbd";
 import { ExportDialog } from "@/components/importExport/ExportDialog";
 import { t, getLocale, setLocale } from "@/lib/i18n";
+import { matchesKey } from "@/lib/shortcuts";
 import { pluginHost } from "@/lib/pluginHost";
 
 /**
@@ -54,7 +55,7 @@ export function CommandPalette() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
+      if (matchesKey(e, "KeyK", "k") && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         setOpen((v) => !v);
       }

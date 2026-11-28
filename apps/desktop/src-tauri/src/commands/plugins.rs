@@ -8,15 +8,18 @@ use bibalak_core::ipc::{
 };
 use bibalak_core::media_refs::extract_media_refs;
 use bibalak_core::Collection;
-use bibalak_plugin::{is_safe_id, Capability, PluginError, PluginManager, PluginRecord};
+use bibalak_plugin::{
+    is_safe_id, Capability, PluginError, PluginManager, PluginRecord, MAX_PLUGIN_BYTES,
+    MAX_PLUGIN_FILES,
+};
 use tauri::{AppHandle, Manager};
 
 use super::{run_blocking, state_err};
 
 type IpcResult<T> = Result<T, IpcError>;
 
-const MAX_PLUGIN_ZIP_FILES: usize = 256;
-const MAX_PLUGIN_ZIP_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_PLUGIN_ZIP_FILES: usize = MAX_PLUGIN_FILES;
+const MAX_PLUGIN_ZIP_BYTES: u64 = MAX_PLUGIN_BYTES;
 const MAX_PLUGIN_DECKS: usize = 500;
 const MAX_PLUGIN_NOTES_LIMIT: i64 = 200;
 const MAX_PLUGIN_QUERY_CHARS: usize = 500;

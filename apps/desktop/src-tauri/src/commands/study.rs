@@ -19,7 +19,7 @@ pub async fn get_next_card(app: AppHandle, deck_id: i64) -> IpcResult<Option<Stu
     with_collection(app, move |collection| {
         collection.start_study_session(deck_id)?;
         match collection.next_card(deck_id)? {
-            Some(card) => Ok(Some(present(collection, card, deck_id))),
+            Some(card) => Ok(Some(present(collection, card, deck_id)?)),
             None => Ok(None),
         }
     })
@@ -38,7 +38,7 @@ pub async fn answer_card(
     with_collection(app, move |collection| {
         collection.answer_card(card_id, rating, time_ms)?;
         match collection.next_card(deck_id)? {
-            Some(next) => Ok(Some(present(collection, next, deck_id))),
+            Some(next) => Ok(Some(present(collection, next, deck_id)?)),
             None => Ok(None),
         }
     })
@@ -58,7 +58,7 @@ fn rating_from(value: u8) -> IpcResult<Rating> {
     }
 }
 
-fn render_card_faces(card: &CardRender) -> Rendered {
+fn render_card_faces(card: &CardRender) -> IpcResult<Rendered> {
     render(&RenderRequest {
         template: Template {
             qfmt: &card.qfmt,
@@ -75,6 +75,10 @@ fn render_card_faces(card: &CardRender) -> Rendered {
         flag: card.flag,
         occlusion_mode: &card.occlusion_mode,
     })
+    .map_err(|e| IpcError {
+        kind: IpcErrorKind::Invalid,
+        message: e.to_string(),
+    })
 }
 
 /// Pure card-preview helper shared with tests cleanly outside Tauri `State`.
@@ -82,7 +86,7 @@ pub fn build_card_preview(collection: &Collection, card_id: i64) -> IpcResult<Ca
     let card = collection
         .study_card(card_id)?
         .ok_or_else(|| IpcError::from(CoreError::NotFound(format!("card {card_id}"))))?;
-    let rendered = render_card_faces(&card.render);
+    let rendered = render_card_faces(&card.render)?;
     Ok(CardPreviewDto {
         card_id,
         question: rendered.question,
@@ -102,8 +106,12 @@ pub async fn preview_card(app: AppHandle, card_id: i64) -> IpcResult<CardPreview
 /// `session_deck_id` is the deck the session was started on (may be a parent
 /// with subdecks); remaining counts are rolled up over its whole subtree, not
 /// just `card`'s own (possibly child) deck.
-fn present(collection: &Collection, card: StudyCard, session_deck_id: i64) -> StudyCardDto {
-    let rendered = render_card_faces(&card.render);
+fn present(
+    collection: &Collection,
+    card: StudyCard,
+    session_deck_id: i64,
+) -> IpcResult<StudyCardDto> {
+    let rendered = render_card_faces(&card.render)?;
 
     let config = collection
         .get_sched_config_for_card(card.id, card.deck_id)
@@ -127,7 +135,7 @@ fn present(collection: &Collection, card: StudyCard, session_deck_id: i64) -> St
     }
     .to_string();
 
-    StudyCardDto {
+    Ok(StudyCardDto {
         card_id: card.id,
         note_id: card.note_id,
         deck_id: card.deck_id,
@@ -143,7 +151,8 @@ fn present(collection: &Collection, card: StudyCard, session_deck_id: i64) -> St
         review_count,
         card_phase,
         algorithm,
-    }
+        flag: card.render.flag,
+    })
 }
 
 fn label(interval: Interval) -> String {
@@ -241,5 +250,21 @@ mod tests {
         assert!(dto.answer.contains("World"));
         assert!(dto.css.contains("color:navy"));
         assert!(build_card_preview(&col, card_id + 9999).is_err());
+    }
+
+    #[test]
+    fn a1_24_present_exposes_card_flag() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let clock = Arc::new(FixedClock(1_700_000_000_000));
+        let col = Collection::new(Box::new(storage), clock).unwrap();
+        let deck = col.create_deck("FlagDeck").unwrap();
+        let nt_id = col.list_notetypes().unwrap()[0].id;
+        col.add_note(nt_id, deck.id, &["Q".into(), "A".into()], &[])
+            .unwrap();
+        let card = col.next_card(deck.id).unwrap().unwrap();
+        col.set_card_flag(&[card.id], 3).unwrap();
+        let flagged = col.next_card(deck.id).unwrap().unwrap();
+        let dto = super::present(&col, flagged, deck.id).unwrap();
+        assert_eq!(dto.flag, 3);
     }
 }

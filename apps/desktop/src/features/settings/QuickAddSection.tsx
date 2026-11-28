@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import {
+  SettingsCard,
+  SettingsSectionHeader,
+  SettingsToggleRow,
+} from "@/components/ui/settings-kit";
 import { errorMessage, ipc } from "@/lib/ipc";
 import { platform } from "@/lib/platform";
 import { queryKeys } from "@/lib/queryKeys";
@@ -80,24 +85,20 @@ export function QuickAddSection() {
   }
 
   return (
-    <section className="mt-8 max-w-xl space-y-3">
-      <div>
-        <h2 className="text-sm font-medium">{t("settings.quickAdd.title")}</h2>
-        <p className="text-sm text-muted-foreground">{t("settings.quickAdd.description")}</p>
-      </div>
+    <SettingsCard>
+      <SettingsSectionHeader
+        title={t("settings.quickAdd.title")}
+        description={t("settings.quickAdd.description")}
+      />
 
-      <label className="flex items-center gap-2.5 text-sm">
-        <input
-          type="checkbox"
-          checked={enabled}
-          disabled={busy || cfgQuery.isLoading}
-          onChange={(e) => {
-            void commit(e.target.checked, shortcut);
-          }}
-          className="size-4 rounded border border-input accent-primary"
-        />
-        <span>{t("settings.quickAdd.enable")}</span>
-      </label>
+      <SettingsToggleRow
+        label={t("settings.quickAdd.enable")}
+        checked={enabled}
+        disabled={busy || cfgQuery.isLoading}
+        onToggle={(next) => {
+          void commit(next, shortcut);
+        }}
+      />
 
       <div className="flex flex-wrap items-end gap-2">
         <div className="space-y-1">
@@ -147,6 +148,6 @@ export function QuickAddSection() {
           {statusMsg}
         </p>
       )}
-    </section>
+    </SettingsCard>
   );
 }

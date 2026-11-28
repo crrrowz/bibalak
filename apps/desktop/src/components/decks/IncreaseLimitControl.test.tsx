@@ -38,4 +38,25 @@ describe("IncreaseLimitControl (STUDY1 / BW2-22)", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.statsAll });
     expect(onDone).toHaveBeenCalled();
   });
+
+  it("A1-27: clamps extra_new between 1 and 9999 before submitting", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const incSpy = vi.spyOn(ipc.ipc, "increaseTodayLimit").mockResolvedValue();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <IncreaseLimitControl deckId={1} onDone={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, "50000");
+    await user.click(screen.getByRole("button", { name: /Add/i }));
+
+    await waitFor(() => expect(incSpy).toHaveBeenCalledWith(1, 9999));
+  });
 });

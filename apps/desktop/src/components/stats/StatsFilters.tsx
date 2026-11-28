@@ -5,12 +5,12 @@ import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales/en";
 import type { StatsRange } from "./statsFilterUtils";
 
-const RANGE_LABELS: { value: StatsRange; label: string }[] = [
-  { value: "7d", label: "7d" },
-  { value: "1m", label: "1M" },
-  { value: "3m", label: "3M" },
-  { value: "1y", label: "1Y" },
-  { value: "all", label: "stats.range.all" },
+const RANGE_LABELS: { value: StatsRange; labelKey: LocaleKey }[] = [
+  { value: "7d", labelKey: "stats.range.7d" },
+  { value: "1m", labelKey: "stats.range.1m" },
+  { value: "3m", labelKey: "stats.range.3m" },
+  { value: "1y", labelKey: "stats.range.1y" },
+  { value: "all", labelKey: "stats.range.all" },
 ];
 
 function deckDepth(name: string): number {
@@ -55,7 +55,7 @@ export function StatsFilters({
       </Select>
 
       <div className="flex items-center gap-1 rounded-md border border-border bg-secondary/50 p-1">
-        {RANGE_LABELS.map(({ value, label }) => (
+        {RANGE_LABELS.map(({ value, labelKey }) => (
           <button
             key={value}
             type="button"
@@ -68,7 +68,7 @@ export function StatsFilters({
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {label.startsWith("stats.") ? t(label as LocaleKey) : label}
+            {t(labelKey)}
           </button>
         ))}
       </div>

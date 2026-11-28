@@ -119,6 +119,19 @@ pub trait GameStore: Send + Sync {
     ) -> CoreResult<crate::game_depth::ApplyAnswerOutcome>;
 
     #[allow(clippy::too_many_arguments)]
+    fn apply_answer_atomic(
+        &self,
+        card_id: i64,
+        note_id: i64,
+        next: &CardState,
+        due: i64,
+        log: &Revlog,
+        reward: Option<&crate::progress::RewardGrant>,
+        is_leech: bool,
+        ctx: &crate::game_depth::GameEvalContext,
+    ) -> CoreResult<crate::game_depth::ApplyAnswerFullOutcome>;
+
+    #[allow(clippy::too_many_arguments)]
     fn set_task_completion_with_game(
         &self,
         user_id: &str,

@@ -1,21 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useBlocker, useSearch } from "@tanstack/react-router";
-import {
-  AlertTriangle,
-  CheckCheck,
-  CheckCircle2,
-  Loader2,
-  RotateCcw,
-  Sparkles,
-  Undo2,
-} from "lucide-react";
+import { AlertTriangle, CheckCheck, CheckCircle2, RotateCcw, Sparkles, Undo2 } from "lucide-react";
 import type { AIPreviewPayload, QualityNoteInput, QualityScanNote } from "@bibalak/ipc-types";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { AINotConfiguredContent, AISendingBox } from "@/components/ai/AIBlocks";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { QualityConsentDialog } from "@/features/ai/quality/QualityConsentDialog";
 import { deckSearchToken } from "@/features/browse/browseHelpers";
 import { QualityFindingCard } from "@/features/ai/quality/QualityFindingCard";
@@ -411,11 +404,7 @@ export function QualityReviewScreen({
         actions={
           acceptedActionableCount > 0 && (
             <Button type="button" size="sm" disabled={applying} onClick={handleApplyAccepted}>
-              {applying ? (
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              ) : (
-                <CheckCheck className="size-3.5" aria-hidden />
-              )}
+              {applying ? <Spinner /> : <CheckCheck className="size-3.5" aria-hidden />}
               {applying
                 ? t("ai.quality.applying")
                 : tn("ai.quality.actionSummary", acceptedActionableCount)}
@@ -502,11 +491,7 @@ export function QualityReviewScreen({
                 disabled={busyScanning || applying}
                 onClick={handleStartScan}
               >
-                {busyScanning ? (
-                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                ) : (
-                  <Sparkles className="size-3.5" aria-hidden />
-                )}
+                {busyScanning ? <Spinner /> : <Sparkles className="size-3.5" aria-hidden />}
                 {phase === "loading" ? t("ai.quality.scanning") : t("ai.quality.scanButton")}
               </Button>
             </div>
@@ -719,11 +704,7 @@ export function QualityReviewScreen({
                     {tn("ai.quality.actionSummary", acceptedActionableCount)}
                   </span>
                   <Button type="button" size="sm" disabled={applying} onClick={handleApplyAccepted}>
-                    {applying ? (
-                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                    ) : (
-                      <CheckCheck className="size-3.5" aria-hidden />
-                    )}
+                    {applying ? <Spinner /> : <CheckCheck className="size-3.5" aria-hidden />}
                     {t("ai.quality.applyButton")}
                   </Button>
                 </div>

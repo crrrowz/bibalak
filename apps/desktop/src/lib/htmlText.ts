@@ -36,7 +36,16 @@ export function decodeEntities(text: string): string {
   });
 }
 
-/** Tags removed, entities decoded, outer whitespace trimmed. */
+const MEDIA_SRC =
+  /<(?:img|audio|video|source)\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/gi;
+
+/** Tags removed, entities decoded, outer whitespace trimmed (preserving media filename if text is empty). */
 export function htmlToText(html: string, tagReplacement = ""): string {
-  return decodeEntities(stripTags(html, tagReplacement)).trim();
+  const plain = decodeEntities(stripTags(html, tagReplacement)).trim();
+  if (plain) return plain;
+  const withMedia = html.replace(MEDIA_SRC, (_m, a?: string, b?: string, c?: string) => {
+    const name = a ?? b ?? c ?? "";
+    return name ? ` ${name} ` : "";
+  });
+  return decodeEntities(stripTags(withMedia, tagReplacement)).trim();
 }

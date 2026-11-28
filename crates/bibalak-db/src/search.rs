@@ -25,6 +25,19 @@ use bibalak_core::normalize_search_text;
 use rusqlite::{params, Connection};
 
 const FIELD_SEP: char = '\u{1f}';
+const MAX_NID_IDS: usize = 500;
+const MAX_OR_DEPTH: usize = 64;
+
+fn escape_like_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
 
 /// Compute the normalized `notes.fields_norm` text stored for SQL search.
 /// Includes `sort_field` (HTML-stripped first field) when it differs from the
@@ -122,7 +135,7 @@ fn tokenize(query: &str) -> Vec<String> {
 }
 
 /// Parse a single token (without leading `-`) into a condition SQL fragment.
-fn parse_token(token: &str, today: i32, now_ms: i64) -> Option<Cond> {
+fn parse_token(token: &str, today: i32, now_ms: i64) -> CoreResult<Option<Cond>> {
     // is:
     if let Some(rest) = token.strip_prefix("is:") {
         let sql = match rest {
@@ -134,17 +147,17 @@ fn parse_token(token: &str, today: i32, now_ms: i64) -> Option<Cond> {
             }
             "suspended" => "c.queue = -1".into(),
             "buried" => "c.queue IN (-2, -3)".into(),
-            _ => return None,
+            _ => return Ok(None),
         };
-        return Some(Cond::pos(sql, vec![]));
+        return Ok(Some(Cond::pos(sql, vec![])));
     }
 
     // flag:N
     if let Some(rest) = token.strip_prefix("flag:") {
         if let Ok(n) = rest.parse::<i64>() {
-            return Some(Cond::pos("c.flags = ?", vec![Param::Int(n)]));
+            return Ok(Some(Cond::pos("c.flags = ?", vec![Param::Int(n)])));
         }
-        return None;
+        return Ok(None);
     }
 
     // deck:name — Anki rule (SUB1 F4): the deck and all its subdecks, ASCII
@@ -153,12 +166,12 @@ fn parse_token(token: &str, today: i32, now_ms: i64) -> Option<Cond> {
     if let Some(rest) = token.strip_prefix("deck:") {
         let name = strip_outer_quotes(rest);
         if name.is_empty() {
-            return None;
+            return Ok(None);
         }
         let pattern = anki_text_to_like_pattern(name, false);
         let children = format!("{pattern}::%");
         let decks = "SELECT id FROM decks WHERE name LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\'";
-        return Some(Cond::pos(
+        return Ok(Some(Cond::pos(
             format!("(c.deck_id IN ({decks}) OR c.original_deck_id IN ({decks}))"),
             vec![
                 Param::Text(pattern.clone()),
@@ -166,71 +179,102 @@ fn parse_token(token: &str, today: i32, now_ms: i64) -> Option<Cond> {
                 Param::Text(pattern),
                 Param::Text(children),
             ],
-        ));
+        )));
     }
 
-    // tag:name (supports Anki hierarchical tags: `tag:lang` matches `lang` and `lang::*`)
+    // tag:name (supports Anki hierarchical tags: `tag:lang` matches `lang` and `lang::*`).
+    // Escapes `%`, `_`, `\` so literal characters never act as SQL LIKE wildcards.
     if let Some(rest) = token.strip_prefix("tag:") {
         let name = dequote(rest);
         if name.is_empty() {
-            return None;
+            return Ok(None);
         }
         if let Some(prefix) = name.strip_suffix("::*") {
-            let sub = format!("% {prefix}::%");
-            return Some(Cond::pos("n.tags LIKE ?", vec![Param::Text(sub)]));
+            if prefix.is_empty() {
+                return Ok(None);
+            }
+            let escaped = escape_like_literal(prefix);
+            let sub = format!("% {escaped}::%");
+            return Ok(Some(Cond::pos(
+                "n.tags LIKE ? ESCAPE '\\'",
+                vec![Param::Text(sub)],
+            )));
         }
         if let Some(prefix) = name.strip_suffix('*') {
-            let wild = format!("% {prefix}%");
-            return Some(Cond::pos("n.tags LIKE ?", vec![Param::Text(wild)]));
+            let escaped = escape_like_literal(prefix);
+            let wild = format!("% {escaped}%");
+            return Ok(Some(Cond::pos(
+                "n.tags LIKE ? ESCAPE '\\'",
+                vec![Param::Text(wild)],
+            )));
         }
-        let exact = format!("% {name} %");
-        let child = format!("% {name}::%");
-        return Some(Cond::pos(
-            "(n.tags LIKE ? OR n.tags LIKE ?)",
+        let escaped = escape_like_literal(&name);
+        let exact = format!("% {escaped} %");
+        let child = format!("% {escaped}::%");
+        return Ok(Some(Cond::pos(
+            "(n.tags LIKE ? ESCAPE '\\' OR n.tags LIKE ? ESCAPE '\\')",
             vec![Param::Text(exact), Param::Text(child)],
-        ));
+        )));
     }
 
     // note:name (notetype)
     if let Some(rest) = token.strip_prefix("note:") {
         let name = dequote(rest);
-        return Some(Cond::pos("nt.name = ?", vec![Param::Text(name)]));
+        return Ok(Some(Cond::pos("nt.name = ?", vec![Param::Text(name)])));
     }
 
-    // nid:123 or nid:123,456
+    // nid:123 or nid:123,456 (bounded to MAX_NID_IDS)
     if let Some(rest) = token.strip_prefix("nid:") {
         let ids: Vec<i64> = rest
             .split(',')
             .filter_map(|s| s.trim().parse::<i64>().ok())
             .collect();
+        if ids.len() > MAX_NID_IDS {
+            return Err(CoreError::Invalid(format!(
+                "nid: list exceeds maximum of {MAX_NID_IDS} ids"
+            )));
+        }
         if !ids.is_empty() {
             let placeholders = vec!["?"; ids.len()].join(", ");
             let params = ids.into_iter().map(Param::Int).collect();
-            return Some(Cond::pos(format!("n.id IN ({placeholders})"), params));
+            return Ok(Some(Cond::pos(format!("n.id IN ({placeholders})"), params)));
         }
-        return None;
+        return Ok(None);
     }
 
-    // added:N — cards created in the last N days
+    // added:N — cards created in the last N days.
+    // Natively created cards use AUTOINCREMENT `c.id` (< 1e12), whereas Anki
+    // packages may carry epoch-ms card IDs (>= 1e12). For AUTOINCREMENT rows,
+    // use `c."mod"` bounded by the earliest epoch-ms `revlog.id` (fallback for
+    // imported or later-edited cards) without changing the schema.
     if let Some(rest) = token.strip_prefix("added:") {
         if let Ok(days) = rest.parse::<i64>() {
-            // card.id encodes creation ms as the rowid assigned at insert time;
-            // approximate: id > (now_ms - days * 86400 * 1000)
-            let threshold = now_ms - days * 86_400_000;
-            return Some(Cond::pos("c.id > ?", vec![Param::Int(threshold)]));
+            if days < 0 {
+                return Ok(None);
+            }
+            if days == 0 {
+                return Ok(Some(Cond::pos("0 = 1", vec![])));
+            }
+            let threshold = now_ms.saturating_sub(days.saturating_mul(86_400_000));
+            return Ok(Some(Cond::pos(
+                "(CASE WHEN c.id >= 1000000000000 THEN c.id \
+                  ELSE MIN(c.\"mod\", COALESCE((SELECT MIN(r.id) FROM revlog r WHERE r.card_id = c.id AND r.id >= 1000000000000), c.\"mod\")) \
+                  END) >= ?",
+                vec![Param::Int(threshold)],
+            )));
         }
-        return None;
+        return Ok(None);
     }
 
     // prop:field OP value
     if let Some(rest) = token.strip_prefix("prop:") {
-        return parse_prop(rest);
+        return Ok(parse_prop(rest, today, now_ms));
     }
 
     // answered:<phase>:<ease>[:sinceDays] — distinct cards with a revlog row
     // of that grade/phase, mirroring the stats answer-buttons aggregate.
     if let Some(rest) = token.strip_prefix("answered:") {
-        return parse_answered(rest, now_ms);
+        return Ok(parse_answered(rest, now_ms));
     }
 
     // Quoted phrase or bare text → LIKE on normalized fields and raw fields,
@@ -242,29 +286,50 @@ fn parse_token(token: &str, today: i32, now_ms: i64) -> Option<Cond> {
         if !raw_pat.is_empty() && !norm_pat.is_empty() {
             let raw_like = format!("%{raw_pat}%");
             let norm_like = format!("%{norm_pat}%");
-            return Some(Cond::pos(
+            return Ok(Some(Cond::pos(
                 "(n.fields_norm LIKE ? ESCAPE '\\' OR n.fields LIKE ? ESCAPE '\\')",
                 vec![Param::Text(norm_like), Param::Text(raw_like)],
-            ));
+            )));
         }
     }
 
-    None
+    Ok(None)
 }
 
 /// Parse `prop:field OP value` where OP ∈ {>, <, =, >=, <=}.
-fn parse_prop(rest: &str) -> Option<Cond> {
+fn parse_prop(rest: &str, today: i32, now_ms: i64) -> Option<Cond> {
     // Determine field and OP: greedily match field name up to operator.
     let ops = [">=", "<=", ">", "<", "="];
     for &op in &ops {
         if let Some(pos) = rest.find(op) {
             let field = &rest[..pos];
             let val_str = &rest[pos + op.len()..];
+            if field == "due" {
+                if let Ok(days) = val_str.parse::<i64>() {
+                    let target_day = i64::from(today) + days;
+                    // Matches Anki `rslib/src/search/sqlwriter.rs` (`PropertyKind::Due`):
+                    // review/day-learn cards compare against `today + days` (using
+                    // `original_due` when temporarily in a filtered deck); intraday
+                    // learning cards (`queue = 1`) compare `(due - now_ms) / 86_400_000`.
+                    // New cards (`queue = 0`, where `due` is queue position) are excluded.
+                    let due_expr = "(CASE WHEN c.original_deck_id != 0 AND c.original_due != 0 THEN c.original_due ELSE c.due END)";
+                    return Some(Cond::pos(
+                        format!(
+                            "((c.queue IN (2, 3) AND {due_expr} {op} ?) OR (c.queue = 1 AND (({due_expr} - ?) / 86400000) {op} ?))"
+                        ),
+                        vec![
+                            Param::Int(target_day),
+                            Param::Int(now_ms),
+                            Param::Int(days),
+                        ],
+                    ));
+                }
+                return None;
+            }
             let col = match field {
                 "ivl" => "c.interval",
                 "lapses" => "c.lapses",
                 "reps" => "c.reps",
-                "due" => "c.due",
                 "ease" => "c.ease_factor",
                 "stability" => "c.fsrs_stability",
                 "difficulty" => "c.fsrs_difficulty",
@@ -390,15 +455,16 @@ fn anki_text_to_like_pattern(input: &str, normalize_literals: bool) -> String {
 
 /// Build the SQL WHERE clause and bind-param list from a query string.
 /// Returns `("1=1", [])` for an empty query (all cards).
-fn build_where(query: &str, today: i32, now_ms: i64) -> (String, Vec<Param>) {
+fn build_where(query: &str, today: i32, now_ms: i64) -> CoreResult<(String, Vec<Param>)> {
     if query.trim().is_empty() {
-        return ("1=1".into(), vec![]);
+        return Ok(("1=1".into(), vec![]));
     }
 
     let tokens = tokenize(query);
     let mut parts: Vec<String> = vec![];
     let mut params: Vec<Param> = vec![];
     let mut pending_or = false;
+    let mut or_depth: usize = 0;
     for tok in &tokens {
         // `or` token: flag next condition to be ORed with the previous.
         if tok.eq_ignore_ascii_case("or") {
@@ -412,7 +478,7 @@ fn build_where(query: &str, today: i32, now_ms: i64) -> (String, Vec<Param>) {
             (false, tok.as_str())
         };
 
-        let Some(mut cond) = parse_token(raw, today, now_ms) else {
+        let Some(mut cond) = parse_token(raw, today, now_ms)? else {
             pending_or = false;
             continue;
         };
@@ -429,10 +495,17 @@ fn build_where(query: &str, today: i32, now_ms: i64) -> (String, Vec<Param>) {
         };
 
         if pending_or && !parts.is_empty() {
+            or_depth += 1;
+            if or_depth > MAX_OR_DEPTH {
+                return Err(CoreError::Invalid(format!(
+                    "query exceeds maximum OR nesting depth of {MAX_OR_DEPTH}"
+                )));
+            }
             let prev = parts.pop().unwrap();
             parts.push(format!("({prev} OR {full})"));
             pending_or = false;
         } else {
+            or_depth = 0;
             parts.push(full);
             pending_or = false;
         }
@@ -440,9 +513,9 @@ fn build_where(query: &str, today: i32, now_ms: i64) -> (String, Vec<Param>) {
     }
 
     if parts.is_empty() {
-        return ("1=1".into(), vec![]);
+        return Ok(("1=1".into(), vec![]));
     }
-    (parts.join(" AND "), params)
+    Ok((parts.join(" AND "), params))
 }
 
 /// Replace each bare `?` in `sql` with numbered `?1`, `?2` starting at `start`.
@@ -470,6 +543,17 @@ JOIN decks d ON d.id = c.deck_id
 JOIN notetypes nt ON nt.id = n.notetype_id
 WHERE ";
 
+// Driving unfiltered sort_field queries from `notes` via CROSS JOIN lets SQLite
+// walk `idx_notes_sort_field` then `idx_cards_note(note_id)` without a temp B-tree.
+const BASE_SQL_NOTES_FIRST: &str = "
+SELECT c.id, c.note_id, COALESCE(n.sort_field, ''), d.name, nt.name, n.tags,
+       c.queue, c.type, c.due, c.interval, c.lapses, c.reps, c.ease_factor, c.flags
+FROM notes n
+CROSS JOIN cards c ON c.note_id = n.id
+JOIN decks d ON d.id = c.deck_id
+JOIN notetypes nt ON nt.id = n.notetype_id
+WHERE ";
+
 #[allow(clippy::too_many_arguments)]
 pub fn search_cards(
     conn: &Connection,
@@ -481,7 +565,7 @@ pub fn search_cards(
     sort_key: Option<&str>,
     sort_asc: bool,
 ) -> CoreResult<Vec<CardRow>> {
-    let (where_clause, mut params) = build_where(query, today, now_ms);
+    let (where_clause, mut params) = build_where(query, today, now_ms)?;
     let limit_idx = params.len() + 1;
     params.push(Param::Int(limit));
     let offset_idx = params.len() + 1;
@@ -489,7 +573,7 @@ pub fn search_cards(
 
     let dir = if sort_asc { "ASC" } else { "DESC" };
     let order_clause = match sort_key {
-        Some("sort_field") => format!("n.sort_field COLLATE NOCASE {dir}, c.id {dir}"),
+        Some("sort_field") => format!("n.sort_field COLLATE NOCASE {dir}, n.id {dir}, c.id {dir}"),
         Some("deck") => format!("d.name COLLATE NOCASE {dir}, c.id {dir}"),
         Some("notetype") => format!("nt.name COLLATE NOCASE {dir}, c.id {dir}"),
         Some("queue") => format!("c.queue {dir}, c.id {dir}"),
@@ -508,8 +592,13 @@ pub fn search_cards(
         _ => format!("c.id {dir}"),
     };
 
+    let base_sql = if sort_key == Some("sort_field") && where_clause == "1=1" {
+        BASE_SQL_NOTES_FIRST
+    } else {
+        BASE_SQL
+    };
     let sql = format!(
-        "{BASE_SQL}{where_clause} ORDER BY {order_clause} LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
+        "{base_sql}{where_clause} ORDER BY {order_clause} LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
     );
 
     let mut stmt = conn.prepare(&sql).map_err(err)?;
@@ -550,7 +639,7 @@ pub fn search_note_rows(
     sort_key: Option<&str>,
     sort_asc: bool,
 ) -> CoreResult<Vec<NoteRow>> {
-    let (where_clause, mut params) = build_where(query, today, now_ms);
+    let (where_clause, mut params) = build_where(query, today, now_ms)?;
     let limit_idx = params.len() + 1;
     params.push(Param::Int(limit));
     let offset_idx = params.len() + 1;
@@ -574,7 +663,11 @@ pub fn search_note_rows(
                 COALESCE(MIN(d.name), ''), \
                 COUNT(DISTINCT c.id), \
                 n.tags, \
-                n.\"mod\" \
+                n.\"mod\", \
+                COALESCE(MAX(CASE WHEN c.queue = -1 THEN 1 ELSE 0 END), 0), \
+                COALESCE(MAX(CASE WHEN c.id IS NOT NULL AND c.queue != -1 THEN 1 ELSE 0 END), 0), \
+                COALESCE(MAX(CASE WHEN c.queue IN (-2, -3) THEN 1 ELSE 0 END), 0), \
+                COALESCE(MAX(CASE WHEN c.id IS NOT NULL AND c.queue NOT IN (-2, -3) THEN 1 ELSE 0 END), 0) \
          FROM notes n \
          JOIN notetypes nt ON nt.id = n.notetype_id \
          LEFT JOIN cards c ON c.note_id = n.id \
@@ -607,6 +700,10 @@ pub fn search_note_rows(
                     .map(str::to_string)
                     .collect::<Vec<_>>(),
                 mod_ms: r.get(7)?,
+                has_suspended: r.get::<_, i64>(8)? != 0,
+                has_unsuspended: r.get::<_, i64>(9)? != 0,
+                has_buried: r.get::<_, i64>(10)? != 0,
+                has_unburied: r.get::<_, i64>(11)? != 0,
             })
         })
         .map_err(err)?;
@@ -615,7 +712,7 @@ pub fn search_note_rows(
 
 /// Total cards matching `query` (uses the same `build_where` filter as `search_cards`).
 pub fn count_cards(conn: &Connection, query: &str, today: i32, now_ms: i64) -> CoreResult<u32> {
-    let (where_clause, params) = build_where(query, today, now_ms);
+    let (where_clause, params) = build_where(query, today, now_ms)?;
     let sql = format!(
         "SELECT COUNT(*) \
          FROM cards c \
@@ -634,7 +731,7 @@ pub fn count_cards(conn: &Connection, query: &str, today: i32, now_ms: i64) -> C
 
 /// Total distinct notes matching `query` (uses the same `build_where` filter as `search_note_rows`).
 pub fn count_note_rows(conn: &Connection, query: &str, today: i32, now_ms: i64) -> CoreResult<u32> {
-    let (where_clause, params) = build_where(query, today, now_ms);
+    let (where_clause, params) = build_where(query, today, now_ms)?;
     let sql = format!(
         "SELECT COUNT(DISTINCT n.id) \
          FROM notes n \
@@ -651,7 +748,9 @@ pub fn count_note_rows(conn: &Connection, query: &str, today: i32, now_ms: i64) 
     Ok(u32::try_from(count.max(0)).unwrap_or(u32::MAX))
 }
 
-/// Extract distinct-note media ref counts across notes matching `query`.
+/// Extract distinct-note media ref counts across notes matching `query`,
+/// including template (`qfmt`/`afmt`) and CSS media referenced by the
+/// matching notes' note types.
 pub fn note_media_ref_counts_matching(
     conn: &Connection,
     query: &str,
@@ -661,9 +760,9 @@ pub fn note_media_ref_counts_matching(
     if query.trim().is_empty() {
         return crate::backup::note_media_ref_counts(conn);
     }
-    let (where_clause, params) = build_where(query, today, now_ms);
+    let (where_clause, params) = build_where(query, today, now_ms)?;
     let sql = format!(
-        "SELECT n.fields
+        "SELECT n.fields, n.notetype_id
          FROM notes n
          WHERE n.id IN (
              SELECT n.id
@@ -674,61 +773,85 @@ pub fn note_media_ref_counts_matching(
              WHERE {where_clause}
          )"
     );
-    let mut stmt = conn.prepare(&sql).map_err(err)?;
-    crate::backup::collect_media_ref_counts(&mut stmt, rusqlite::params_from_iter(params.iter()))
+    let mut counts: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    let mut notetype_ids: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+    {
+        let mut stmt = conn.prepare(&sql).map_err(err)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
+            .map_err(err)?;
+        for row in rows {
+            let (fields, nt_id) = row.map_err(err)?;
+            notetype_ids.insert(nt_id);
+            for name in bibalak_core::media_refs::extract_media_refs(&fields) {
+                *counts.entry(name).or_insert(0) += 1;
+            }
+        }
+    }
+    let nt_vec: Vec<i64> = notetype_ids.into_iter().collect();
+    crate::backup::add_template_and_css_refs(conn, Some(&nt_vec), &mut counts)?;
+    Ok(counts.into_iter().collect())
 }
 
 // ── Bulk helpers ───────────────────────────────────────────────────────────────
 
-/// Delete notes (and their cards + revlogs) by note id list, writing graves.
+/// Delete notes (and their cards + revlogs) by note id list, writing graves
+/// inside a single transaction so partial failures roll back cleanly.
 pub fn delete_notes(conn: &Connection, note_ids: &[i64], now_ms: i64) -> CoreResult<()> {
     if note_ids.is_empty() {
         return Ok(());
     }
+    let tx = conn.unchecked_transaction().map_err(err)?;
     let json = serde_json::to_string(note_ids).map_err(err)?;
     // Revlog rows for all cards of these notes.
-    conn.execute(
+    tx.execute(
         "DELETE FROM revlog WHERE card_id IN (SELECT id FROM cards WHERE note_id IN (SELECT value FROM json_each(?1)))",
         [&json],
     )
     .map_err(err)?;
     // Card graves (type 0 = card). Must be captured before cards are deleted.
-    conn.execute(
+    tx.execute(
         "INSERT OR IGNORE INTO graves (usn, oid, type) SELECT -1, id, 0 FROM cards WHERE note_id IN (SELECT value FROM json_each(?1))",
         [&json],
     )
     .map_err(err)?;
-    conn.execute(
+    tx.execute(
         "INSERT OR REPLACE INTO grave_times (oid, type, deleted_ms) SELECT id, 0, ?2 FROM cards WHERE note_id IN (SELECT value FROM json_each(?1))",
         params![json, now_ms],
     )
     .map_err(err)?;
     // Cards.
-    conn.execute(
+    tx.execute(
         "DELETE FROM cards WHERE note_id IN (SELECT value FROM json_each(?1))",
         [&json],
     )
     .map_err(err)?;
     // Graves (type 1 = note).
-    conn.execute(
+    tx.execute(
         "INSERT OR IGNORE INTO graves (usn, oid, type) SELECT -1, value, 1 FROM json_each(?1)",
         [&json],
     )
     .map_err(err)?;
-    conn.execute(
+    tx.execute(
         "INSERT OR REPLACE INTO grave_times (oid, type, deleted_ms) SELECT value, 1, ?2 FROM json_each(?1)",
         params![json, now_ms],
     )
     .map_err(err)?;
     // Notes.
-    conn.execute(
+    tx.execute(
         "DELETE FROM notes WHERE id IN (SELECT value FROM json_each(?1))",
         [&json],
     )
     .map_err(err)?;
     // Bump collection modified (without bumping schema_mod).
-    conn.execute("UPDATE collection SET modified = ?1 WHERE id = 1", [now_ms])
+    tx.execute("UPDATE collection SET modified = ?1 WHERE id = 1", [now_ms])
         .map_err(err)?;
+    // A3-03: deleting revlog rows can change derived earned-XP and studied-decks caches.
+    crate::game_depth::invalidate_all_earned_xp_caches_tx(&tx)?;
+    crate::game_depth::invalidate_studied_top_decks_tx(&tx)?;
+    tx.commit().map_err(err)?;
     Ok(())
 }
 
@@ -798,6 +921,31 @@ pub fn remove_note_tag(conn: &Connection, note_id: i64, tag: &str, now_ms: i64) 
     Ok(())
 }
 
+/// Bulk: add one or more tags to many notes in one transaction.
+pub fn bulk_add_note_tags_batch(
+    conn: &mut Connection,
+    note_ids: &[i64],
+    tags: &[String],
+    now_ms: i64,
+) -> CoreResult<()> {
+    if note_ids.is_empty() || tags.is_empty() {
+        return Ok(());
+    }
+    let mut clean_tags = Vec::with_capacity(tags.len());
+    for t in tags {
+        clean_tags.push(crate::tags::validate_tag(t)?.to_string());
+    }
+    let tx = conn.transaction().map_err(err)?;
+    for &id in note_ids {
+        for clean in &clean_tags {
+            cards::add_note_tag(&tx, id, clean, now_ms)?;
+        }
+    }
+    crate::tags::register_tags(&tx, clean_tags.iter().map(String::as_str))?;
+    tx.commit().map_err(err)?;
+    Ok(())
+}
+
 /// Bulk: add a tag to many notes in one transaction.
 pub fn bulk_add_note_tags(
     conn: &mut Connection,
@@ -805,12 +953,29 @@ pub fn bulk_add_note_tags(
     tag: &str,
     now_ms: i64,
 ) -> CoreResult<()> {
-    if note_ids.is_empty() {
+    let clean = crate::tags::validate_tag(tag)?.to_string();
+    bulk_add_note_tags_batch(conn, note_ids, &[clean], now_ms)
+}
+
+/// Bulk: remove one or more tags from many notes in one transaction.
+pub fn bulk_remove_note_tags_batch(
+    conn: &mut Connection,
+    note_ids: &[i64],
+    tags: &[String],
+    now_ms: i64,
+) -> CoreResult<()> {
+    if note_ids.is_empty() || tags.is_empty() {
         return Ok(());
+    }
+    let mut clean_tags = Vec::with_capacity(tags.len());
+    for t in tags {
+        clean_tags.push(crate::tags::validate_tag(t)?.to_string());
     }
     let tx = conn.transaction().map_err(err)?;
     for &id in note_ids {
-        cards::add_note_tag(&tx, id, tag, now_ms)?;
+        for clean in &clean_tags {
+            remove_note_tag(&tx, id, clean, now_ms)?;
+        }
     }
     tx.commit().map_err(err)?;
     Ok(())
@@ -823,19 +988,13 @@ pub fn bulk_remove_note_tags(
     tag: &str,
     now_ms: i64,
 ) -> CoreResult<()> {
-    if note_ids.is_empty() {
-        return Ok(());
-    }
-    let tx = conn.transaction().map_err(err)?;
-    for &id in note_ids {
-        remove_note_tag(&tx, id, tag, now_ms)?;
-    }
-    tx.commit().map_err(err)?;
-    Ok(())
+    let clean = crate::tags::validate_tag(tag)?.to_string();
+    bulk_remove_note_tags_batch(conn, note_ids, &[clean], now_ms)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{MAX_NID_IDS, MAX_OR_DEPTH};
     use crate::storage::SqliteStorage;
     use bibalak_core::ports::*;
 
@@ -1488,5 +1647,342 @@ mod tests {
         assert_eq!(s.count_note_rows("tag:bio", 0, 2_000).unwrap(), 1);
         assert_eq!(s.count_cards("tag:missing", 0, 2_000).unwrap(), 0);
         assert_eq!(s.count_note_rows("tag:missing", 0, 2_000).unwrap(), 0);
+    }
+
+    #[test]
+    fn a1_03_delete_notes_is_atomic_on_failure() {
+        let (s, card1, _) = setup();
+        let note1: i64 = s
+            .lock()
+            .query_row("SELECT note_id FROM cards WHERE id = ?1", [card1], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        s.lock()
+            .execute(
+                "INSERT INTO revlog (id, card_id, usn, ease, interval, last_interval, ease_factor, taken_ms, review_kind)
+                 VALUES (1700000001000, ?1, -1, 3, 1, 0, 2500, 1200, 0)",
+                [card1],
+            )
+            .unwrap();
+        s.lock()
+            .execute(
+                "CREATE TRIGGER fail_note_delete BEFORE DELETE ON notes
+                 BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+                [],
+            )
+            .unwrap();
+
+        let err = s.delete_notes(&[note1], 1_700_000_002_000);
+        assert!(err.is_err(), "trigger must abort delete_notes");
+
+        let conn = s.lock();
+        let rev_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM revlog WHERE card_id = ?1",
+                [card1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let card_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cards WHERE id = ?1", [card1], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let note_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM notes WHERE id = ?1", [note1], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let grave_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM graves", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rev_count, 1, "revlog must roll back on failure");
+        assert_eq!(card_count, 1, "card must roll back on failure");
+        assert_eq!(note_count, 1, "note must roll back on failure");
+        assert_eq!(grave_count, 0, "graves must roll back on failure");
+    }
+
+    #[test]
+    fn a1_14_added_filter_finds_natively_created_cards() {
+        let s = SqliteStorage::open_in_memory().unwrap();
+        let now_ms = 1_794_830_400_000_i64;
+        s.ensure_collection(now_ms).unwrap();
+        let nt = s.create_notetype("Basic", 0, now_ms).unwrap();
+        s.add_note_with_cards(
+            nt,
+            1,
+            &["native front".into(), "native back".into()],
+            &[],
+            now_ms,
+        )
+        .unwrap();
+
+        let rows = s
+            .search_cards("added:7", 0, now_ms + 1_000, 100, 0, None, true)
+            .unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "expected added:7 to match today's native card"
+        );
+    }
+
+    #[test]
+    fn a1_12_added_filter_excludes_old_native_and_old_revlog_cards() {
+        let s = SqliteStorage::open_in_memory().unwrap();
+        let now_ms = 1_794_830_400_000_i64;
+        let ten_days_ago = now_ms - 10 * 86_400_000;
+        s.ensure_collection(ten_days_ago).unwrap();
+        let nt = s.create_notetype("Basic", 0, ten_days_ago).unwrap();
+        s.add_note_with_cards(nt, 1, &["old".into(), "b".into()], &[], ten_days_ago)
+            .unwrap();
+        s.add_note_with_cards(nt, 1, &["recent".into(), "b".into()], &[], now_ms)
+            .unwrap();
+
+        // Native card created today with an older historical review timestamp is treated as old.
+        let (rebuilt_note_id, _) = s
+            .add_note_with_cards(nt, 1, &["imported_old".into(), "b".into()], &[], now_ms)
+            .unwrap();
+        let imported_card_id: i64 = s
+            .lock()
+            .query_row(
+                "SELECT id FROM cards WHERE note_id = ?1",
+                [rebuilt_note_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        s.lock()
+            .execute(
+                "INSERT INTO revlog (id, card_id, usn, ease, interval, last_interval, ease_factor, taken_ms, review_kind)
+                 VALUES (?1, ?2, -1, 3, 1, 0, 2500, 1000, 0)",
+                rusqlite::params![ten_days_ago, imported_card_id],
+            )
+            .unwrap();
+
+        let rows = s
+            .search_cards("added:7", 0, now_ms + 1_000, 100, 0, None, true)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].sort_field, "recent");
+    }
+
+    #[test]
+    fn a1_14_prop_due_is_relative_to_today_for_review_cards() {
+        let s = SqliteStorage::open_in_memory().unwrap();
+        let now_ms = 1_700_000_000_000_i64;
+        s.ensure_collection(now_ms).unwrap();
+        let nt = s.create_notetype("Basic", 0, now_ms).unwrap();
+
+        let (n_new, _) = s
+            .add_note_with_cards(nt, 1, &["new_pos_zero".into(), "b".into()], &[], now_ms)
+            .unwrap();
+        let (n_due_today, _) = s
+            .add_note_with_cards(nt, 1, &["due_today".into(), "b".into()], &[], now_ms)
+            .unwrap();
+        let (n_overdue, _) = s
+            .add_note_with_cards(nt, 1, &["overdue".into(), "b".into()], &[], now_ms)
+            .unwrap();
+        let (n_future, _) = s
+            .add_note_with_cards(nt, 1, &["future".into(), "b".into()], &[], now_ms)
+            .unwrap();
+        let (n_filtered, _) = s
+            .add_note_with_cards(nt, 1, &["filtered_due".into(), "b".into()], &[], now_ms)
+            .unwrap();
+
+        {
+            let conn = s.lock();
+            conn.execute("UPDATE cards SET due = 0 WHERE note_id = ?1", [n_new])
+                .unwrap();
+            conn.execute(
+                "UPDATE cards SET type = 2, queue = 2, due = 10 WHERE note_id = ?1",
+                [n_due_today],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE cards SET type = 2, queue = 2, due = 7 WHERE note_id = ?1",
+                [n_overdue],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE cards SET type = 2, queue = 2, due = 13 WHERE note_id = ?1",
+                [n_future],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE cards SET type = 2, queue = 2, due = 1, original_deck_id = 1, original_due = 10 WHERE note_id = ?1",
+                [n_filtered],
+            )
+            .unwrap();
+        }
+
+        let today = 10;
+        let due_zero = s
+            .search_cards("prop:due=0", today, now_ms, 100, 0, None, true)
+            .unwrap();
+        let zero_names: Vec<_> = due_zero.iter().map(|r| r.sort_field.as_str()).collect();
+        assert_eq!(zero_names, vec!["due_today", "filtered_due"]);
+
+        let overdue = s
+            .search_cards("prop:due<0", today, now_ms, 100, 0, None, true)
+            .unwrap();
+        assert_eq!(overdue.len(), 1);
+        assert_eq!(overdue[0].sort_field, "overdue");
+
+        let exact_overdue = s
+            .search_cards("prop:due=-3", today, now_ms, 100, 0, None, true)
+            .unwrap();
+        assert_eq!(exact_overdue.len(), 1);
+        assert_eq!(exact_overdue[0].sort_field, "overdue");
+
+        let future = s
+            .search_cards("prop:due=3", today, now_ms, 100, 0, None, true)
+            .unwrap();
+        assert_eq!(future.len(), 1);
+        assert_eq!(future[0].sort_field, "future");
+    }
+
+    #[test]
+    fn a4_12_search_tag_like_escapes_wildcards_and_matches_literals() {
+        let s = SqliteStorage::open_in_memory().unwrap();
+        let nt = s.create_notetype("Basic", 0, 1_000).unwrap();
+        s.add_note_with_cards(nt, 1, &["alpha".into(), "a".into()], &["bio".into()], 1_000)
+            .unwrap();
+        s.add_note_with_cards(nt, 1, &["beta".into(), "b".into()], &["chem".into()], 1_000)
+            .unwrap();
+        s.add_note_with_cards(
+            nt,
+            1,
+            &["gamma".into(), "c".into()],
+            &["100%".into(), "my_tag".into()],
+            1_000,
+        )
+        .unwrap();
+
+        // Inverted AUDIT4 probe: % and _ in tag: must not act as SQL LIKE wildcards.
+        let pct = s
+            .search_cards("tag:%", 0, 2_000, 100, 0, None, true)
+            .unwrap();
+        assert_eq!(pct.len(), 0, "tag:% must not treat % as a SQL wildcard");
+
+        let wild = s
+            .search_cards("tag:b_o", 0, 2_000, 100, 0, None, true)
+            .unwrap();
+        assert_eq!(wild.len(), 0, "tag:b_o must not treat _ as a SQL wildcard");
+
+        // Literal % and _ in tag names still match exact tags.
+        let lit_pct = s
+            .search_cards("tag:100%", 0, 2_000, 100, 0, None, true)
+            .unwrap();
+        assert_eq!(lit_pct.len(), 1);
+        assert_eq!(lit_pct[0].sort_field, "gamma");
+
+        let lit_under = s
+            .search_cards("tag:my_tag", 0, 2_000, 100, 0, None, true)
+            .unwrap();
+        assert_eq!(lit_under.len(), 1);
+        assert_eq!(lit_under[0].sort_field, "gamma");
+    }
+
+    #[test]
+    fn a4_12_nid_list_and_or_depth_are_capped() {
+        let s = SqliteStorage::open_in_memory().unwrap();
+
+        let ok_nids = (1..=MAX_NID_IDS)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(s
+            .search_cards(&format!("nid:{ok_nids}"), 0, 2_000, 10, 0, None, true)
+            .is_ok());
+
+        let too_many_nids = (1..=MAX_NID_IDS + 1)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(matches!(
+            s.search_cards(&format!("nid:{too_many_nids}"), 0, 2_000, 10, 0, None, true),
+            Err(bibalak_core::error::CoreError::Invalid(_))
+        ));
+
+        let ok_or = vec!["is:new"; MAX_OR_DEPTH + 1].join(" or ");
+        assert!(s.search_cards(&ok_or, 0, 2_000, 10, 0, None, true).is_ok());
+
+        let deep_or = vec!["is:new"; MAX_OR_DEPTH + 2].join(" or ");
+        assert!(matches!(
+            s.search_cards(&deep_or, 0, 2_000, 10, 0, None, true),
+            Err(bibalak_core::error::CoreError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn a2_20_note_media_ref_counts_matching_includes_templates_and_css() {
+        let s = SqliteStorage::open_in_memory().unwrap();
+        let now_ms = 1_700_000_000_000;
+        let spanish = s.create_deck("Spanish", now_ms).unwrap();
+        let french = s.create_deck("French", now_ms).unwrap();
+
+        let nt_es = s.create_notetype("SpanishStyled", 0, now_ms).unwrap();
+        s.save_notetype_css(nt_es, r#".card { background: url("es_bg.png"); }"#, now_ms)
+            .unwrap();
+        s.save_template(
+            nt_es,
+            0,
+            "Card 1",
+            r#"<img src="es_icon.png">{{Front}}"#,
+            "{{Back}}",
+            now_ms,
+        )
+        .unwrap();
+        s.add_note_with_cards(
+            nt_es,
+            spanish.id,
+            &["hola".into(), "hi".into()],
+            &[],
+            now_ms,
+        )
+        .unwrap();
+
+        let nt_fr = s.create_notetype("FrenchStyled", 0, now_ms).unwrap();
+        s.save_notetype_css(nt_fr, r#".card { background: url("fr_bg.png"); }"#, now_ms)
+            .unwrap();
+        s.save_template(nt_fr, 0, "Card 1", "{{Front}}", "{{Back}}", now_ms)
+            .unwrap();
+        s.add_note_with_cards(
+            nt_fr,
+            french.id,
+            &["bonjour".into(), "hi".into()],
+            &[],
+            now_ms,
+        )
+        .unwrap();
+
+        let es_counts: std::collections::BTreeMap<String, u32> = s
+            .note_media_ref_counts_matching(r#"deck:"Spanish""#, 0, now_ms)
+            .unwrap()
+            .into_iter()
+            .collect();
+        assert_eq!(es_counts.get("es_bg.png"), Some(&1));
+        assert_eq!(es_counts.get("es_icon.png"), Some(&1));
+        assert_eq!(es_counts.get("fr_bg.png"), None);
+    }
+
+    #[test]
+    fn bulk_add_note_tags_batch_validates_tags_and_applies_atomically() {
+        let (s, _deck_id, nt_id) = setup();
+        let (nid, _) = s
+            .add_note_with_cards(nt_id, 1, &["Q".into(), "A".into()], &[], 1_000)
+            .unwrap();
+
+        assert!(s.bulk_add_tag(&[nid], "bad\ttag", 2_000).is_err());
+        assert!(s.bulk_add_tag(&[nid], "bad\ntag", 2_000).is_err());
+        assert!(s
+            .bulk_add_tags(&[nid], &["ok".into(), "bad tag".into()], 2_000)
+            .is_err());
+
+        s.bulk_add_tags(&[nid], &["tagA".into(), "tagB".into()], 3_000)
+            .unwrap();
+        let detail = s.note_detail(nid).unwrap().unwrap();
+        assert_eq!(detail.tags, vec!["tagA", "tagB"]);
     }
 }

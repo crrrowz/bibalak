@@ -316,6 +316,7 @@ fn test_cosmetic_notetype_edits_do_not_bump_schema_mod() {
                 font: "Arial".into(),
                 size: 14,
                 description: "".into(),
+                kind: None,
             },
             now_ms,
         )
@@ -2132,6 +2133,7 @@ fn test_sim_12_progress_ledger_round_trip_and_idempotent_reapply_and_acknowledge
             bibalak_core::progress::NIL_USER_ID,
             now_base,
             now_base + 86_400_000,
+            0,
         )
         .unwrap();
     let totals_b = dev_b
@@ -2139,6 +2141,7 @@ fn test_sim_12_progress_ledger_round_trip_and_idempotent_reapply_and_acknowledge
             bibalak_core::progress::NIL_USER_ID,
             now_base,
             now_base + 86_400_000,
+            0,
         )
         .unwrap();
     assert_eq!(totals_a, totals_b);
@@ -2567,7 +2570,7 @@ fn sync_two_devices_completing_same_task_or_habit_merges_to_single_reward_and_ti
         .apply_sync_delta(&delta_a, 10, now_base + 2_000)
         .unwrap();
     let totals_b = dev_b
-        .progress_totals(NIL_USER_ID, now_base, now_base + 86_400_000)
+        .progress_totals(NIL_USER_ID, now_base, now_base + 86_400_000, 0)
         .unwrap();
     assert_eq!(
         totals_b.total_xp, 10,
@@ -2583,7 +2586,7 @@ fn sync_two_devices_completing_same_task_or_habit_merges_to_single_reward_and_ti
     let delta_revoke = dev_a.export_delta().unwrap();
     dev_b.apply_sync_delta(&delta_revoke, 11, tie_ts).unwrap();
     let totals_after_tie = dev_b
-        .progress_totals(NIL_USER_ID, now_base, now_base + 86_400_000)
+        .progress_totals(NIL_USER_ID, now_base, now_base + 86_400_000, 0)
         .unwrap();
     assert_eq!(totals_after_tie.total_xp, 0);
 }

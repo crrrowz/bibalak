@@ -3,7 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { errorMessage, ipc } from "@/lib/ipc";
-import { queryKeys } from "@/lib/queryKeys";
+import { invalidateTodayCounts } from "@/lib/queryRefresh";
+import { pushUndoToast } from "@/lib/undoToast";
 import { dur, ease } from "@/lib/motion";
 import { t } from "@/lib/i18n";
 
@@ -14,11 +15,13 @@ export function CreateDeckForm({ onClose }: { onClose: () => void }) {
 
   const createMut = useMutation({
     mutationFn: (deckName: string) => ipc.createDeck(deckName),
-    onSuccess: () => {
+    onSuccess: (_data, deckName) => {
       setName("");
       onClose();
-      void queryClient.invalidateQueries({ queryKey: queryKeys.decks });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.undoStatus });
+      void invalidateTodayCounts(queryClient);
+      pushUndoToast(t("undo.action.createDeck", { name: deckName }), () =>
+        ipc.undo().then(() => invalidateTodayCounts(queryClient)),
+      );
     },
   });
 

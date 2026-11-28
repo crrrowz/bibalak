@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, setLocale, t, tn } from "./i18n";
 import { en } from "@/locales/en";
@@ -95,6 +97,12 @@ describe("plurals", () => {
     expect(ar["media.usageCount_zero"]).toBe("لا ملاحظات");
     expect(ar["stats.coach.viewInBrowse"]).toBe("عرض في التصفّح");
     expect(ar["browse.findDuplicates.openInBrowse"]).toBe("فتح في التصفّح");
+    expect(ar["browse.findDuplicates.defaultTag"]).not.toBe("duplicate");
+    expect(ar["matrix.roman.q1"]).not.toBe("I");
+    expect(ar["matrix.roman.q2"]).not.toBe("II");
+    expect(ar["matrix.roman.q3"]).not.toBe("III");
+    expect(ar["matrix.roman.q4"]).not.toBe("IV");
+    expect(ar["textImport.format.markdown"]).not.toBe("Markdown");
   });
 });
 
@@ -138,5 +146,29 @@ describe("initialLocale auto-detection (UX2 A1)", () => {
     const mod = await import("./i18n");
     expect(mod.getLocale()).toBe("en");
     expect(document.documentElement.dir).toBe("ltr");
+  });
+
+  it("A5-15: splits en/ar locales and non-default font subsets out of the static entry bundle", () => {
+    const srcRoot = path.resolve(__dirname, "..");
+    const i18nSrc = fs.readFileSync(path.join(srcRoot, "lib/i18n.ts"), "utf8");
+    const mainSrc = fs.readFileSync(path.join(srcRoot, "main.tsx"), "utf8");
+    const itemTitleSrc = fs.readFileSync(path.join(srcRoot, "features/game/itemTitle.ts"), "utf8");
+    const styleKeySrc = fs.readFileSync(path.join(srcRoot, "lib/styles/styleKey.ts"), "utf8");
+
+    expect(i18nSrc).not.toMatch(
+      /^\s*import\s*\{[^}]*\bar\b[^}]*\}\s*from\s*["']@\/locales\/ar["']/m,
+    );
+    expect(i18nSrc).not.toMatch(
+      /^\s*import\s*\{[^}]*\ben\b[^}]*\}\s*from\s*["']@\/locales\/en["']/m,
+    );
+    expect(itemTitleSrc).not.toMatch(
+      /^\s*import\s*\{[^}]*\ben\b[^}]*\}\s*from\s*["']@\/locales\/en["']/m,
+    );
+    expect(styleKeySrc).not.toMatch(
+      /^\s*import\s*\{[^}]*\ben\b[^}]*\}\s*from\s*["']@\/locales\/en["']/m,
+    );
+    expect(mainSrc).not.toContain("@fontsource-variable/literata");
+    expect(mainSrc).not.toContain("@fontsource-variable/handjet");
+    expect(mainSrc).not.toContain("katex/dist/katex.min.css");
   });
 });

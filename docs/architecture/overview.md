@@ -66,7 +66,7 @@ exposes use cases structured by domain module under `crates/bibalak-core/src/col
 `media`, `stats`, `productivity`, `sync`) behind a unified public API, with
 pure domain logic in `progress.rs`, `productivity.rs`, and `ai/`, and in-memory
 test fakes in `fake_storage` and `testkit`. (Note: the Tauri shell still holds
-some answer-card orchestration in `commands/study.rs`, which `ARCH2` moves into `Collection`.)
+some answer-card orchestration in `commands/study.rs`, planned to move into `Collection`.)
 
 **Hard rule:** `bibalak-core`, `bibalak-scheduler`, `bibalak-render` have no
 dependency on Tauri, rusqlite or any UI. That is what makes mobile/CLI/web server
@@ -186,8 +186,7 @@ tests reject hard-coded UI text and physical left/right classes.
 Rust core is the single source of truth; the frontend caches.
 
 - **TanStack Query** = all server state (queues, cards, decks, stats, search,
-  progress, matrix, habits, calendar). Keys are centered in `lib/queryKeys.ts`
-  (some inline keys remain and are being consolidated under `ARCH7`);
+  progress, matrix, habits, calendar). Keys are centered in `lib/queryKeys.ts`;
   mutations rely on event-driven invalidation (`DomainEvent`).
 - **Zustand** = ephemeral client state and local preferences (`ui`, `theme`,
   `style`, `sound`, `toast`, `aiSession`).
@@ -230,9 +229,8 @@ Rust: one `thiserror` enum per crate composing into `CoreError`; the IPC
 boundary maps it to a typed serialisable error union. No `unwrap()` in library
 code. Frontend: typed `Result` from the IPC client, per-route ErrorBoundary, and
 toasts for recoverable errors. Today there is a daily background zip backup on
-startup (if the newest backup is over 24 h old), with no pre-operation backup
-and no fatal recovery dialog yet (`ARCH1` adds the pre-migration safety copy
-and newer-schema screen). Observability via `tracing` → rolling log.
+startup (if the newest backup is over 24 h old), with pre-migration safety copy
+and newer-schema recovery screen. Observability via `tracing` → rolling log.
 
 ## 12. Testing strategy
 

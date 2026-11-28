@@ -9,6 +9,11 @@ interface StylingTabProps {
   tauri: boolean;
   night: boolean;
   isSaving: boolean;
+  noteIndex?: number;
+  noteCount?: number;
+  onPrevNote?: () => void;
+  onNextNote?: () => void;
+  isImported?: boolean;
   onChangeCss: (css: string) => void;
   onSaveCss: () => void;
 }
@@ -21,6 +26,11 @@ export function StylingTab({
   tauri,
   night,
   isSaving,
+  noteIndex = 0,
+  noteCount = 0,
+  onPrevNote,
+  onNextNote,
+  isImported = false,
   onChangeCss,
   onSaveCss,
 }: StylingTabProps) {
@@ -54,6 +64,11 @@ export function StylingTab({
         css={cssDraft}
         tauri={tauri}
         night={night}
+        noteIndex={noteIndex}
+        noteCount={noteCount}
+        onPrevNote={onPrevNote}
+        onNextNote={onNextNote}
+        isImported={isImported}
       />
     </div>
   );

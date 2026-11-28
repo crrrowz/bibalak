@@ -112,7 +112,7 @@ const stats: StatsDto = {
     card_count: 7_975,
     stability_buckets: [420, 860, 1300, 1700, 1500, 1100, 700, 395],
     difficulty_buckets: [300, 900, 1600, 2100, 1700, 900, 475],
-    avg_retrievability: 0.91,
+    avg_retrievability: 91.0,
   },
   deck_stats: decks
     .filter((d) => !d.is_filtered)
@@ -153,7 +153,9 @@ const card: StudyCardDto = {
     '<div style="margin-top:1rem;font-size:.85rem">Dose rule: \\(t_{1/2} = \\frac{0.693}{k}\\)</div>' +
     (new URLSearchParams(location.search).has("probe") ? SANDBOX_PROBE : ""),
   answer:
-    "<div>Which drug class is first-line for <b>stable angina</b> symptom relief?</div><hr id=answer><div><b>Beta-blockers</b> (plus sublingual nitroglycerin as needed).</div>",
+    "<div>Which drug class is first-line for <b>stable angina</b> symptom relief?</div>" +
+    '<div style="margin-top:0.5rem;font-size:.85rem">Dose rule: \\(t_{1/2} = \\frac{0.693}{k}\\)</div>' +
+    "<hr id=answer><div><b>Beta-blockers</b> (plus sublingual nitroglycerin as needed).</div>",
   again: "1m",
   hard: "6m",
   good: "10m",
@@ -164,6 +166,7 @@ const card: StudyCardDto = {
   card_phase: "review",
   algorithm: "fsrs",
   css: "",
+  flag: 0,
 };
 
 let previewQuickAdd = {
@@ -274,7 +277,20 @@ const responses: Record<string, unknown> = {
         Math.round((days.reduce((s, d) => s + d.proposed_minutes, 0) / horizon) * 10) / 10,
     };
   },
-  get_next_card: card,
+  get_next_card: (args?: { deckId?: number }) => {
+    const targetDeckId = args?.deckId;
+    if (targetDeckId === undefined || targetDeckId === null) return card;
+    const deck = decks.find((d) => d.id === targetDeckId);
+    if (!deck) return null;
+    if (deck.new_count + deck.learning_count + deck.review_count === 0) return null;
+    return {
+      ...card,
+      deck_id: deck.id,
+      new_count: deck.new_count,
+      learning_count: deck.learning_count,
+      review_count: deck.review_count,
+    };
+  },
   answer_card: () => {
     pluginHost.broadcastEvent({ type: "card-answered" });
     return card;
@@ -297,11 +313,22 @@ const responses: Record<string, unknown> = {
       card_count: 1,
       tags: c.tags,
       mod_ms: Date.now() - 86_400_000,
+      has_suspended: c.queue === -1,
+      has_unsuspended: c.queue !== -1,
+      has_buried: c.queue === -2 || c.queue === -3,
+      has_unburied: c.queue !== -2 && c.queue !== -3,
     })),
   count_note_rows: () => mockCards.length,
-  preview_find_replace: () => ({ notes_matched: 0, occurrences: 0 }),
+  preview_find_replace: () => ({
+    notes_matched: 0,
+    occurrences: 0,
+    sample_before: null,
+    sample_after: null,
+  }),
   find_replace_notes: () => 0,
   find_duplicates: () => [],
+  find_empty_cards: () => [],
+  delete_empty_cards: () => 0,
   change_note_type: () => 0,
   preview_text_import: () => ({
     detected_format: "csv",
@@ -363,6 +390,7 @@ const responses: Record<string, unknown> = {
     typeof location !== "undefined" &&
     new URLSearchParams(location.search).get("legacy") === "pending",
   plan_reminders: () => ({ items: [], next_rollover_ms: Date.now() + DAY }),
+  check_integrity: () => ({ errors: [], repaired_orphan_subdecks: 0 }),
   ...notetypeMocks,
   ...noteMocks,
   ...mediaMocks,
@@ -375,6 +403,57 @@ const responses: Record<string, unknown> = {
   ...pluginMocks,
   ...exportMocks,
 };
+
+function filterMockCards(query: string) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...mockCards];
+  return mockCards.filter((c) => {
+    if (q.startsWith("tag:")) {
+      const tagNeedle = q.slice(4);
+      return c.tags.some((t) => t === tagNeedle || t.startsWith(`${tagNeedle}::`));
+    }
+    return (
+      c.sort_field.toLowerCase().includes(q) ||
+      c.deck.toLowerCase().includes(q) ||
+      c.tags.some((t) => t.toLowerCase().includes(q))
+    );
+  });
+}
+
+function buildUniqueNoteRows(filtered: typeof mockCards) {
+  const byNote = new Map<
+    number,
+    {
+      note_id: number;
+      card_ids: number[];
+      sort_field: string;
+      notetype: string;
+      deck: string;
+      card_count: number;
+      tags: string[];
+      mod_ms: number;
+    }
+  >();
+  for (const c of filtered) {
+    const existing = byNote.get(c.note_id);
+    if (existing) {
+      existing.card_ids.push(c.card_id);
+      existing.card_count = existing.card_ids.length;
+    } else {
+      byNote.set(c.note_id, {
+        note_id: c.note_id,
+        card_ids: [c.card_id],
+        sort_field: c.sort_field,
+        notetype: c.notetype,
+        deck: c.deck,
+        card_count: 1,
+        tags: c.tags,
+        mod_ms: Date.now() - 86_400_000,
+      });
+    }
+  }
+  return Array.from(byNote.values());
+}
 
 export function installPreviewMocks() {
   (globalThis as Record<string, unknown>).__BIBALAK_PREVIEW__ = true;
@@ -395,20 +474,7 @@ export function installPreviewMocks() {
           sortKey?: string;
           sortAsc?: boolean;
         };
-        const q = query.trim().toLowerCase();
-        const filtered = q
-          ? mockCards.filter((c) => {
-              if (q.startsWith("tag:")) {
-                const tagNeedle = q.slice(4);
-                return c.tags.some((t) => t === tagNeedle || t.startsWith(`${tagNeedle}::`));
-              }
-              return (
-                c.sort_field.toLowerCase().includes(q) ||
-                c.deck.toLowerCase().includes(q) ||
-                c.tags.some((t) => t.toLowerCase().includes(q))
-              );
-            })
-          : [...mockCards];
+        const filtered = filterMockCards(query);
         if (sortKey) {
           filtered.sort((a, b) => {
             let va = a[sortKey as keyof typeof a];
@@ -419,36 +485,18 @@ export function installPreviewMocks() {
             return asc ? (va < vb ? -1 : va > vb ? 1 : 0) : va > vb ? -1 : va < vb ? 1 : 0;
           });
         }
-        const slice = filtered.slice(offset, offset + (limit ?? 500));
         if (cmd === "search_note_rows") {
-          return slice.map((c) => ({
-            note_id: c.note_id,
-            card_ids: [c.card_id],
-            sort_field: c.sort_field,
-            notetype: c.notetype,
-            deck: c.deck,
-            card_count: 1,
-            tags: c.tags,
-            mod_ms: Date.now() - 86_400_000,
-          }));
+          return buildUniqueNoteRows(filtered).slice(offset, offset + (limit ?? 500));
         }
-        return slice;
+        return filtered.slice(offset, offset + (limit ?? 500));
       }
-      if (cmd === "count_cards" || cmd === "count_note_rows") {
+      if (cmd === "count_cards") {
         const { query = "" } = (args ?? {}) as { query?: string };
-        const q = query.trim().toLowerCase();
-        if (!q) return mockCards.length;
-        return mockCards.filter((c) => {
-          if (q.startsWith("tag:")) {
-            const tagNeedle = q.slice(4);
-            return c.tags.some((t) => t === tagNeedle || t.startsWith(`${tagNeedle}::`));
-          }
-          return (
-            c.sort_field.toLowerCase().includes(q) ||
-            c.deck.toLowerCase().includes(q) ||
-            c.tags.some((t) => t.toLowerCase().includes(q))
-          );
-        }).length;
+        return filterMockCards(query).length;
+      }
+      if (cmd === "count_note_rows") {
+        const { query = "" } = (args ?? {}) as { query?: string };
+        return buildUniqueNoteRows(filterMockCards(query)).length;
       }
       const handler = responses[cmd];
       if (typeof handler === "function") return (handler as (a: unknown) => unknown)(args);
@@ -459,6 +507,62 @@ export function installPreviewMocks() {
         return {
           note_ids: notes.map((_, i) => 1000 + i),
           cards_added: notes.length,
+        };
+      }
+      if (cmd === "reset_deck_progress") {
+        const { deckId } = (args ?? {}) as { deckId?: number };
+        const deck = decks.find((d) => d.id === deckId);
+        if (deck) {
+          const total = deck.new_count + deck.learning_count + deck.review_count;
+          deck.new_count = total;
+          deck.learning_count = 0;
+          deck.review_count = 0;
+          return total;
+        }
+        return 0;
+      }
+      if (cmd === "due_forecast") {
+        return {
+          today_date: stats.today_date,
+          forecast: stats.forecast,
+        };
+      }
+      if (cmd === "list_deck_algorithms") {
+        return decks.map((d) => ({
+          deck_id: d.id,
+          algorithm:
+            previewDeckConfigs.get(d.id)?.algorithm ??
+            (previewSearch?.get("algo") === "sm2"
+              ? "sm2"
+              : d.id === 1
+                ? "sm2"
+                : DECK_CONFIG_DEFAULTS.algorithm),
+        }));
+      }
+      if (cmd === "undo_history") {
+        const { page = 0 } = (args ?? {}) as { page?: number };
+        const entries = [
+          {
+            action: { kind: "reset-deck-progress", name: "Cardiology", count: 14 },
+            created_at_ms: Date.now() - 120_000,
+            can_undo: true,
+          },
+          {
+            action: { kind: "answer-card" },
+            created_at_ms: Date.now() - 300_000,
+            can_undo: false,
+          },
+          {
+            action: { kind: "create-deck", name: "Pharmacology" },
+            created_at_ms: Date.now() - 900_000,
+            can_undo: false,
+          },
+        ];
+        return {
+          items: page === 0 ? entries : [],
+          total: entries.length,
+          page,
+          page_size: 20,
         };
       }
       if (cmd.startsWith("list_") || cmd.startsWith("search_")) return [];

@@ -462,8 +462,53 @@ fn repro_b_multi_level_ancestor_and_extra_new_cap() {
     assert_eq!(c.count_due_by_type(1).unwrap(), (25, 0, 0));
     // Studying Mid caps at 10 even with extra_new on LeafA.
     assert_eq!(c.count_due_by_type(2).unwrap(), (10, 0, 0));
-    // Studying LeafA directly sees 15 available (within its 20 + 5 limit).
-    assert_eq!(c.count_due_by_type(3).unwrap(), (15, 0, 0));
+    // Studying LeafA directly is also bounded by ancestor Mid's cap of 10 (Anki v3, A1-06).
+    assert_eq!(c.count_due_by_type(3).unwrap(), (10, 0, 0));
+}
+
+#[test]
+fn studying_sibling_child_respects_parent_remaining_after_other_child_studied() {
+    let storage = FakeStorage::default();
+    storage.decks.lock().unwrap().extend([
+        deck_with_own_config(1, "Lang", None, false),
+        deck_with_own_config(2, "Lang::Vocab", Some(1), false),
+        deck_with_own_config(3, "Lang::Grammar", Some(1), false),
+    ]);
+    {
+        let mut limits = storage.deck_limits_map.lock().unwrap();
+        limits.insert(1, (20, 50));
+        limits.insert(2, (20, 50));
+        limits.insert(3, (20, 50));
+    }
+    {
+        let mut studied = storage.today_studied_map.lock().unwrap();
+        // Vocab already studied 15 new and 35 reviews today.
+        studied.insert(2, (15, 35));
+    }
+    {
+        let mut counts = storage.due_counts.lock().unwrap();
+        counts.insert(3, (25, 0, 25));
+    }
+    {
+        let mut queues = storage.queues.lock().unwrap();
+        queues.insert(
+            3,
+            crate::ports::StudyQueue {
+                new: (300..325).collect(),
+                review: (3000..3025).collect(),
+                ..Default::default()
+            },
+        );
+    }
+
+    let c = Collection::new(Box::new(storage), Arc::new(FixedClock(1_000))).unwrap();
+    // Parent Lang has 20 - 15 = 5 new and 50 - 35 = 15 review remaining.
+    assert_eq!(c.count_due_by_type(3).unwrap(), (5, 0, 15));
+    // When Grammar already studied 0 but parent is at 0 remaining, next_card_id returns None.
+    c.storage
+        .study_queue(3, 0, 1_000, 86_400_000, 5, 15)
+        .unwrap();
+    assert!(c.next_card_id(3).unwrap().is_some());
 }
 
 #[test]
@@ -971,4 +1016,227 @@ fn answer_card_not_found_returns_error() {
 
     let err = c.answer_card(999, Rating::Good, 1_000).unwrap_err();
     assert!(matches!(err, CoreError::NotFound(_)));
+}
+
+#[test]
+fn leech_only_fires_on_new_lapse_not_relearning_good() {
+    let storage = FakeStorage::default();
+    storage
+        .study_cards
+        .lock()
+        .unwrap()
+        .insert(1, sample_study_card(1, 1));
+    let c = Collection::new(Box::new(storage), Arc::new(FixedClock(1_000))).unwrap();
+
+    // Unsuspended relearning card with lapses == leech_threshold (2) answered Good (lapses stays 2).
+    let prev = CardState {
+        phase: CardPhase::Relearning,
+        steps_remaining: 1,
+        interval_days: 10,
+        ease_milli: 2300,
+        reps: 5,
+        lapses: 2,
+        stability: None,
+        difficulty: None,
+        last_review_day: None,
+    };
+    let next_good = CardState {
+        phase: CardPhase::Review,
+        steps_remaining: 0,
+        ..prev
+    };
+    let log = crate::model::Revlog {
+        id: 1_000,
+        card_id: 1,
+        usn: -1,
+        ease: 3,
+        interval: 10,
+        last_interval: 10,
+        ease_factor: 2300,
+        taken_ms: 500,
+        review_kind: 2,
+    };
+    assert!(!c
+        .apply_answer(1, 10, &prev, 1_000, &next_good, 11, &log, 2)
+        .unwrap());
+
+    // A new lapse (1 -> 2) with leech_threshold = 2 triggers leech.
+    let prev_one = CardState {
+        phase: CardPhase::Review,
+        lapses: 1,
+        ..prev
+    };
+    let next_lapse = CardState {
+        phase: CardPhase::Relearning,
+        lapses: 2,
+        ..prev
+    };
+    assert!(c
+        .apply_answer(1, 10, &prev_one, 1, &next_lapse, 1_600, &log, 2)
+        .unwrap());
+}
+
+#[test]
+fn fuzz_due_never_exceeds_maximum_interval_days() {
+    struct HighFuzzSchedulerSet;
+    impl crate::ports::SchedulerSet for HighFuzzSchedulerSet {
+        fn answer(
+            &self,
+            _algorithm: crate::model::Algorithm,
+            state: &CardState,
+            _rating: Rating,
+            ctx: &crate::scheduling::SchedContext,
+        ) -> crate::scheduling::AnswerOutcome {
+            crate::scheduling::AnswerOutcome {
+                next: CardState {
+                    phase: CardPhase::Review,
+                    interval_days: 10,
+                    last_review_day: Some(ctx.today),
+                    ..*state
+                },
+                interval: crate::scheduling::Interval::Days(10),
+            }
+        }
+        fn fuzz_days(&self, days: u32, _card_id: i64) -> u32 {
+            days + 4 // simulates positive fuzz exceeding max=10
+        }
+    }
+
+    let storage = FakeStorage::default();
+    storage
+        .decks
+        .lock()
+        .unwrap()
+        .push(deck(1, "MaxCap", None, false));
+    let cfg = crate::scheduling::SchedConfig {
+        maximum_interval_days: 10,
+        ..Default::default()
+    };
+    storage.deck_configs_map.lock().unwrap().insert(1, cfg);
+    storage
+        .study_cards
+        .lock()
+        .unwrap()
+        .insert(10, sample_study_card(10, 1));
+
+    let c = Collection::new(Box::new(storage), Arc::new(FixedClock(5_000)))
+        .unwrap()
+        .with_scheduler_set(Arc::new(HighFuzzSchedulerSet));
+    let today = c.today();
+    c.answer_card(10, Rating::Easy, 400).unwrap();
+    let updated = c.study_card(10).unwrap().unwrap();
+    assert!(
+        updated.due <= i64::from(today) + 10,
+        "fuzzed due {} exceeded today ({today}) + max_interval (10)",
+        updated.due
+    );
+}
+
+#[test]
+fn set_deck_config_rejects_out_of_bounds_values() {
+    let storage = FakeStorage::default();
+    storage
+        .decks
+        .lock()
+        .unwrap()
+        .push(deck(1, "Default", None, false));
+    let c = Collection::new(Box::new(storage), Arc::new(FixedClock(1_000))).unwrap();
+    let base = c.get_deck_config(1).unwrap();
+
+    let mut bad_easy_ivl = base.clone();
+    bad_easy_ivl.easy_interval_days = 0;
+    assert!(matches!(
+        c.set_deck_config(&bad_easy_ivl),
+        Err(CoreError::Invalid(_))
+    ));
+
+    let mut bad_min_ivl = base.clone();
+    bad_min_ivl.minimum_interval_days = 0;
+    assert!(matches!(
+        c.set_deck_config(&bad_min_ivl),
+        Err(CoreError::Invalid(_))
+    ));
+
+    let mut min_gt_max = base.clone();
+    min_gt_max.minimum_interval_days = 15;
+    min_gt_max.maximum_interval_days = 10;
+    assert!(matches!(
+        c.set_deck_config(&min_gt_max),
+        Err(CoreError::Invalid(_))
+    ));
+
+    let mut nan_retention = base.clone();
+    nan_retention.desired_retention = f64::NAN;
+    assert!(matches!(
+        c.set_deck_config(&nan_retention),
+        Err(CoreError::Invalid(_))
+    ));
+
+    let mut nan_weight = base.clone();
+    nan_weight.fsrs_weights[0] = f64::INFINITY;
+    assert!(matches!(
+        c.set_deck_config(&nan_weight),
+        Err(CoreError::Invalid(_))
+    ));
+
+    let mut zero_step = base.clone();
+    zero_step.learning_steps_min = vec![0];
+    assert!(matches!(
+        c.set_deck_config(&zero_step),
+        Err(CoreError::Invalid(_))
+    ));
+
+    let mut bad_bonus = base.clone();
+    bad_bonus.easy_bonus = 0.5;
+    assert!(matches!(
+        c.set_deck_config(&bad_bonus),
+        Err(CoreError::Invalid(_))
+    ));
+
+    assert!(c.set_deck_config(&base).is_ok());
+}
+
+#[test]
+fn undo_answer_returns_undone_card_next_ahead_of_queue() {
+    let storage = FakeStorage::default();
+    storage
+        .decks
+        .lock()
+        .unwrap()
+        .push(deck(1, "Deck", None, false));
+    storage.queues.lock().unwrap().insert(
+        1,
+        crate::ports::StudyQueue {
+            new: vec![20, 30], // queue order after answer puts 20, 30 ahead of 10
+            ..Default::default()
+        },
+    );
+    storage
+        .study_cards
+        .lock()
+        .unwrap()
+        .insert(10, sample_study_card(10, 1));
+    let c = Collection::new(Box::new(storage), Arc::new(FixedClock(1_000))).unwrap();
+    let prev = CardState::new(2500);
+    let next = CardState {
+        phase: CardPhase::Learning,
+        steps_remaining: 1,
+        reps: 1,
+        ..prev
+    };
+    let log = crate::model::Revlog {
+        id: 1_000,
+        card_id: 10,
+        usn: -1,
+        ease: 3,
+        interval: 0,
+        last_interval: 0,
+        ease_factor: 2500,
+        taken_ms: 400,
+        review_kind: 0,
+    };
+    c.apply_answer(10, 100, &prev, 0, &next, 601_000, &log, 8)
+        .unwrap();
+    c.undo().unwrap();
+    assert_eq!(c.next_card_id(1).unwrap(), Some(10));
 }

@@ -90,11 +90,20 @@ export function UnlockToastHost() {
   const cuedIdsRef = useRef<Set<string>>(new Set());
   const pendingAckRef = useRef<Set<string>>(new Set());
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevStyleRef = useRef(style);
+  const suppressToggleAudioRef = useRef(false);
 
-  const unseen = useMemo(
-    () => (active ? (depthQuery.data?.unseen_unlocks ?? []) : []),
-    [active, depthQuery.data?.unseen_unlocks],
-  );
+  if (prevStyleRef.current !== style) {
+    prevStyleRef.current = style;
+    suppressToggleAudioRef.current = active;
+  }
+
+  const unseen = useMemo(() => {
+    if (!active) return [];
+    const raw = depthQuery.data?.unseen_unlocks ?? [];
+    // Scholar only surfaces study achievements, never Game-only pets, cosmetics, or paths.
+    return isScholar ? raw.filter((u) => u.kind === "achievement") : raw;
+  }, [active, depthQuery.data?.unseen_unlocks, isScholar]);
 
   useEffect(() => {
     if (!active || !depthQuery.data?.backfill_applied) return;
@@ -132,7 +141,15 @@ export function UnlockToastHost() {
     };
 
     const fresh = unseen.filter((u) => !cuedIdsRef.current.has(u.id));
-    if (fresh.length === 0) return;
+    if (fresh.length === 0) {
+      if (depthQuery.isSuccess) {
+        suppressToggleAudioRef.current = false;
+      }
+      return;
+    }
+
+    const suppressCue = suppressToggleAudioRef.current;
+    suppressToggleAudioRef.current = false;
 
     for (const event of fresh) {
       cuedIdsRef.current.add(event.id);
@@ -149,13 +166,15 @@ export function UnlockToastHost() {
       });
     }
 
-    if (fresh.some((u) => u.kind !== "achievement")) {
-      playStyleCue("unlock");
+    if (!suppressCue) {
+      if (fresh.some((u) => u.kind !== "achievement")) {
+        playStyleCue("unlock");
+      }
+      if (fresh.some((u) => u.kind === "achievement")) {
+        playStyleCue("achievement");
+      }
     }
-    if (fresh.some((u) => u.kind === "achievement")) {
-      playStyleCue("achievement");
-    }
-  }, [active, isScholar, unseen]);
+  }, [active, depthQuery.isSuccess, isScholar, unseen]);
 
   useEffect(() => {
     return () => {

@@ -620,6 +620,11 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_revlog_new_kind
         ON revlog(id, card_id) WHERE review_kind = 0;
     "#,
+    // v15 -> v16 (A5-09, ADR-033): index for the default Browse sort on notes.sort_field.
+    r#"
+    CREATE INDEX idx_notes_sort_field
+        ON notes(sort_field COLLATE NOCASE);
+    "#,
 ];
 
 /// Grave record types (matches Anki: card, note, deck).

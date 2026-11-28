@@ -12,24 +12,24 @@ use std::sync::{Mutex, MutexGuard};
 use bibalak_core::deck_name::{deck_ancestors, is_same_or_below, DECK_SEPARATOR};
 use bibalak_core::error::{CoreError, CoreResult};
 use bibalak_core::ipc::{
-    FieldOptions, FieldRemoveWarning, FilteredDeckConfig, NoteDetail, NoteOverview, NotetypeDetail,
-    StatsDto,
+    DueForecastDto, FieldOptions, FieldRemoveWarning, FilteredDeckConfig, NoteDetail, NoteOverview,
+    NotetypeDetail, StatsDto,
 };
 use bibalak_core::model::{
     CanonicalModel, Card, Deck, Field, ImportSummary, Note, NoteIndexRow, Notetype, Revlog,
     StudyCard, Template,
 };
 use bibalak_core::ports::{
-    BrowseStore, DeckStore, GameStore, MaintenanceStore, NoteStore, NotetypeStore,
-    ProductivityStore, ProgressStore, RemovedDeck, StudyStore, SyncStore,
+    BrowseStore, DeckResetSnapshot, DeckStore, GameStore, MaintenanceStore, NoteStore,
+    NotetypeStore, ProductivityStore, ProgressStore, RemovedDeck, StudyStore, SyncStore,
 };
 use bibalak_core::scheduling::{CardState, SchedConfig};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::schema::grave_kind;
 use crate::{
-    backup, browse, cards, export, filtered, import, migrations, notetype, productivity, search,
-    stats, study, tags,
+    backup, browse, cards, deck_reset, export, filtered, game, import, migrations, notetype,
+    productivity, search, stats, study, tags,
 };
 
 const DECK_COLUMNS: &str = r#"id, name, parent_id, config_id, "mod", usn, collapsed, is_filtered"#;
@@ -108,6 +108,7 @@ impl SqliteStorage {
     /// Open (creating if needed) a collection database at `path`.
     pub fn open(path: impl AsRef<Path>) -> CoreResult<Self> {
         let path = path.as_ref();
+        backup::apply_pending_restore(path)?;
         let conn = Connection::open(path).map_err(storage_err)?;
         Self::init(conn, Some(path))
     }
@@ -543,6 +544,8 @@ impl DeckStore for SqliteStorage {
             }
         }
 
+        crate::game_depth::invalidate_all_earned_xp_caches_tx(&tx)?;
+        crate::game_depth::invalidate_studied_top_decks_tx(&tx)?;
         tx.commit().map_err(storage_err)?;
         Ok(RemovedDeck {
             decks,
@@ -787,6 +790,25 @@ impl NoteStore for SqliteStorage {
         let tx = conn.transaction().map_err(storage_err)?;
         let summary = import::import(&tx, model, tz_offset_minutes, now_ms, on_progress)?;
         crate::game_depth::invalidate_studied_top_decks_tx(&tx)?;
+        if summary.revlog_added > 0 {
+            crate::game_depth::invalidate_all_earned_xp_caches_tx(&tx)?;
+            let rollover_hour = study::get_rollover_hour(&tx)?;
+            let created_ms: i64 = tx
+                .query_row("SELECT created FROM collection WHERE id = 1", [], |r| {
+                    r.get(0)
+                })
+                .optional()
+                .map_err(storage_err)?
+                .unwrap_or(now_ms);
+            crate::game_depth::rerun_unlock_backfill_tx(
+                &tx,
+                bibalak_core::progress::NIL_USER_ID,
+                now_ms,
+                tz_offset_minutes,
+                rollover_hour,
+                created_ms,
+            )?;
+        }
         tx.commit().map_err(storage_err)?;
         Ok(summary)
     }
@@ -870,8 +892,16 @@ impl NoteStore for SqliteStorage {
         search::bulk_add_note_tags(&mut self.lock(), note_ids, tag, now_ms)
     }
 
+    fn bulk_add_tags(&self, note_ids: &[i64], tags: &[String], now_ms: i64) -> CoreResult<()> {
+        search::bulk_add_note_tags_batch(&mut self.lock(), note_ids, tags, now_ms)
+    }
+
     fn bulk_remove_tag(&self, note_ids: &[i64], tag: &str, now_ms: i64) -> CoreResult<()> {
         search::bulk_remove_note_tags(&mut self.lock(), note_ids, tag, now_ms)
+    }
+
+    fn bulk_remove_tags(&self, note_ids: &[i64], tags: &[String], now_ms: i64) -> CoreResult<()> {
+        search::bulk_remove_note_tags_batch(&mut self.lock(), note_ids, tags, now_ms)
     }
 
     fn restore_notes(
@@ -1307,6 +1337,24 @@ impl StudyStore for SqliteStorage {
         )
     }
 
+    fn due_forecast(
+        &self,
+        days: u32,
+        tz_offset_minutes: i32,
+        rollover_hour: u8,
+        now_ms: i64,
+        created_ms: i64,
+    ) -> CoreResult<DueForecastDto> {
+        stats::due_forecast(
+            &self.lock(),
+            days,
+            tz_offset_minutes,
+            rollover_hour,
+            now_ms,
+            created_ms,
+        )
+    }
+
     fn suspend_cards(&self, card_ids: &[i64], now_ms: i64) -> CoreResult<()> {
         cards::suspend_cards(&self.lock(), card_ids, now_ms)
     }
@@ -1437,27 +1485,21 @@ impl StudyStore for SqliteStorage {
     fn revoke_streak_freeze_if_inactive(
         &self,
         day: i32,
-        day_start_ms: i64,
-        day_end_ms: i64,
+        tz_offset_minutes: i32,
+        rollover_hour: u8,
+        created_ms: i64,
         now_ms: i64,
     ) -> CoreResult<()> {
         let conn = self.lock();
-        let has_active: bool = conn
-            .query_row(
-                "SELECT EXISTS(
-                     SELECT 1 FROM progress_ledger
-                     WHERE user_id = ?1 AND deleted_at IS NULL
-                       AND created_at >= ?2 AND created_at < ?3
-                     LIMIT 1
-                 )",
-                params![
-                    bibalak_core::progress::NIL_USER_ID,
-                    day_start_ms,
-                    day_end_ms
-                ],
-                |r| r.get(0),
-            )
-            .map_err(storage_err)?;
+        let has_active = game::has_active_ledger_row_on_day(
+            &conn,
+            bibalak_core::progress::NIL_USER_ID,
+            day,
+            tz_offset_minutes,
+            rollover_hour,
+            created_ms,
+            None,
+        )?;
         if !has_active {
             let key = format!("freeze_earn:streak:{day}");
             conn.execute(
@@ -1534,6 +1576,19 @@ impl StudyStore for SqliteStorage {
     ) -> CoreResult<bibalak_core::ports::WorkloadSnapshot> {
         stats::workload_snapshot(&self.lock(), deck_ids)
     }
+
+    fn reset_deck_progress(
+        &self,
+        deck_ids: &[i64],
+        today: i32,
+        now_ms: i64,
+    ) -> CoreResult<DeckResetSnapshot> {
+        deck_reset::reset_deck_progress(&mut self.lock(), deck_ids, today, now_ms)
+    }
+
+    fn restore_deck_reset(&self, snapshot: &DeckResetSnapshot, now_ms: i64) -> CoreResult<()> {
+        deck_reset::restore_deck_reset(&mut self.lock(), snapshot, now_ms)
+    }
 }
 
 impl BrowseStore for SqliteStorage {
@@ -1604,16 +1659,20 @@ impl BrowseStore for SqliteStorage {
         note_ids: &[i64],
         field_name: Option<&str>,
         find: &str,
+        replace: &str,
         use_regex: bool,
         case_sensitive: bool,
+        include_html: bool,
     ) -> CoreResult<bibalak_core::ipc::FindReplacePreview> {
         browse::preview_find_replace(
             &self.lock(),
             note_ids,
             field_name,
             find,
+            replace,
             use_regex,
             case_sensitive,
+            include_html,
         )
     }
 
@@ -1625,6 +1684,7 @@ impl BrowseStore for SqliteStorage {
         replace: &str,
         use_regex: bool,
         case_sensitive: bool,
+        include_html: bool,
         now_ms: i64,
     ) -> CoreResult<Vec<bibalak_core::model::NoteSnapshot>> {
         browse::find_replace_notes(
@@ -1635,6 +1695,7 @@ impl BrowseStore for SqliteStorage {
             replace,
             use_regex,
             case_sensitive,
+            include_html,
             now_ms,
         )
     }
@@ -1663,6 +1724,14 @@ impl BrowseStore for SqliteStorage {
         field_ord: i64,
     ) -> CoreResult<Vec<bibalak_core::ipc::DuplicateGroup>> {
         browse::find_duplicates(&self.lock(), notetype_id, field_ord)
+    }
+
+    fn find_empty_cards(&self) -> CoreResult<Vec<bibalak_core::ipc::EmptyCardItem>> {
+        browse::find_empty_cards(&self.lock())
+    }
+
+    fn delete_empty_cards(&self, card_ids: &[i64], now_ms: i64) -> CoreResult<u32> {
+        browse::delete_empty_cards(&mut self.lock(), card_ids, now_ms)
     }
 
     fn list_tags(&self) -> CoreResult<Vec<String>> {
@@ -1703,13 +1772,13 @@ impl MaintenanceStore for SqliteStorage {
         Ok(created)
     }
 
-    fn integrity_check(&self, now_ms: i64) -> CoreResult<Vec<String>> {
+    fn integrity_check(&self, now_ms: i64) -> CoreResult<bibalak_core::ipc::IntegrityReport> {
         let mut conn = self.lock();
-        let errors = backup::integrity_check(&mut conn, now_ms)?;
-        if errors.is_empty() {
+        let report = backup::integrity_check(&mut conn, now_ms)?;
+        if report.errors.is_empty() {
             crate::tags::backfill_tag_registry(&conn)?;
         }
-        Ok(errors)
+        Ok(report)
     }
 
     fn optimize(&self) -> CoreResult<()> {
@@ -1772,8 +1841,15 @@ impl ProgressStore for SqliteStorage {
         user_id: &str,
         today_start_ms: i64,
         today_end_ms: i64,
+        today_day: i32,
     ) -> CoreResult<bibalak_core::progress::ProgressTotals> {
-        study::progress_totals(&self.lock(), user_id, today_start_ms, today_end_ms)
+        study::progress_totals(
+            &self.lock(),
+            user_id,
+            today_start_ms,
+            today_end_ms,
+            today_day,
+        )
     }
 
     fn get_active_ledger_reward(
@@ -2301,6 +2377,50 @@ impl GameStore for SqliteStorage {
             reward_granted,
             game_changed,
             revlog_id,
+        })
+    }
+
+    fn apply_answer_atomic(
+        &self,
+        card_id: i64,
+        note_id: i64,
+        next: &CardState,
+        due: i64,
+        log: &Revlog,
+        reward: Option<&bibalak_core::progress::RewardGrant>,
+        is_leech: bool,
+        ctx: &bibalak_core::game_depth::GameEvalContext,
+    ) -> CoreResult<bibalak_core::game_depth::ApplyAnswerFullOutcome> {
+        let mut conn = self.lock();
+        let tx = conn.transaction().map_err(storage_err)?;
+        let (reward_granted, revlog_id) =
+            study::apply_answer_returning_id(&tx, card_id, next, due, log, reward)?;
+        let lid = reward.filter(|_| reward_granted).map(|r| r.id.as_str());
+        let granted_xp = reward.filter(|_| reward_granted).map_or(0, |r| r.xp);
+        let game_changed = crate::game_depth::on_answer_committed_tx(
+            &tx,
+            ctx,
+            lid,
+            granted_xp,
+            log.review_kind,
+            card_id,
+            revlog_id,
+        )?;
+        let buried_siblings = cards::bury_siblings(&tx, note_id, card_id, ctx.now_ms)?;
+        let added_leech_tag = if is_leech {
+            let added = cards::add_note_tag_if_missing(&tx, note_id, "leech", ctx.now_ms)?;
+            cards::suspend_cards(&tx, &[card_id], ctx.now_ms)?;
+            added
+        } else {
+            false
+        };
+        tx.commit().map_err(storage_err)?;
+        Ok(bibalak_core::game_depth::ApplyAnswerFullOutcome {
+            reward_granted,
+            game_changed,
+            revlog_id,
+            buried_siblings,
+            added_leech_tag,
         })
     }
 

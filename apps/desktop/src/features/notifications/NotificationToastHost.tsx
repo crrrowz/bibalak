@@ -30,6 +30,7 @@ import { useNotificationStore, type PopupNotification } from "./notificationStor
 const MAX_VISIBLE_POPUPS = 3;
 const MIN_POPUP_TOP_PX = 48; // 36px TitleBar (h-9) + 12px gap
 const TOP_TOOLBAR_SELECTOR = "[data-toast-anchor]";
+const AVOID_CTA_SELECTOR = "[data-toast-avoid]";
 
 function computePopupTopOffset(): number {
   if (typeof document === "undefined") return MIN_POPUP_TOP_PX;
@@ -41,6 +42,19 @@ function computePopupTopOffset(): number {
   for (const bar of main.querySelectorAll(TOP_TOOLBAR_SELECTOR)) {
     const rect = bar.getBoundingClientRect();
     if (rect.height > 0 && rect.width > 0 && rect.top <= anchorBottom + 24) {
+      anchorBottom = Math.max(anchorBottom, rect.bottom);
+    }
+  }
+
+  const vw = window.innerWidth || 1200;
+  const isRtl = document.documentElement.dir === "rtl";
+  const popupZoneStart = isRtl ? 16 : vw - 376;
+  const popupZoneEnd = isRtl ? 376 : vw - 16;
+  for (const cta of document.querySelectorAll(AVOID_CTA_SELECTOR)) {
+    const rect = cta.getBoundingClientRect();
+    if (rect.height <= 0 || rect.width <= 0) continue;
+    const intersectsX = rect.left < popupZoneEnd && rect.right > popupZoneStart;
+    if (intersectsX && rect.top < anchorBottom + 260) {
       anchorBottom = Math.max(anchorBottom, rect.bottom);
     }
   }
@@ -83,6 +97,8 @@ function hasBlockingLayer(panelOpen: boolean, topOffset: number): boolean {
 
 function PopupCardContent({
   popup,
+  initialRemainingMs,
+  onSaveRemaining,
   reduced,
   skinId,
   level,
@@ -93,6 +109,8 @@ function PopupCardContent({
   onDismiss,
 }: {
   popup: PopupNotification;
+  initialRemainingMs: number;
+  onSaveRemaining: (id: string, remainingMs: number) => void;
   reduced: boolean;
   skinId: "game" | "scholar" | null;
   level: number;
@@ -103,7 +121,7 @@ function PopupCardContent({
   onDismiss: (id: string) => void;
 }) {
   const navigate = useOptionalNavigate();
-  const remainingRef = useRef<number>(popup.durationMs);
+  const remainingRef = useRef<number>(initialRemainingMs);
   const startedAtRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pausedRef = useRef(false);
@@ -114,6 +132,15 @@ function PopupCardContent({
       timerRef.current = null;
     }
   }, []);
+
+  const snapshotRemaining = useCallback(() => {
+    if (startedAtRef.current !== null) {
+      const elapsed = Date.now() - startedAtRef.current;
+      remainingRef.current = Math.max(0, remainingRef.current - elapsed);
+      startedAtRef.current = null;
+    }
+    onSaveRemaining(popup.id, remainingRef.current);
+  }, [onSaveRemaining, popup.id]);
 
   const scheduleTimer = useCallback(() => {
     clearTimer();
@@ -126,20 +153,18 @@ function PopupCardContent({
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
       remainingRef.current = 0;
+      startedAtRef.current = null;
+      onSaveRemaining(popup.id, 0);
       onDismiss(popup.id);
     }, remainingRef.current);
-  }, [clearTimer, onDismiss, popup.id]);
+  }, [clearTimer, onDismiss, onSaveRemaining, popup.id]);
 
   const pauseTimer = useCallback(() => {
     if (pausedRef.current) return;
     pausedRef.current = true;
-    if (startedAtRef.current !== null) {
-      const elapsed = Date.now() - startedAtRef.current;
-      remainingRef.current = Math.max(0, remainingRef.current - elapsed);
-      startedAtRef.current = null;
-    }
+    snapshotRemaining();
     clearTimer();
-  }, [clearTimer]);
+  }, [clearTimer, snapshotRemaining]);
 
   const resumeTimer = useCallback(() => {
     if (!pausedRef.current) return;
@@ -149,8 +174,11 @@ function PopupCardContent({
 
   useEffect(() => {
     scheduleTimer();
-    return clearTimer;
-  }, [scheduleTimer, clearTimer]);
+    return () => {
+      snapshotRemaining();
+      clearTimer();
+    };
+  }, [scheduleTimer, snapshotRemaining, clearTimer]);
 
   const petToShow = popup.kind === "pet" ? (popup.pet ?? activePet) : null;
 
@@ -321,6 +349,20 @@ export function NotificationToastHost() {
   const [blocked, setBlocked] = useState<boolean>(() =>
     hasBlockingLayer(panelOpen, computePopupTopOffset()),
   );
+  const remainingMsByIdRef = useRef<Map<string, number>>(new Map());
+
+  const handleSaveRemaining = useCallback((id: string, remainingMs: number) => {
+    remainingMsByIdRef.current.set(id, remainingMs);
+  }, []);
+
+  useEffect(() => {
+    const activeIds = new Set(popupQueue.map((p) => p.id));
+    for (const id of remainingMsByIdRef.current.keys()) {
+      if (!activeIds.has(id)) {
+        remainingMsByIdRef.current.delete(id);
+      }
+    }
+  }, [popupQueue]);
 
   useLayoutEffect(() => {
     const update = () => {
@@ -339,6 +381,9 @@ export function NotificationToastHost() {
       for (const bar of mainEl.querySelectorAll(TOP_TOOLBAR_SELECTOR)) {
         resizeObserver.observe(bar);
       }
+      for (const cta of document.querySelectorAll(AVOID_CTA_SELECTOR)) {
+        resizeObserver.observe(cta);
+      }
     }
 
     const observer = typeof MutationObserver !== "undefined" ? new MutationObserver(update) : null;
@@ -353,6 +398,7 @@ export function NotificationToastHost() {
         "data-testid",
         "data-style",
         "data-toast-anchor",
+        "data-toast-avoid",
       ],
     });
     window.addEventListener("resize", update);
@@ -407,6 +453,8 @@ export function NotificationToastHost() {
           >
             <PopupCardContent
               popup={popup}
+              initialRemainingMs={remainingMsByIdRef.current.get(popup.id) ?? popup.durationMs}
+              onSaveRemaining={handleSaveRemaining}
               reduced={reduced}
               skinId={skin?.id ?? null}
               level={level}

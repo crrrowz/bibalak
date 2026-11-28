@@ -198,6 +198,10 @@ describe("CalendarScreen (CAL1)", () => {
     setLocale("en");
     useWeekStart.setState({ weekStart: "mon" });
     vi.spyOn(ipcModule.ipc, "undoStatus").mockResolvedValue(null);
+    vi.spyOn(ipcModule.ipc, "dueForecast").mockResolvedValue({
+      today_date: todayDate,
+      forecast: makeStats(todayDate, tomorrowDate).forecast,
+    });
     vi.spyOn(ipcModule.ipc, "getStats").mockResolvedValue(makeStats(todayDate, tomorrowDate));
     vi.spyOn(ipcModule.ipc, "getHabitBoard").mockResolvedValue(makeHabitBoard(todayDate));
     vi.spyOn(ipcModule.ipc, "getMatrixBoard").mockResolvedValue(
@@ -277,8 +281,8 @@ describe("CalendarScreen (CAL1)", () => {
       tasks: [],
       deck_due_items: [],
     });
-    vi.spyOn(ipcModule.ipc, "getStats").mockResolvedValue({
-      ...makeStats(todayDate, tomorrowDate),
+    vi.spyOn(ipcModule.ipc, "dueForecast").mockResolvedValue({
+      today_date: todayDate,
       forecast: [],
     });
 
@@ -501,7 +505,8 @@ describe("CalendarScreen (CAL1)", () => {
 
     const habitChip = within(todayAllDay).getByText("Morning review");
     expect(habitChip).toHaveAttribute("title", "Morning review");
-    expect(habitChip.className).not.toContain("truncate");
+    expect(habitChip.className).toContain("truncate");
+    expect(habitChip.className).not.toContain("overflow-wrap:anywhere");
 
     const forecastBadge = within(todayAllDay).getByRole("button", { name: /42 cards due/i });
     expect(forecastBadge).toHaveAttribute("title", "42 cards due");
@@ -1008,5 +1013,59 @@ describe("CalendarScreen (CAL1)", () => {
     await user.click(monthBtn);
     const monthCell = await screen.findByTestId(`calendar-month-cell-${todayDate}`);
     expect(monthCell.className).toContain("min-w-0");
+  });
+
+  it("A5-08: loads 30-day due counts via dueForecast without calling getStats", async () => {
+    vi.spyOn(ipcModule.ipc, "listCalendarOccurrences").mockResolvedValue([]);
+    const getStatsSpy = vi.spyOn(ipcModule.ipc, "getStats");
+    const dueForecastSpy = vi
+      .spyOn(
+        ipcModule.ipc as { dueForecast?: (days?: number | null) => Promise<unknown> },
+        "dueForecast",
+      )
+      .mockResolvedValue({
+        today_date: todayDate,
+        forecast: [
+          { day: 0, count: 14, date: todayDate },
+          { day: 1, count: 7, date: tomorrowDate },
+        ],
+      });
+
+    renderCalendar();
+
+    const todayAllDay = await screen.findByTestId(`calendar-allday-${todayDate}`);
+    expect(await within(todayAllDay).findByText("14 cards due")).toBeInTheDocument();
+    expect(dueForecastSpy).toHaveBeenCalledWith(30);
+    expect(getStatsSpy).not.toHaveBeenCalled();
+  });
+
+  it("A5-18: gives timed blocks readable height and un-clamps titles on hover/focus without clipping", async () => {
+    const occ: CalendarOccurrenceDto = {
+      event_id: "ev-midterm",
+      occurrence_date: todayDate,
+      is_recurring: false,
+      title: "Midterm study block",
+      description: "",
+      location: "",
+      color_token: "accent",
+      start_ms: localTimeMs(todayDate, 10, 0),
+      end_ms: localTimeMs(todayDate, 11, 0),
+      is_all_day: false,
+      linked_task_id: null,
+      recurrence: null,
+    };
+    vi.spyOn(ipcModule.ipc, "listCalendarOccurrences").mockResolvedValue([occ]);
+
+    renderCalendar();
+
+    const todayCol = await screen.findByTestId(`calendar-day-${todayDate}`);
+    const titleEl = await within(todayCol).findByText("Midterm study block");
+    const block = titleEl.closest("[data-testid^='calendar-block-']") as HTMLElement;
+    expect(block).toBeTruthy();
+    expect(parseFloat(block.style.height)).toBeGreaterThanOrEqual(48);
+    expect(titleEl.className).toContain("leading-[1.15]");
+    expect(titleEl.className).toContain("group-hover:line-clamp-none");
+    expect(block.className).toContain("hover:!h-auto");
+    expect(block.className).toContain("hover:overflow-visible");
   });
 });

@@ -12,6 +12,9 @@ import { invalidateTodayCounts } from "@/lib/queryRefresh";
  * subdecks by `extraNew`, bounded by the parent cap) and refreshes today's
  * counts across decks, motivation, progress, and stats.
  */
+const clampExtraNew = (v: number) =>
+  Math.min(9999, Math.max(1, Number.isFinite(v) ? Math.trunc(v) : 1));
+
 export function IncreaseLimitControl({
   deckId,
   hasChildren = false,
@@ -25,7 +28,7 @@ export function IncreaseLimitControl({
   const [extra, setExtra] = useState(10);
 
   const increaseMut = useMutation({
-    mutationFn: (extraNew: number) => ipc.increaseTodayLimit(deckId, extraNew),
+    mutationFn: (extraNew: number) => ipc.increaseTodayLimit(deckId, clampExtraNew(extraNew)),
     onSuccess: () => {
       void invalidateTodayCounts(queryClient);
       onDone();
@@ -41,7 +44,7 @@ export function IncreaseLimitControl({
           min={1}
           max={9999}
           value={extra}
-          onChange={(e) => setExtra(Math.max(1, Number(e.target.value)))}
+          onChange={(e) => setExtra(clampExtraNew(Number(e.target.value)))}
           className="h-7 w-16 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           autoFocus
         />
@@ -50,7 +53,7 @@ export function IncreaseLimitControl({
           size="sm"
           className="h-7"
           disabled={increaseMut.isPending}
-          onClick={() => increaseMut.mutate(extra)}
+          onClick={() => increaseMut.mutate(clampExtraNew(extra))}
         >
           {t("limit.add")}
         </Button>

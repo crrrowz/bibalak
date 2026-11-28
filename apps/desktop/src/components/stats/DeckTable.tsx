@@ -97,11 +97,11 @@ export function DeckTable({
   onSelectDeck: (deckId: number) => void;
 }) {
   const filteredKey = filteredDeckIds.join(",");
-  const tree = useMemo(
-    () => buildTree(deckStats, new Set(filteredDeckIds)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [deckStats, filteredKey],
+  const filteredSet = useMemo(
+    () => new Set(filteredKey ? filteredKey.split(",").map(Number) : []),
+    [filteredKey],
   );
+  const tree = useMemo(() => buildTree(deckStats, filteredSet), [deckStats, filteredSet]);
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDesc, setSortDesc] = useState(false);
@@ -168,87 +168,113 @@ export function DeckTable({
       <div className="mb-2 flex justify-end">
         <ExportButton filename="deck-stats" rows={deckStats.map((d) => ({ ...d }))} />
       </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-start text-xs text-muted-foreground">
-            {columns.map((col) => (
-              <th
-                key={col.key}
-                className={cn(
-                  "cursor-pointer select-none py-2 pe-3 font-medium hover:text-foreground",
-                  col.key !== "name" && "text-end",
-                )}
-                onClick={() => cycleSort(col.key)}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[680px] text-sm">
+          <thead>
+            <tr className="border-b border-border text-start text-xs text-muted-foreground">
+              {columns.map((col) => (
+                <th
+                  key={col.key}
+                  aria-sort={sortKey === col.key ? (sortDesc ? "descending" : "ascending") : "none"}
+                  className={cn("py-2 pe-3 font-medium", col.key !== "name" && "text-end")}
+                >
+                  <button
+                    type="button"
+                    onClick={() => cycleSort(col.key)}
+                    className={cn(
+                      "inline-flex select-none items-center gap-1 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      col.key !== "name" && "justify-end",
+                    )}
+                  >
+                    {col.label}
+                    {sortKey === col.key ? (sortDesc ? " ↓" : " ↑") : null}
+                  </button>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ node, depth }) => (
+              <tr
+                key={node.deck_id}
+                className="cursor-pointer border-b border-border/50 last:border-0 hover:bg-secondary/40"
+                onClick={() => onSelectDeck(node.deck_id)}
               >
-                {col.label}
-                {sortKey === col.key ? (sortDesc ? " ↓" : " ↑") : null}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ node, depth }) => (
-            <tr
-              key={node.deck_id}
-              className="cursor-pointer border-b border-border/50 last:border-0 hover:bg-secondary/40"
-              onClick={() => onSelectDeck(node.deck_id)}
-            >
-              <td className="py-1.5 pe-3" style={{ paddingInlineStart: depth * 16 }}>
-                <span className="inline-flex items-center gap-1">
-                  {node.children.length > 0 ? (
+                <td className="py-1.5 pe-3" style={{ paddingInlineStart: depth * 16 }}>
+                  <span className="inline-flex items-center gap-1">
+                    {node.children.length > 0 ? (
+                      <button
+                        type="button"
+                        aria-expanded={!collapsed.has(node.deck_id)}
+                        aria-label={
+                          collapsed.has(node.deck_id) ? t("decks.expand") : t("decks.collapse")
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggle(node.deck_id);
+                        }}
+                        className="text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {collapsed.has(node.deck_id) ? (
+                          <ChevronRight className="size-3.5 rtl:-scale-x-100" />
+                        ) : (
+                          <ChevronDown className="size-3.5" />
+                        )}
+                      </button>
+                    ) : (
+                      <span className="w-3.5" />
+                    )}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        toggle(node.deck_id);
+                        onSelectDeck(node.deck_id);
                       }}
-                      className="text-muted-foreground hover:text-foreground"
+                      className="text-start hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      {collapsed.has(node.deck_id) ? (
-                        <ChevronRight className="size-3.5 rtl:-scale-x-100" />
-                      ) : (
-                        <ChevronDown className="size-3.5" />
-                      )}
+                      {leafLabel(node.name)}
                     </button>
-                  ) : (
-                    <span className="w-3.5" />
-                  )}
-                  {leafLabel(node.name)}
-                </span>
-              </td>
-              <td className="py-1.5 pe-3 text-end tabular-nums">
-                {formatNumber(node.rollup.total_cards)}
-              </td>
-              <td className="py-1.5 pe-3 text-end tabular-nums">
-                {formatNumber(node.rollup.due_today)}
-              </td>
-              <td className="py-1.5 pe-3 text-end tabular-nums">
-                {formatNumber(node.rollup.new_count)}
-              </td>
-              <td className="py-1.5 pe-3 text-end tabular-nums">
-                {formatNumber(node.rollup.learning_count)}
-              </td>
-              <td className="py-1.5 pe-3 text-end tabular-nums">
-                {formatNumber(node.rollup.young_count)}
-              </td>
-              <td className="py-1.5 pe-3 text-end tabular-nums">
-                {formatNumber(node.rollup.mature_count)}
-              </td>
-              <td className="py-1.5 pe-3 text-end tabular-nums">
-                {formatNumber(node.rollup.suspended_count)}
-              </td>
-              <td className="py-1.5 pe-3 text-end tabular-nums">
-                {node.retention_pct !== null
-                  ? `${formatNumber(node.retention_pct, { maximumFractionDigits: 0 })}%`
-                  : "—"}
-              </td>
-              <td className="py-1.5 pe-3 text-end tabular-nums">
-                {formatNumber(node.rollup.reviews_7d)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                    {filteredSet.has(node.deck_id) && (
+                      <span className="ms-1 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {t("decks.filteredBadge")}
+                      </span>
+                    )}
+                  </span>
+                </td>
+                <td className="py-1.5 pe-3 text-end tabular-nums">
+                  {formatNumber(node.rollup.total_cards)}
+                </td>
+                <td className="py-1.5 pe-3 text-end tabular-nums">
+                  {formatNumber(node.rollup.due_today)}
+                </td>
+                <td className="py-1.5 pe-3 text-end tabular-nums">
+                  {formatNumber(node.rollup.new_count)}
+                </td>
+                <td className="py-1.5 pe-3 text-end tabular-nums">
+                  {formatNumber(node.rollup.learning_count)}
+                </td>
+                <td className="py-1.5 pe-3 text-end tabular-nums">
+                  {formatNumber(node.rollup.young_count)}
+                </td>
+                <td className="py-1.5 pe-3 text-end tabular-nums">
+                  {formatNumber(node.rollup.mature_count)}
+                </td>
+                <td className="py-1.5 pe-3 text-end tabular-nums">
+                  {formatNumber(node.rollup.suspended_count)}
+                </td>
+                <td className="py-1.5 pe-3 text-end tabular-nums">
+                  {node.retention_pct !== null
+                    ? `${formatNumber(node.retention_pct, { maximumFractionDigits: 0 })}%`
+                    : "—"}
+                </td>
+                <td className="py-1.5 pe-3 text-end tabular-nums">
+                  {formatNumber(node.rollup.reviews_7d)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

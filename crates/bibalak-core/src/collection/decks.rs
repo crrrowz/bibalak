@@ -166,28 +166,94 @@ impl Collection {
 
     /// Persist full scheduling config for a deck. Validates bounds.
     pub fn set_deck_config(&self, cfg: &DeckConfig) -> CoreResult<()> {
-        if cfg.starting_ease_milli < 1300 || cfg.starting_ease_milli > 9999 {
+        if cfg.new_per_day > 9999 {
+            return Err(CoreError::Invalid("new cards/day must be 0–9999".into()));
+        }
+        if cfg.review_per_day > 9999 {
+            return Err(CoreError::Invalid("reviews/day must be 0–9999".into()));
+        }
+        if cfg.learning_steps_min.len() > 32
+            || cfg
+                .learning_steps_min
+                .iter()
+                .any(|&s| !(1..=525_600).contains(&s))
+        {
+            return Err(CoreError::Invalid(
+                "learning steps must be 1–525,600 minutes".into(),
+            ));
+        }
+        if cfg.relearning_steps_min.len() > 32
+            || cfg
+                .relearning_steps_min
+                .iter()
+                .any(|&s| !(1..=525_600).contains(&s))
+        {
+            return Err(CoreError::Invalid(
+                "relearning steps must be 1–525,600 minutes".into(),
+            ));
+        }
+        if !(1300..=9999).contains(&cfg.starting_ease_milli) {
             return Err(CoreError::Invalid("starting ease must be 1300–9999".into()));
         }
-        if cfg.desired_retention < 0.5 || cfg.desired_retention > 0.99 {
+        if !(cfg.desired_retention.is_finite() && (0.5..=0.99).contains(&cfg.desired_retention)) {
             return Err(CoreError::Invalid(
                 "desired retention must be 0.50–0.99".into(),
             ));
         }
-        if cfg.interval_modifier < 0.01 || cfg.interval_modifier > 9.99 {
+        if !(cfg.interval_modifier.is_finite() && (0.01..=9.99).contains(&cfg.interval_modifier)) {
             return Err(CoreError::Invalid(
                 "interval modifier must be 0.01–9.99".into(),
             ));
         }
-        if cfg.graduating_interval_days < 1 {
-            return Err(CoreError::Invalid("graduating interval must be ≥ 1".into()));
+        if !(cfg.easy_bonus.is_finite() && (1.0..=5.0).contains(&cfg.easy_bonus)) {
+            return Err(CoreError::Invalid("easy bonus must be 1.00–5.00".into()));
         }
-        if cfg.maximum_interval_days < 1 {
-            return Err(CoreError::Invalid("max interval must be ≥ 1".into()));
-        }
-        if cfg.fsrs_weights.len() != 21 {
+        if !(cfg.hard_interval_factor.is_finite()
+            && (0.05..=5.0).contains(&cfg.hard_interval_factor))
+        {
             return Err(CoreError::Invalid(
-                "FSRS weights must have exactly 21 elements".into(),
+                "hard interval factor must be 0.05–5.00".into(),
+            ));
+        }
+        if !(cfg.lapse_interval_factor.is_finite()
+            && (0.0..=1.0).contains(&cfg.lapse_interval_factor))
+        {
+            return Err(CoreError::Invalid(
+                "lapse interval factor must be 0.00–1.00".into(),
+            ));
+        }
+        if !(1..=36_500).contains(&cfg.graduating_interval_days) {
+            return Err(CoreError::Invalid(
+                "graduating interval must be 1–36,500".into(),
+            ));
+        }
+        if !(1..=36_500).contains(&cfg.easy_interval_days) {
+            return Err(CoreError::Invalid("easy interval must be 1–36,500".into()));
+        }
+        if !(1..=36_500).contains(&cfg.minimum_interval_days) {
+            return Err(CoreError::Invalid(
+                "minimum interval must be 1–36,500".into(),
+            ));
+        }
+        if !(1..=36_500).contains(&cfg.maximum_interval_days) {
+            return Err(CoreError::Invalid("max interval must be 1–36,500".into()));
+        }
+        if cfg.minimum_interval_days > cfg.maximum_interval_days {
+            return Err(CoreError::Invalid(
+                "minimum interval cannot exceed maximum interval".into(),
+            ));
+        }
+        if cfg.leech_threshold > 999 {
+            return Err(CoreError::Invalid("leech threshold must be 0–999".into()));
+        }
+        if cfg.fsrs_weights.len() != 21
+            || cfg
+                .fsrs_weights
+                .iter()
+                .any(|w| !w.is_finite() || !(-100.0..=100.0).contains(w))
+        {
+            return Err(CoreError::Invalid(
+                "FSRS weights must have 21 finite values in -100..=100".into(),
             ));
         }
         let deck = self
@@ -416,7 +482,13 @@ impl Collection {
             }
             Ok(())
         });
+        // A3-03 rule: removing a deck deletes its revlog rows, so quest progress can
+        // drop. Already-earned XP stays in `progress_ledger`, while quest bonuses
+        // that no longer hold are revoked (same rule as answer undo; unlike F1 full
+        // deck reset, which wipes the deck's earned XP).
+        let _ = self.reconcile_motivation(true)?;
         self.events.emit(DomainEvent::DeckChanged { deck_id: id });
+        self.events.emit(DomainEvent::ProductivityChanged);
         Ok(())
     }
 

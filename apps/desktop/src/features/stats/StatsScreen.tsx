@@ -1,15 +1,16 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { AlertCircle, BarChart3, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { AlertCircle, BarChart3, RefreshCw, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
-import type { CoachInput, CoachReport, StatsDto } from "@bibalak/ipc-types";
+import type { CoachInput, CoachReport, MotivationStateDto, StatsDto } from "@bibalak/ipc-types";
 import { CoachConsentDialog } from "@/components/stats/CoachConsentDialog";
 import { CoachPanel } from "@/components/stats/CoachPanel";
 import { toast } from "@/stores/toast";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { errorMessage, ipc, isTauri } from "@/lib/ipc";
 import { queryKeys } from "@/lib/queryKeys";
 import { listItem, staggerList } from "@/lib/motion";
@@ -70,17 +71,9 @@ export function StatsScreen() {
     ),
     enabled: tauri && scopedDecks.length > 0,
     queryFn: async () => {
-      const results = await Promise.all(
-        scopedDecks.map(async (d) => {
-          try {
-            const cfg = await ipc.getDeckConfig(d.id);
-            return cfg?.algorithm === "fsrs" ? d.name : null;
-          } catch {
-            return null;
-          }
-        }),
-      );
-      return results.filter((name): name is string => Boolean(name));
+      const algos = await ipc.listDeckAlgorithms();
+      const fsrsIds = new Set(algos.filter((a) => a.algorithm === "fsrs").map((a) => a.deck_id));
+      return scopedDecks.filter((d) => fsrsIds.has(d.id)).map((d) => d.name);
     },
   });
   const fsrsDeckNames = fsrsDecksQuery.data ?? [];
@@ -103,6 +96,12 @@ export function StatsScreen() {
     queryFn: () => ipc.getStats(deckId, days),
     enabled: tauri,
     placeholderData: keepPreviousData,
+  });
+
+  const motivationQuery = useQuery({
+    queryKey: queryKeys.motivationState,
+    queryFn: async () => (await ipc.getMotivationState()) ?? null,
+    enabled: tauri && deckId === null,
   });
 
   const aiConfigQuery = useQuery({
@@ -192,6 +191,7 @@ export function StatsScreen() {
                 isCoachLoading={isCoachLoading}
                 coachReport={coachReport}
                 onClearCoachReport={() => setCoachReport(null)}
+                motivationStreak={deckId === null ? (motivationQuery.data ?? null) : null}
               />
             ) : (
               <div className="space-y-6">
@@ -228,6 +228,7 @@ function Dashboard({
   isCoachLoading,
   coachReport,
   onClearCoachReport,
+  motivationStreak,
 }: {
   stats: StatsDto;
   filteredDeckIds: number[];
@@ -241,14 +242,17 @@ function Dashboard({
   isCoachLoading: boolean;
   coachReport: CoachReport | null;
   onClearCoachReport: () => void;
+  motivationStreak: MotivationStateDto | null;
 }) {
   const today = stats.today;
   const streaks = useMemo(() => computeStreaks(stats.reviews, today), [stats.reviews, today]);
+  const currentStreak = motivationStreak ? motivationStreak.current_streak : streaks.current;
+  const longestStreak = motivationStreak ? motivationStreak.best_streak : streaks.longest;
 
   return (
     <motion.div variants={staggerList} initial="hidden" animate="show" className="space-y-6">
       <motion.div variants={listItem}>
-        <StatCards stats={stats} streak={streaks.current} />
+        <StatCards stats={stats} streak={currentStreak} />
       </motion.div>
 
       <motion.div variants={listItem}>
@@ -257,7 +261,7 @@ function Dashboard({
           hourly={stats.hourly}
           day0Ms={stats.day0_ms}
           dates={stats.dates}
-          longestStreak={streaks.longest}
+          longestStreak={longestStreak}
         />
       </motion.div>
 
@@ -275,7 +279,7 @@ function Dashboard({
             className="gap-2 text-xs"
           >
             {isCoachLoading ? (
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              <Spinner />
             ) : (
               <Sparkles className="size-3.5 text-primary" aria-hidden />
             )}

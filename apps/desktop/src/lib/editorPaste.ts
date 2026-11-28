@@ -1,4 +1,5 @@
-import { Node as TiptapNode, mergeAttributes } from "@tiptap/react";
+import { Extension, Mark, Node as TiptapNode, mergeAttributes } from "@tiptap/react";
+import { TextStyle } from "@tiptap/extension-text-style";
 
 const DROP_SUBTREE_TAGS = new Set([
   "script",
@@ -27,6 +28,19 @@ const ALLOWED_DIRECT_TAGS = new Set([
   "i",
   "em",
   "u",
+  "s",
+  "del",
+  "code",
+  "pre",
+  "mark",
+  "blockquote",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
   "sub",
   "sup",
   "br",
@@ -45,14 +59,6 @@ const ALLOWED_DIRECT_TAGS = new Set([
 
 const BLOCK_TO_PARAGRAPH_TAGS = new Set([
   "div",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "blockquote",
-  "pre",
   "section",
   "article",
   "header",
@@ -62,6 +68,37 @@ const BLOCK_TO_PARAGRAPH_TAGS = new Set([
   "figure",
   "figcaption",
 ]);
+
+const SAFE_COLOR_RE =
+  /^(?:#[0-9a-f]{3,8}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)|hsla?\(\s*\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)|[a-z]{3,20})$/i;
+
+function extractSafeColorStyle(style: string): string {
+  if (!style) return "";
+  const kept: string[] = [];
+  for (const decl of style.split(";")) {
+    const colon = decl.indexOf(":");
+    if (colon <= 0) continue;
+    const prop = decl.slice(0, colon).trim().toLowerCase();
+    const val = decl.slice(colon + 1).trim();
+    if (prop !== "color" && prop !== "background-color") continue;
+    const lower = val.toLowerCase();
+    if (
+      !val ||
+      lower === "windowtext" ||
+      lower === "transparent" ||
+      lower === "inherit" ||
+      lower === "initial" ||
+      lower === "#000000" ||
+      lower === "#000" ||
+      lower === "rgb(0, 0, 0)" ||
+      !SAFE_COLOR_RE.test(val)
+    ) {
+      continue;
+    }
+    kept.push(`${prop}: ${val}`);
+  }
+  return kept.join("; ");
+}
 
 const BLOCK_TAG_NAMES = new Set([
   "p",
@@ -206,9 +243,20 @@ function sanitizeNode(doc: Document, node: Node): Node[] {
     if (/(?:^|;)\s*font-style\s*:\s*italic\b/i.test(style)) wrappers.push("i");
     if (/(?:^|;)\s*text-decoration(?:-line)?\s*:[^;]*\bunderline\b/i.test(style))
       wrappers.push("u");
+    if (/(?:^|;)\s*text-decoration(?:-line)?\s*:[^;]*\bline-through\b/i.test(style))
+      wrappers.push("s");
     if (/(?:^|;)\s*vertical-align\s*:\s*sub\b/i.test(style)) wrappers.push("sub");
     if (/(?:^|;)\s*vertical-align\s*:\s*super\b/i.test(style)) wrappers.push("sup");
-    return wrapInTags(doc, children, wrappers);
+    let wrapped = wrapInTags(doc, children, wrappers);
+    const fontColor = tag === "font" ? el.getAttribute("color")?.trim() : undefined;
+    const safeStyle = extractSafeColorStyle(fontColor ? `color: ${fontColor}; ${style}` : style);
+    if (safeStyle && wrapped.length > 0) {
+      const span = doc.createElement("span");
+      span.setAttribute("style", safeStyle);
+      for (const child of wrapped) span.appendChild(child);
+      wrapped = [span];
+    }
+    return wrapped;
   }
 
   if (tag === "img") {
@@ -238,6 +286,18 @@ function sanitizeNode(doc: Document, node: Node): Node[] {
 
   if (ALLOWED_DIRECT_TAGS.has(tag)) {
     const clean = doc.createElement(tag);
+    if (tag === "mark") {
+      const safeStyle = extractSafeColorStyle(style);
+      if (safeStyle) clean.setAttribute("style", safeStyle);
+    }
+    if (tag === "td" || tag === "th") {
+      for (const attr of ["colspan", "rowspan"] as const) {
+        const val = el.getAttribute(attr)?.trim();
+        if (val && /^\d+$/.test(val) && Number(val) > 1) {
+          clean.setAttribute(attr, val);
+        }
+      }
+    }
     for (const child of sanitizeChildNodes(doc, el)) {
       clean.appendChild(child);
     }
@@ -301,11 +361,20 @@ const EditorTableCell = TiptapNode.create({
   name: "tableCell",
   content: "block+",
   isolating: true,
+  addAttributes() {
+    return {
+      colspan: { default: 1 },
+      rowspan: { default: 1 },
+    };
+  },
   parseHTML() {
     return [{ tag: "td" }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ["td", mergeAttributes(HTMLAttributes), 0];
+    const attrs: Record<string, unknown> = { ...HTMLAttributes };
+    if (attrs.colspan === 1) delete attrs.colspan;
+    if (attrs.rowspan === 1) delete attrs.rowspan;
+    return ["td", mergeAttributes(attrs), 0];
   },
 });
 
@@ -313,11 +382,20 @@ const EditorTableHeader = TiptapNode.create({
   name: "tableHeader",
   content: "block+",
   isolating: true,
+  addAttributes() {
+    return {
+      colspan: { default: 1 },
+      rowspan: { default: 1 },
+    };
+  },
   parseHTML() {
     return [{ tag: "th" }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ["th", mergeAttributes(HTMLAttributes), 0];
+    const attrs: Record<string, unknown> = { ...HTMLAttributes };
+    if (attrs.colspan === 1) delete attrs.colspan;
+    if (attrs.rowspan === 1) delete attrs.rowspan;
+    return ["th", mergeAttributes(attrs), 0];
   },
 });
 
@@ -327,4 +405,140 @@ export const editorTableExtensions = [
   EditorTableRow,
   EditorTableCell,
   EditorTableHeader,
+];
+
+const AnkiDiv = TiptapNode.create({
+  name: "ankiDiv",
+  group: "block",
+  content: "inline*",
+  priority: 40,
+  parseHTML() {
+    return [
+      {
+        tag: "div",
+        getAttrs: (el) => {
+          if (typeof el === "string") return false;
+          if (el.querySelector("p,div,ul,ol,table,h1,h2,h3,h4,h5,h6,blockquote,pre")) {
+            return false;
+          }
+          return el.hasAttribute("class") || el.hasAttribute("style") || el.hasAttribute("dir")
+            ? null
+            : false;
+        },
+      },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["div", mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
+const AnkiRuby = TiptapNode.create({
+  name: "ankiRuby",
+  group: "inline",
+  inline: true,
+  content: "inline*",
+  parseHTML() {
+    return [{ tag: "ruby" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["ruby", mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
+const AnkiRt = TiptapNode.create({
+  name: "ankiRt",
+  group: "inline",
+  inline: true,
+  content: "text*",
+  parseHTML() {
+    return [{ tag: "rt" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["rt", mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
+const AnkiRp = TiptapNode.create({
+  name: "ankiRp",
+  group: "inline",
+  inline: true,
+  content: "text*",
+  parseHTML() {
+    return [{ tag: "rp" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["rp", mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
+const AnkiSpanClass = Mark.create({
+  name: "ankiSpanClass",
+  addAttributes() {
+    return {
+      class: {
+        default: null,
+        parseHTML: (el) => el.getAttribute("class"),
+        renderHTML: (attrs) => (attrs.class ? { class: attrs.class as string } : {}),
+      },
+    };
+  },
+  parseHTML() {
+    return [{ tag: "span[class]" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["span", mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
+const AnkiPreserveAttrs = Extension.create({
+  name: "ankiPreserveAttrs",
+  addGlobalAttributes() {
+    return [
+      {
+        types: [
+          "paragraph",
+          "heading",
+          "blockquote",
+          "codeBlock",
+          "ankiDiv",
+          "ankiRuby",
+          "ankiRt",
+          "table",
+          "tableRow",
+          "tableCell",
+          "tableHeader",
+          "image",
+        ],
+        attributes: {
+          class: {
+            default: null,
+            parseHTML: (el) => el.getAttribute("class"),
+            renderHTML: (attrs) => (attrs.class ? { class: attrs.class as string } : {}),
+          },
+          style: {
+            default: null,
+            parseHTML: (el) => el.getAttribute("style"),
+            renderHTML: (attrs) => (attrs.style ? { style: attrs.style as string } : {}),
+          },
+          dir: {
+            default: null,
+            parseHTML: (el) => el.getAttribute("dir"),
+            renderHTML: (attrs) => (attrs.dir ? { dir: attrs.dir as string } : {}),
+          },
+        },
+      },
+    ];
+  },
+});
+
+/** TipTap extensions preserving existing Anki classes, inline styles, and ruby markup. */
+export const editorHtmlExtensions = [
+  TextStyle,
+  AnkiSpanClass,
+  AnkiDiv,
+  AnkiRuby,
+  AnkiRt,
+  AnkiRp,
+  AnkiPreserveAttrs,
 ];

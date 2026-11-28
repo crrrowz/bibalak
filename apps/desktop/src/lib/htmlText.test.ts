@@ -18,5 +18,7 @@ describe("htmlText", () => {
   it("turns card HTML into plain text", () => {
     expect(htmlToText("<div>Tom &amp;amp; Jerry</div>")).toBe("Tom &amp; Jerry");
     expect(htmlToText("  <p>&nbsp;</p> ")).toBe("");
+    expect(htmlToText('<img src="diagram.png">')).toBe("diagram.png");
+    expect(htmlToText("<audio src='clip.mp3'></audio>")).toBe("clip.mp3");
   });
 });

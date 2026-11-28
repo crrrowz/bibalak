@@ -154,8 +154,8 @@ describe("TodayCard (16e)", () => {
     // Due counts sum top-level decks (8 new, 3 learning, 14 review — not double-counted)
     expect(card).toHaveTextContent("8 new · 3 learning · 14 review");
 
-    // Compact 3 daily quests line linking to /quests
-    const questsLink = screen.getByRole("link", { name: /Today's tasks|View all/i });
+    // Compact 3 daily challenges line linking to /quests
+    const questsLink = screen.getByRole("link", { name: /Today's challenges|View all/i });
     expect(questsLink).toHaveAttribute("href", "/quests");
     expect(questsLink).toHaveTextContent("9 / 15");
     expect(questsLink).toHaveTextContent("5 / 5");
@@ -225,5 +225,15 @@ describe("TodayCard (16e)", () => {
 
     const card = await screen.findByTestId("today-card");
     expect(card).toHaveTextContent(/XP goal.*separate from deck card limits/i);
+  });
+
+  it("A1-25: avoids bare dangling middot separators inside flex-wrap rows", async () => {
+    vi.spyOn(ipcModule.ipc, "getMotivationState").mockResolvedValue(makeState());
+    renderTodayCard(SAMPLE_DECKS);
+    const card = await screen.findByTestId("today-card");
+    const bareMiddots = Array.from(card.querySelectorAll("span")).filter(
+      (el) => el.textContent?.trim() === "·",
+    );
+    expect(bareMiddots).toHaveLength(0);
   });
 });

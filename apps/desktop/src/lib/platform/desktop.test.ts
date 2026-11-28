@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
+import { openPath as tauriOpenPath, openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
 import { desktopPlatform } from "./desktop";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -9,6 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(async () => {}),
+  openPath: vi.fn(async () => {}),
 }));
 
 describe("desktopPlatform updater install kind and release page (UPD1)", () => {
@@ -84,5 +85,11 @@ describe("desktopPlatform dialog pickers (H1/F1)", () => {
       defaultPath: "collection.apkg",
       filters: [{ name: "Anki", extensions: ["apkg"] }],
     });
+  });
+
+  it("opens local app folders via plugin-opener when running in Tauri (A5-11)", async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    await desktopPlatform.openPath?.("C:/Users/me/AppData/bibalak");
+    expect(tauriOpenPath).toHaveBeenCalledWith("C:/Users/me/AppData/bibalak");
   });
 });

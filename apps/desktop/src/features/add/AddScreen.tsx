@@ -14,12 +14,16 @@ import { useActiveFieldEditor } from "@/components/editor/useActiveFieldEditor";
 import { Kbd } from "@/components/Kbd";
 import { OcclusionEditor } from "@/components/occlusion/OcclusionEditor";
 import { maxClozeIndex } from "@/lib/clozeUtils";
-import { ipc, isTauri } from "@/lib/ipc";
+import { htmlToText } from "@/lib/htmlText";
+import { errorMessage, ipc, isTauri } from "@/lib/ipc";
 import { queryKeys } from "@/lib/queryKeys";
 import { t, tn } from "@/lib/i18n";
 import {
+  formatAddError,
+  localizeStockFieldName,
   partitionFieldsByTemplates,
   readMoreFieldsExpanded,
+  resolveFieldMediaKind,
   writeMoreFieldsExpanded,
 } from "@/lib/noteFieldGroups";
 import { modShortcut } from "@/lib/shortcuts";
@@ -71,7 +75,10 @@ export function AddScreen() {
     setMoreExpanded(readMoreFieldsExpanded(composer.notetypeId));
   }, [composer.notetypeId]);
 
-  const fieldNames = composer.selectedNotetype?.field_names ?? [];
+  const fieldNames = useMemo(
+    () => composer.selectedNotetype?.field_names ?? [],
+    [composer.selectedNotetype?.field_names],
+  );
   const excludedIndices = useMemo(() => {
     const set = new Set<number>();
     if (composer.isImageOcclusion) {
@@ -91,6 +98,20 @@ export function AddScreen() {
     [fieldNames, composer.notetypeDetail.data?.templates, excludedIndices],
   );
 
+  useEffect(() => {
+    if (!composer.add.isError) return;
+    if (/first field cannot be empty/i.test(errorMessage(composer.add.error))) {
+      if (extraIndices.includes(0)) {
+        setMoreExpanded(true);
+      }
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => {
+          document.getElementById("add-field-0")?.focus();
+        });
+      }
+    }
+  }, [composer.add.isError, composer.add.error, extraIndices]);
+
   const toggleMoreFields = () => {
     setMoreExpanded((prev) => {
       const next = !prev;
@@ -99,29 +120,74 @@ export function AddScreen() {
     });
   };
 
+  const renderDuplicateNotice = () =>
+    composer.duplicateWarning ? (
+      <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-amber-500">
+        <span>
+          {composer.duplicateNoteTitle
+            ? t("add.duplicateWarningNamed", { title: composer.duplicateNoteTitle })
+            : t("add.duplicateWarning")}
+        </span>
+        {composer.duplicateNoteId !== null && navigate && (
+          <button
+            type="button"
+            className="underline hover:opacity-80"
+            onClick={() => navigate("/browse", { q: `nid:${composer.duplicateNoteId}` })}
+          >
+            {t("add.viewDuplicate")}
+          </button>
+        )}
+      </div>
+    ) : null;
+
   const renderFieldBlock = (index: number, isFirstPrimary: boolean) => {
-    const name = fieldNames[index] ?? "";
+    const rawName = fieldNames[index] ?? "";
+    const name = localizeStockFieldName(rawName);
     const fieldId = `add-field-${index}`;
     const labelId = `add-field-label-${index}`;
     const hintId = `add-field-hint-${index}`;
     const options = composer.notetypeDetail.data?.fields[index]?.options;
     const hint = options?.description?.trim() ?? "";
+    const isSortRequired = index === 0;
+    const mediaKind = resolveFieldMediaKind(
+      rawName,
+      options,
+      composer.notetypeDetail.data?.templates,
+    );
+    const describedByIds = [
+      hint ? hintId : "",
+      isSortRequired && extraIndices.includes(0) ? `${fieldId}-req` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
     return (
       <div
-        key={`${composer.notetypeId}:${name}:${composer.formVersion}:${index === 1 ? aiApplyVersion : 0}`}
+        key={`${composer.notetypeId}:${rawName}:${composer.formVersion}:${index === 1 ? aiApplyVersion : 0}`}
         className="space-y-1"
       >
         <div className="flex items-center justify-between gap-2">
-          <label id={labelId} htmlFor={fieldId} className="text-sm font-medium">
-            {name}
-          </label>
+          <div className="flex items-center gap-1.5">
+            <label id={labelId} htmlFor={fieldId} className="text-sm font-medium">
+              {name}
+            </label>
+            {isSortRequired && (
+              <>
+                <span aria-hidden="true" className="text-sm font-semibold text-destructive">
+                  *
+                </span>
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  {t("add.requiredBadge")}
+                </span>
+              </>
+            )}
+          </div>
           {index === 1 && !composer.isImageOcclusion && (
             <Button
               type="button"
               variant="ghost"
               size="sm"
               className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-              disabled={aiConfigured && !(composer.fields[0] ?? "").trim()}
+              disabled={aiConfigured && !htmlToText(composer.fields[0] ?? "")}
               onClick={() => setSuggestOpen(true)}
             >
               <Sparkles className="size-3.5" aria-hidden />
@@ -132,26 +198,30 @@ export function AddScreen() {
         <FieldEditor
           id={fieldId}
           ariaLabelledBy={labelId}
-          ariaDescribedBy={hint ? hintId : undefined}
+          ariaDescribedBy={describedByIds || undefined}
           value={composer.fields[index] ?? ""}
           otherFieldsHtml={composer.fields.filter((_, i) => i !== index)}
           autoFocus={isFirstPrimary}
           onFocusEditor={onFocusEditor}
           onDestroyEditor={onDestroyEditor}
           options={options}
+          mediaFieldKind={mediaKind}
           onCtrlEnter={() => {
             if (!composer.add.isPending) composer.add.mutate();
           }}
           onChange={(html) => composer.setField(index, html)}
         />
+        {isSortRequired && extraIndices.includes(0) && (
+          <p id={`${fieldId}-req`} className="text-xs text-muted-foreground">
+            {t("add.requiredSortHint", { field: name })}
+          </p>
+        )}
         {hint && (
           <p id={hintId} className="text-xs text-muted-foreground">
             {hint}
           </p>
         )}
-        {index === 0 && composer.duplicateWarning && (
-          <p className="text-xs font-medium text-amber-500">{t("add.duplicateWarning")}</p>
-        )}
+        {index === 0 && renderDuplicateNotice()}
       </div>
     );
   };
@@ -252,6 +322,7 @@ export function AddScreen() {
 
           {/* Template front/back fields first */}
           {primaryIndices.map((index, pos) => renderFieldBlock(index, pos === 0))}
+          {extraIndices.includes(0) && !moreExpanded && renderDuplicateNotice()}
 
           {/* Remaining fields folded under "More fields" (remembered per note type) */}
           {extraIndices.length > 0 && (
@@ -315,7 +386,7 @@ export function AddScreen() {
             )}
             {composer.add.isError && (
               <span role="alert" className="text-sm text-destructive">
-                {String((composer.add.error as Error).message)}
+                {formatAddError(composer.add.error, localizeStockFieldName(fieldNames[0] ?? ""))}
               </span>
             )}
           </div>

@@ -6,5 +6,5 @@
   "description": "Finds notes with an empty field or a missing media reference and lists them in a panel.",
   "author": "Bibalak",
   "apiVersion": "0.2.0",
-  "permissions": ["read:notes", "ui:panel"]
+  "permissions": ["read:notes", "ui:panel", "ui:navigate"]
 }

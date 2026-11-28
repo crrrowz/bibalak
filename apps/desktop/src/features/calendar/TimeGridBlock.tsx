@@ -52,7 +52,7 @@ export function TimeGridBlock({
   const topPx = (effStartMin / 60) * HOUR_HEIGHT_PX;
   const heightPx = Math.max(18, ((effEndMin - effStartMin) / 60) * HOUR_HEIGHT_PX);
   const isCompact = heightPx <= 54;
-  const isTiny = heightPx <= 32;
+  const isTiny = heightPx <= 32 || (isCompact && colCount > 1);
 
   return (
     <div
@@ -65,11 +65,12 @@ export function TimeGridBlock({
       style={{
         top: `${topPx}px`,
         height: `${heightPx}px`,
+        minHeight: `${heightPx}px`,
         width: `calc(${100 / colCount}% - 2px)`,
         insetInlineStart: `${(colIndex * 100) / colCount}%`,
       }}
       className={cn(
-        "group absolute z-10 overflow-hidden rounded-lg border text-[11px] transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "group absolute z-10 overflow-hidden rounded-lg border text-[11px] transition-opacity hover:z-30 hover:!h-auto hover:overflow-visible hover:shadow-md focus-within:z-30 focus-within:!h-auto focus-within:overflow-visible focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         colCount > 1 ? "px-1 py-0.5" : isCompact ? "px-1.5 py-0.5" : "px-1.5 py-1",
         block.kind === "event"
           ? "border-primary/40 bg-primary/15 text-foreground"
@@ -110,7 +111,7 @@ export function TimeGridBlock({
         dir="auto"
         title={block.title}
         className={cn(
-          "min-w-0 overflow-hidden text-ellipsis font-medium leading-[1.2] text-foreground [overflow-wrap:anywhere]",
+          "min-w-0 overflow-hidden text-ellipsis font-medium leading-[1.15] text-foreground [overflow-wrap:anywhere] group-hover:line-clamp-none group-focus-within:line-clamp-none",
           isTiny ? "line-clamp-1" : "line-clamp-2",
         )}
       >

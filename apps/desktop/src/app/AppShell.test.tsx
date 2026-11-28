@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
@@ -35,7 +35,21 @@ vi.mock("@/lib/useCoreEvents", () => ({
 }));
 
 vi.mock("@/components/TitleBar", () => ({
-  TitleBar: () => <div />,
+  TitleBar: ({
+    onToggleSidebar,
+    showSidebarDock,
+  }: {
+    onToggleSidebar?: () => void;
+    showSidebarDock?: boolean;
+  }) => (
+    <div>
+      {showSidebarDock && onToggleSidebar && (
+        <button type="button" onClick={onToggleSidebar} aria-label="Show navigation">
+          Menu
+        </button>
+      )}
+    </div>
+  ),
 }));
 
 vi.mock("@/components/CommandPalette", () => ({
@@ -315,7 +329,7 @@ describe("AppShell accessibility (B2)", () => {
     useStyle.getState().setStyle("default");
   });
 
-  it("H4: mounts CommandPaletteTip inside the main content column so it never covers sidebar-footer", () => {
+  it("H4 / A1-22: docks CommandPaletteTip in header flow so it never covers sidebar-footer or screen CTAs", () => {
     localStorage.removeItem("keepsake:cmdk-tip-dismissed");
     const { container } = render(<AppShell />);
 
@@ -324,10 +338,9 @@ describe("AppShell accessibility (B2)", () => {
     const sidebar = container.querySelector("aside");
 
     expect(tip).toBeInTheDocument();
-    expect(tip.className).toContain("absolute");
-    expect(tip.className).not.toContain("fixed");
+    expect(tip.className).not.toMatch(/\b(absolute|fixed)\b/);
     expect(sidebar?.contains(tip)).toBe(false);
-    expect(main?.parentElement?.contains(tip)).toBe(true);
+    expect(main?.contains(tip)).toBe(false);
   });
 
   it("BW2-11: stacks footer controls before overlap at narrow widths and shows tooltips at minimum width in EN and AR", () => {
@@ -352,5 +365,54 @@ describe("AppShell accessibility (B2)", () => {
       minRender.unmount();
     }
     useLocale.getState().setLocale("en");
+  });
+
+  it("A5-05: toggles sidebar mode with physical Alt+KeyZ under Arabic keyboard layout", async () => {
+    localStorage.setItem("sb-mode", "docked");
+    render(<AppShell />);
+
+    fireEvent.keyDown(document, { key: "ئ", code: "KeyZ", altKey: true });
+    await waitFor(() => expect(localStorage.getItem("sb-mode")).toBe("hover"));
+    localStorage.removeItem("sb-mode");
+  });
+
+  it("A5-14: collapses sidebar into an overlay drawer below 768px and closes on backdrop or Escape", async () => {
+    const user = userEvent.setup();
+    const prevWidth = window.innerWidth;
+    localStorage.setItem("sb-mode", "docked");
+    Object.defineProperty(window, "innerWidth", { value: 500, configurable: true, writable: true });
+
+    try {
+      const { container } = render(<AppShell />);
+
+      // Docked sidebar must not take horizontal space when viewport is < 768px.
+      expect(container.querySelector("aside")).toBeNull();
+      expect(screen.queryByRole("navigation")).toBeNull();
+
+      const toggleBtn = screen.getByRole("button", { name: /show navigation/i });
+      await user.click(toggleBtn);
+
+      const drawer = await screen.findByTestId("mobile-sidebar-drawer");
+      expect(drawer).toHaveAttribute("aria-modal", "true");
+      expect(screen.getByRole("navigation")).toBeInTheDocument();
+
+      await user.keyboard("{Escape}");
+      await waitFor(() => {
+        expect(screen.queryByTestId("mobile-sidebar-drawer")).not.toBeInTheDocument();
+      });
+
+      await user.click(toggleBtn);
+      await user.click(await screen.findByTestId("mobile-sidebar-backdrop"));
+      await waitFor(() => {
+        expect(screen.queryByTestId("mobile-sidebar-drawer")).not.toBeInTheDocument();
+      });
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        value: prevWidth,
+        configurable: true,
+        writable: true,
+      });
+      localStorage.removeItem("sb-mode");
+    }
   });
 });

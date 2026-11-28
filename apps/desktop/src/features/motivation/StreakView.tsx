@@ -286,7 +286,11 @@ export function StreakView({ showTitle = true }: StreakViewProps = {}) {
           {/* Month calendar */}
           <div className="rounded-xl border border-border bg-card p-4 sm:p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-foreground">{monthTitle}</h3>
+              {showTitle ? (
+                <h3 className="text-sm font-semibold text-foreground">{monthTitle}</h3>
+              ) : (
+                <h2 className="text-sm font-semibold text-foreground">{monthTitle}</h2>
+              )}
               <div className="flex items-center gap-1.5">
                 <Button
                   type="button"

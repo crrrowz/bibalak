@@ -41,7 +41,7 @@ if [ "$NO_RUST" -eq 0 ]; then
 fi
 
 run_step "pnpm lint:ts" run_pnpm lint:ts
-run_step "pnpm fmt:check" run_pnpm fmt:check
+run_step "pnpm fmt:check:js" run_pnpm fmt:check:js
 run_step "pnpm test:ts" run_pnpm test:ts
 run_step "pnpm --filter @bibalak/desktop build" run_pnpm --filter @bibalak/desktop build
 # Every *.test.mjs under scripts/ (found, not listed: the public copy has fewer).

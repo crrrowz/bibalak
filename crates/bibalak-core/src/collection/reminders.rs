@@ -28,6 +28,7 @@ impl Collection {
                 NIL_USER_ID,
                 self.today_start_ms(),
                 self.today_end_ms(),
+                today,
             )?)
         } else {
             None

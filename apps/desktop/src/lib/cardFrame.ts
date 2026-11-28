@@ -24,6 +24,7 @@ import { t } from "@/lib/i18n";
 /** Exactly what the card frame may do: run its own scripts, nothing else. */
 export const CARD_FRAME_SANDBOX = "allow-scripts";
 export const CARD_CHANNEL = "keepsake-card";
+export const MAX_FRAME_HEIGHT = 16_384;
 
 const KATEX_OPTIONS = {
   delimiters: [
@@ -67,7 +68,7 @@ export function parseFrameMessage(data: unknown): FrameMessage | null {
         : null;
     case "height":
       return typeof d.value === "number" && Number.isFinite(d.value) && d.value >= 0
-        ? { type: "height", value: Math.min(d.value, 1_000_000) }
+        ? { type: "height", value: Math.min(d.value, MAX_FRAME_HEIGHT) }
         : null;
     case "key":
       if (typeof d.key !== "string" || d.key.length > 32) return null;

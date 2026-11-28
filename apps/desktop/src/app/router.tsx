@@ -3,8 +3,13 @@ import { lazy } from "react";
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { AppShell } from "@/app/AppShell";
 import { RouteError } from "@/components/RouteError";
-import { DeckBrowserScreen } from "@/features/decks/DeckBrowserScreen";
-import { StudySessionScreen } from "@/features/study/StudySessionScreen";
+
+const DeckBrowserScreen = lazy(() =>
+  import("@/features/decks/DeckBrowserScreen").then((m) => ({ default: m.DeckBrowserScreen })),
+);
+const StudySessionScreen = lazy(() =>
+  import("@/features/study/StudySessionScreen").then((m) => ({ default: m.StudySessionScreen })),
+);
 
 const AddScreen = lazy(() =>
   import("@/features/add/AddScreen").then((m) => ({ default: m.AddScreen })),
@@ -50,6 +55,9 @@ const StreakScreen = lazy(() =>
 );
 const QuestsScreen = lazy(() =>
   import("@/features/quests/QuestsScreen").then((m) => ({ default: m.QuestsScreen })),
+);
+const ActivityScreen = lazy(() =>
+  import("@/features/activity/ActivityScreen").then((m) => ({ default: m.ActivityScreen })),
 );
 const EisenhowerMatrixScreen = lazy(() =>
   import("@/features/matrix/EisenhowerMatrixScreen").then((m) => ({
@@ -267,6 +275,12 @@ const questsRoute = createRoute({
   component: QuestsScreen,
   errorComponent,
 });
+const activityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/activity",
+  component: ActivityScreen,
+  errorComponent,
+});
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -284,6 +298,7 @@ const routeTree = rootRoute.addChildren([
   shopRoute,
   streakRoute,
   questsRoute,
+  activityRoute,
   assistantRoute,
   generateCardsRoute,
   qualityReviewRoute,

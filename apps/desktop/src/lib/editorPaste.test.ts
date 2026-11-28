@@ -44,7 +44,8 @@ describe("cleanPastedHtml", () => {
 
     const clean = cleanPastedHtml(gdocsHtml);
     expect(clean).not.toContain("docs-internal-guid");
-    expect(clean).not.toMatch(/style=|dir=|font-size|color:/i);
+    expect(clean).not.toMatch(/dir=|font-size|#000000|transparent/i);
+    expect(clean).toContain("color: #ff0000");
     expect(clean).toContain("Plain");
     expect(clean).toMatch(/<(strong|b)>Strong<\/(strong|b)>/);
     expect(clean).toMatch(/<(em|i)> Emphasis<\/(em|i)>/);
@@ -88,5 +89,23 @@ describe("cleanPastedHtml", () => {
     expect(clean).toContain("<th>Term</th>");
     expect(clean).toContain("<td>Alpha</td>");
     expect(clean).toContain("<td>Beta</td>");
+  });
+
+  it("A2-26: preserves semantic formatting (code, mark, s, headings, blockquote, colspan/rowspan) and non-Word text colors", () => {
+    const html = `
+      <h2>Section</h2>
+      <blockquote>Quoted</blockquote>
+      <p><span style="color: rgb(200, 0, 0)">Red</span> <code>x = 1</code> <mark>Note</mark> <s>Old</s></p>
+      <table><thead><tr><th colspan="2">Span</th></tr></thead><tbody><tr><td rowspan="2">A</td><td>B</td></tr></tbody></table>
+    `;
+    const cleaned = cleanPastedHtml(html);
+    expect(cleaned).toContain("<h2>");
+    expect(cleaned).toContain("<blockquote>");
+    expect(cleaned).toContain("<code>");
+    expect(cleaned).toContain("<mark>");
+    expect(cleaned).toContain("<s>");
+    expect(cleaned).toContain("color:");
+    expect(cleaned).toContain('colspan="2"');
+    expect(cleaned).toContain('rowspan="2"');
   });
 });

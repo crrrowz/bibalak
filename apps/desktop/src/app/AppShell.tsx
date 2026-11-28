@@ -1,5 +1,14 @@
-import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  Suspense,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Link, Outlet, useMatchRoute } from "@tanstack/react-router";
+import { QueryClientContext } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BarChart3,
@@ -8,6 +17,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  History,
   Image as ImageIcon,
   Layers,
   LayoutGrid,
@@ -40,9 +50,14 @@ import { CelebrationHost } from "@/features/progress/CelebrationHost";
 import { UpdateCheckHost } from "@/features/settings/UpdateCheckHost";
 import { StyleHud } from "@/features/progress/StyleHud";
 import { Kbd } from "@/components/Kbd";
-import { modShortcut } from "@/lib/shortcuts";
+import { matchesKey, matchesQuestionMark, modShortcut } from "@/lib/shortcuts";
 import { useCoreEvents } from "@/lib/useCoreEvents";
 import { ipc, isTauri } from "@/lib/ipc";
+import { invalidateTodayCounts } from "@/lib/queryRefresh";
+import { queryKeys } from "@/lib/queryKeys";
+import { formatUndoAction } from "@/lib/undo";
+import { useUndoShortcut } from "@/lib/undoToast";
+import { toast } from "@/stores/toast";
 import { platform } from "@/lib/platform";
 import { ReminderSchedulerHost } from "@/lib/reminders/ReminderSchedulerHost";
 import { panelKey, pluginHost } from "@/lib/pluginHost";
@@ -88,7 +103,7 @@ function CommandPaletteTip() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
+      if (matchesKey(e, "KeyK", "k") && (e.metaKey || e.ctrlKey)) {
         localStorage.setItem(CMDK_TIP_KEY, "1");
         setDismissed(true);
       }
@@ -100,17 +115,13 @@ function CommandPaletteTip() {
   if (dismissed || sidePanelCount > 0) return null;
 
   return (
-    <motion.div
+    <div
       data-testid="command-palette-tip"
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 8 }}
-      transition={{ duration: 0.18, ease }}
-      className="glass-panel absolute bottom-3 start-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg"
+      className="flex items-center justify-center gap-2 border-b border-border/50 bg-muted/40 px-3 py-1 text-xs text-muted-foreground"
     >
-      <span className="text-xs text-muted-foreground">{t("shell.tip.press")}</span>
+      <span>{t("shell.tip.press")}</span>
       <Kbd>{modShortcut("K")}</Kbd>
-      <span className="text-xs text-muted-foreground">{t("shell.tip.jump")}</span>
+      <span>{t("shell.tip.jump")}</span>
       <button
         type="button"
         aria-label={t("shell.tip.dismiss")}
@@ -122,7 +133,7 @@ function CommandPaletteTip() {
       >
         <X className="size-3.5" />
       </button>
-    </motion.div>
+    </div>
   );
 }
 
@@ -140,6 +151,7 @@ const nav: {
   { to: "/media", label: "nav.media", icon: ImageIcon, exact: false },
   { to: "/stats", label: "nav.stats", icon: BarChart3, exact: false },
   { to: "/assistant", label: "nav.assistant", icon: Sparkles, exact: false },
+  { to: "/activity", label: "nav.activity", icon: History, exact: false },
 ];
 
 const planNav: {
@@ -160,6 +172,16 @@ const FOOTER_STACK_THRESHOLD = 204;
 const MIN_WIDTH = 44;
 const MAX_WIDTH = 360;
 const DEFAULT_WIDTH = 240;
+const MOBILE_BREAKPOINT_PX = 768;
+
+function readIsMobile(): boolean {
+  if (typeof window === "undefined") return false;
+  if (window.innerWidth > 0 && window.innerWidth < MOBILE_BREAKPOINT_PX) return true;
+  if (typeof window.matchMedia === "function") {
+    return window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX - 1}px)`).matches;
+  }
+  return false;
+}
 
 function readMode(): SidebarMode {
   return (localStorage.getItem("sb-mode") as SidebarMode) ?? "docked";
@@ -550,6 +572,8 @@ export function AppShell() {
   const [mode, setMode] = useState<SidebarMode>(readMode);
   const [sidebarWidth, setSidebarWidth] = useState(readWidth);
   const [hoverOpen, setHoverOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState<boolean>(readIsMobile);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const matchRoute = useMatchRoute();
   const isStudy = !!matchRoute({ to: "/study/$deckId", fuzzy: true });
@@ -558,7 +582,26 @@ export function AppShell() {
   const openPalette = useUi((s) => s.openPalette);
   const inFocus = focusMode && isStudy;
   const isQuickAddWindow = platform.window?.label?.() === "quick-add";
+  const queryClient = useContext(QueryClientContext);
   useCoreEvents();
+
+  const handleGlobalUndo = useCallback(() => {
+    void ipc
+      .undo()
+      .then((undone) => {
+        if (undone) {
+          toast.info(t("study.toast.undone", { action: formatUndoAction(undone) }));
+          if (queryClient) {
+            void invalidateTodayCounts(queryClient);
+            void queryClient.invalidateQueries({ queryKey: queryKeys.habitsAll });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
+          }
+        }
+      })
+      .catch(() => {});
+  }, [queryClient]);
+
+  useUndoShortcut(handleGlobalUndo, isTauri() && !isQuickAddWindow && !isStudy);
 
   // Register the saved quick-add global shortcut in the main window when enabled.
   useEffect(() => {
@@ -638,14 +681,42 @@ export function AppShell() {
   );
 
   useEffect(() => {
+    const syncMobile = () => {
+      const mobile = readIsMobile();
+      setIsMobile(mobile);
+      if (!mobile) setMobileDrawerOpen(false);
+    };
+    syncMobile();
+    const mq =
+      typeof window.matchMedia === "function"
+        ? window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX - 1}px)`)
+        : null;
+    mq?.addEventListener("change", syncMobile);
+    window.addEventListener("resize", syncMobile);
+    return () => {
+      mq?.removeEventListener("change", syncMobile);
+      window.removeEventListener("resize", syncMobile);
+    };
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.altKey && e.key === "z") {
+      if (e.key === "Escape" && mobileDrawerOpen) {
         e.preventDefault();
-        toggleMode();
+        setMobileDrawerOpen(false);
+        return;
+      }
+      if (e.altKey && matchesKey(e, "KeyZ", "z")) {
+        e.preventDefault();
+        if (isMobile) {
+          setMobileDrawerOpen((o) => !o);
+        } else {
+          toggleMode();
+        }
         return;
       }
       if (
-        e.key === "?" &&
+        matchesQuestionMark(e) &&
         !e.metaKey &&
         !e.ctrlKey &&
         !(e.target instanceof HTMLInputElement) &&
@@ -657,7 +728,7 @@ export function AppShell() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [toggleMode]);
+  }, [toggleMode, isMobile, mobileDrawerOpen]);
 
   const iconOnly = mode === "docked" && sidebarWidth < ICON_ONLY_THRESHOLD;
   const stackedFooter = iconOnly || (mode === "docked" && sidebarWidth < FOOTER_STACK_THRESHOLD);
@@ -688,11 +759,12 @@ export function AppShell() {
     >
       <div className="relative shrink-0">
         <TitleBar
-          onToggleSidebar={toggleMode}
-          showSidebarDock={mode === "hover" && !inFocus}
+          onToggleSidebar={isMobile ? () => setMobileDrawerOpen((o) => !o) : toggleMode}
+          showSidebarDock={(isMobile || mode === "hover") && !inFocus}
           onOpenPalette={openPalette}
           trailing={<NotificationBell />}
         />
+        {!inFocus && <CommandPaletteTip />}
       </div>
 
       <a
@@ -705,7 +777,49 @@ export function AppShell() {
       <div className="relative flex min-h-0 flex-1">
         <AnimatePresence initial={false}>
           {!inFocus &&
-            (mode === "docked" ? (
+            (isMobile ? (
+              mobileDrawerOpen && (
+                <>
+                  <div
+                    key="mobile-sidebar-backdrop"
+                    data-testid="mobile-sidebar-backdrop"
+                    aria-hidden="true"
+                    className="fixed inset-0 z-40 bg-background/60 backdrop-blur-xs"
+                    onClick={() => setMobileDrawerOpen(false)}
+                  />
+                  <motion.aside
+                    key="mobile-sidebar-drawer"
+                    data-testid="mobile-sidebar-drawer"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={t("nav.main")}
+                    initial={{
+                      x: document.documentElement.dir === "rtl" ? "100%" : "-100%",
+                      opacity: 0,
+                    }}
+                    animate={{ x: 0, opacity: 1 }}
+                    exit={{
+                      x: document.documentElement.dir === "rtl" ? "100%" : "-100%",
+                      opacity: 0,
+                    }}
+                    transition={{ duration: 0.2, ease }}
+                    className="glass-chrome fixed inset-y-0 start-0 z-50 flex w-64 max-w-[85vw] flex-col border-e shadow-xl"
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).closest("a")) {
+                        setMobileDrawerOpen(false);
+                      }
+                    }}
+                  >
+                    <SidebarContent
+                      compact={false}
+                      stackedFooter={false}
+                      mode="docked"
+                      toggleMode={() => setMobileDrawerOpen(false)}
+                    />
+                  </motion.aside>
+                </>
+              )
+            ) : mode === "docked" ? (
               <motion.aside
                 key="docked-sidebar"
                 style={{ width: sidebarWidth }}
@@ -815,7 +929,6 @@ export function AppShell() {
               </motion.div>
             </main>
             <NotificationToastHost />
-            <AnimatePresence>{!inFocus && <CommandPaletteTip />}</AnimatePresence>
           </div>
         </div>
         <PluginPanelDrawer />

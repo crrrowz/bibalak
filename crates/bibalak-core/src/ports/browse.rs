@@ -1,7 +1,7 @@
 use crate::error::CoreResult;
 use crate::ipc::{
-    CardRow, DuplicateGroup, FindReplacePreview, NoteRow, QualityNoteEdit, QualityScanNote,
-    TagCount,
+    CardRow, DuplicateGroup, EmptyCardItem, FindReplacePreview, NoteRow, QualityNoteEdit,
+    QualityScanNote, TagCount,
 };
 use crate::model::{NoteIndexRow, NoteSnapshot};
 
@@ -46,13 +46,16 @@ pub trait BrowseStore: Send + Sync {
     fn count_note_rows(&self, query: &str, today: i32, now_ms: i64) -> CoreResult<u32>;
 
     /// Preview how many notes and occurrences match a Find & Replace query over `note_ids`.
+    #[allow(clippy::too_many_arguments)]
     fn preview_find_replace(
         &self,
         note_ids: &[i64],
         field_name: Option<&str>,
         find: &str,
+        replace: &str,
         use_regex: bool,
         case_sensitive: bool,
+        include_html: bool,
     ) -> CoreResult<FindReplacePreview>;
 
     /// Apply Find & Replace across `note_ids` in one transaction via the normal note update path.
@@ -66,6 +69,7 @@ pub trait BrowseStore: Send + Sync {
         replace: &str,
         use_regex: bool,
         case_sensitive: bool,
+        include_html: bool,
         now_ms: i64,
     ) -> CoreResult<Vec<NoteSnapshot>>;
 
@@ -87,6 +91,12 @@ pub trait BrowseStore: Send + Sync {
 
     /// Find groups of notes of `notetype_id` whose `field_ord` normalizes to the same key.
     fn find_duplicates(&self, notetype_id: i64, field_ord: i64) -> CoreResult<Vec<DuplicateGroup>>;
+
+    /// Find existing cards whose rendered front template is currently empty (`A2-12`).
+    fn find_empty_cards(&self) -> CoreResult<Vec<EmptyCardItem>>;
+
+    /// Delete confirmed empty cards in one transaction (returns number deleted).
+    fn delete_empty_cards(&self, card_ids: &[i64], now_ms: i64) -> CoreResult<u32>;
 
     /// All distinct tag names from the registry, sorted alphabetically.
     fn list_tags(&self) -> CoreResult<Vec<String>>;

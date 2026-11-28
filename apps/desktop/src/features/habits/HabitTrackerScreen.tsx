@@ -10,7 +10,6 @@ import {
   Plus,
   SkipForward,
   Trash2,
-  Undo2,
   X,
 } from "lucide-react";
 import type { HabitDto, HabitInput, HabitLogDto, HabitLogInput } from "@bibalak/ipc-types";
@@ -25,7 +24,7 @@ import { errorMessage, ipc, isTauri } from "@/lib/ipc";
 import { formatDate, formatNumber, t, tn } from "@/lib/i18n";
 import { queryKeys } from "@/lib/queryKeys";
 import { styleKey, type PresentationStyleOrGame } from "@/lib/styles/styleKey";
-import { formatUndoAction } from "@/lib/undo";
+import { pushUndoToast } from "@/lib/undoToast";
 import { cn } from "@/lib/utils";
 import { useStyle } from "@/stores/style";
 import { toast } from "@/stores/toast";
@@ -525,15 +524,29 @@ export function HabitTrackerScreen() {
   const deleteMut = useMutation({
     mutationFn: (id: string) => ipc.deleteHabit(id),
     onSuccess: (_data, id) => {
+      const deletedTitle = board?.habits.find((h) => h.id === id)?.title ?? "";
       setDrawerMode((cur) => (cur?.kind === "detail" && cur.habitId === id ? null : cur));
       void invalidateAll();
+      if (deletedTitle) {
+        pushUndoToast(t("undo.action.deleteHabit", { title: deletedTitle }), () =>
+          undoMut.mutateAsync(),
+        );
+      }
     },
     onError: onMutError,
   });
 
   const logMut = useMutation({
     mutationFn: (input: HabitLogInput) => ipc.logHabit(input),
-    onSuccess: () => void invalidateAll(),
+    onSuccess: (_data, input) => {
+      const habitTitle = board?.habits.find((h) => h.id === input.habit_id)?.title ?? "";
+      void invalidateAll();
+      if (habitTitle) {
+        pushUndoToast(t("undo.action.logHabit", { title: habitTitle }), () =>
+          undoMut.mutateAsync(),
+        );
+      }
+    },
     onError: onMutError,
   });
 
@@ -835,19 +848,6 @@ export function HabitTrackerScreen() {
               }
             >
               <Archive /> {t("habits.archived.open")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => undoMut.mutate()}
-              disabled={!tauri || undoMut.isPending || !undoAction}
-              title={
-                undoAction
-                  ? t("decks.undoAction", { action: formatUndoAction(undoAction) })
-                  : t("decks.undoEmpty")
-              }
-            >
-              <Undo2 /> {t("decks.undo")}
             </Button>
             <Button
               size="sm"

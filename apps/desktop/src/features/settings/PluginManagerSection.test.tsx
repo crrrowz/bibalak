@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginInfo } from "@bibalak/ipc-types";
 import { PluginManagerSection } from "./PluginManagerSection";
 import { setLocale } from "@/lib/i18n";
 import * as ipcModule from "@/lib/ipc";
-import { pluginHost } from "@/lib/pluginHost";
+import { PLUGIN_CHANNEL, pluginHost } from "@/lib/pluginHost";
 
 const { pickPathMock } = vi.hoisted(() => ({
   pickPathMock: vi.fn<() => Promise<string | null>>(async () => null),
@@ -27,17 +27,6 @@ vi.mock("@/lib/platform", () => ({
   },
 }));
 
-class FakeWorker {
-  static all: FakeWorker[] = [];
-  onmessage: ((e: MessageEvent) => void) | null = null;
-  onerror: ((e: ErrorEvent) => void) | null = null;
-  constructor() {
-    FakeWorker.all.push(this);
-  }
-  postMessage() {}
-  terminate() {}
-}
-
 function renderSection() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -49,10 +38,6 @@ function renderSection() {
 
 beforeEach(() => {
   setLocale("en");
-  FakeWorker.all = [];
-  vi.stubGlobal("Worker", FakeWorker);
-  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fake");
-  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   pluginHost.destroyAll();
 });
 
@@ -140,7 +125,21 @@ describe("PluginManagerSection (PLG1)", () => {
 
     // Load and then crash the plugin -> error state badge shown in Settings
     pluginHost.load("bibalak-focus-timer", ["events:listen", "ui:panel"], "");
-    FakeWorker.all[0].onerror?.({ message: "Uncaught Error: crash test" } as ErrorEvent);
+    const frame = document.querySelector<HTMLIFrameElement>(
+      'iframe[data-plugin-id="bibalak-focus-timer"]',
+    );
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            channel: PLUGIN_CHANNEL,
+            type: "plugin:error",
+            message: "Uncaught Error: crash test",
+          },
+          source: frame?.contentWindow,
+        }),
+      );
+    });
     expect(await screen.findByText("Crashed")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/crash test/);
 

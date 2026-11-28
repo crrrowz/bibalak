@@ -1,6 +1,7 @@
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import type { StatsDto } from "@bibalak/ipc-types";
 import { categorical, tooltipItemStyle, tooltipLabelStyle, tooltipStyle } from "./chartTheme";
+import { renderChartLegend } from "./ChartLegend";
 import { maturityQuery, type MaturityBucket } from "./statQuery";
 import { t } from "@/lib/i18n";
 
@@ -67,7 +68,7 @@ export function MaturityDonut({
           itemStyle={tooltipItemStyle}
           labelStyle={tooltipLabelStyle}
         />
-        <Legend wrapperStyle={{ fontSize: 12 }} />
+        <Legend content={renderChartLegend} />
       </PieChart>
     </ResponsiveContainer>
   );

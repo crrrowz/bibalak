@@ -459,4 +459,56 @@ describe("NotificationToastHost (16h)", () => {
       main.remove();
     }
   });
+
+  it("A5-18: clears [data-toast-avoid] primary CTAs such as TodayCard Start study", () => {
+    const main = document.createElement("main");
+    main.id = "main-content";
+    main.getBoundingClientRect = () =>
+      ({
+        left: 240,
+        right: 1280,
+        top: 36,
+        bottom: 800,
+        width: 1040,
+        height: 764,
+        x: 240,
+        y: 36,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    const todayCta = document.createElement("div");
+    todayCta.setAttribute("data-toast-avoid", "");
+    todayCta.getBoundingClientRect = () =>
+      ({
+        left: 980,
+        right: 1220,
+        top: 96,
+        bottom: 240,
+        width: 240,
+        height: 144,
+        x: 980,
+        y: 96,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    main.appendChild(todayCta);
+    document.body.appendChild(main);
+
+    try {
+      renderToastHost();
+      act(() => {
+        pushNotification({
+          kind: "achievement",
+          title: "Streak!",
+          body: "Keep going",
+        });
+      });
+
+      const host = screen.getByTestId("notification-toast-host");
+      const topPx = parseFloat(host.style.top);
+      expect(topPx).toBeGreaterThanOrEqual(252);
+    } finally {
+      main.remove();
+    }
+  });
 });

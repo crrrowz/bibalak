@@ -23,7 +23,7 @@ pub fn template_uses_field(template_str: &str, field_name: &str) -> bool {
             target.trim()
         };
 
-        if field == field_name {
+        if field.to_lowercase() == field_name.to_lowercase() {
             return true;
         }
     }
@@ -32,6 +32,7 @@ pub fn template_uses_field(template_str: &str, field_name: &str) -> bool {
 
 pub fn rewrite_template_field(template_str: &str, old_name: &str, new_name: &str) -> String {
     let re = regex::Regex::new(r"\{\{([^{}]+)\}\}").unwrap();
+    let old_lower = old_name.to_lowercase();
     re.replace_all(template_str, |caps: &regex::Captures<'_>| {
         let full = &caps[0];
         let inner = &caps[1];
@@ -49,14 +50,14 @@ pub fn rewrite_template_field(template_str: &str, old_name: &str, new_name: &str
         if let Some(colon_idx) = rest.rfind(':') {
             let filters = &rest[..=colon_idx];
             let target_field = rest[colon_idx + 1..].trim();
-            if target_field == old_name {
+            if target_field.to_lowercase() == old_lower {
                 let leading_ws = &inner[..inner.len() - inner.trim_start().len()];
                 let trailing_ws = &inner[inner.trim_end().len()..];
                 return format!(
                     "{{{{{leading_ws}{prefix_char}{filters}{new_name}{trailing_ws}}}}}"
                 );
             }
-        } else if rest.trim() == old_name {
+        } else if rest.trim().to_lowercase() == old_lower {
             let leading_ws = &inner[..inner.len() - inner.trim_start().len()];
             let trailing_ws = &inner[inner.trim_end().len()..];
             return format!("{{{{{leading_ws}{prefix_char}{new_name}{trailing_ws}}}}}");
@@ -86,6 +87,22 @@ pub fn add_template(
     afmt: &str,
     now_ms: i64,
 ) -> CoreResult<()> {
+    let clean_name = name.trim();
+    if clean_name.is_empty() {
+        return Err(CoreError::Invalid("template name cannot be empty".into()));
+    }
+    let dup: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM templates WHERE notetype_id = ?1 AND lower(name) = lower(?2))",
+            params![notetype_id, clean_name],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    if dup {
+        return Err(CoreError::Invalid(format!(
+            "a template named {clean_name:?} already exists"
+        )));
+    }
     let next_ord: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(ord) + 1, 0) FROM templates WHERE notetype_id = ?1",
@@ -96,7 +113,7 @@ pub fn add_template(
     tx.execute(
         "INSERT INTO templates (notetype_id, ord, name, qfmt, afmt, config) \
          VALUES (?1, ?2, ?3, ?4, ?5, '{}')",
-        params![notetype_id, next_ord, name, qfmt, afmt],
+        params![notetype_id, next_ord, clean_name, qfmt, afmt],
     )
     .map_err(err)?;
 
@@ -202,24 +219,81 @@ pub fn save_template(
     afmt: &str,
     now_ms: i64,
 ) -> CoreResult<()> {
-    let affected = conn
-        .execute(
+    let clean_name = name.trim();
+    if clean_name.is_empty() {
+        return Err(CoreError::Invalid("template name cannot be empty".into()));
+    }
+    conn.execute_batch("SAVEPOINT save_template_tx")
+        .map_err(err)?;
+    let res = (|| -> CoreResult<()> {
+        let existing: Option<(String, String)> = conn
+            .query_row(
+                "SELECT qfmt, afmt FROM templates WHERE notetype_id = ?1 AND ord = ?2",
+                params![notetype_id, ord],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(err)?;
+        let Some((old_qfmt, old_afmt)) = existing else {
+            return Err(CoreError::NotFound(format!(
+                "template {ord} in notetype {notetype_id}"
+            )));
+        };
+        let dup: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM templates WHERE notetype_id = ?1 AND lower(name) = lower(?2) AND ord != ?3)",
+                params![notetype_id, clean_name, ord],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if dup {
+            return Err(CoreError::Invalid(format!(
+                "a template named {clean_name:?} already exists"
+            )));
+        }
+
+        conn.execute(
             "UPDATE templates SET name = ?1, qfmt = ?2, afmt = ?3 \
              WHERE notetype_id = ?4 AND ord = ?5",
-            params![name, qfmt, afmt, notetype_id, ord],
+            params![clean_name, qfmt, afmt, notetype_id, ord],
         )
         .map_err(err)?;
-    if affected == 0 {
-        return Err(CoreError::NotFound(format!(
-            "template {ord} in notetype {notetype_id}"
-        )));
+
+        if qfmt != old_qfmt || afmt != old_afmt {
+            let cfg: String = conn
+                .query_row(
+                    "SELECT config FROM notetypes WHERE id = ?1",
+                    [notetype_id],
+                    |r| r.get(0),
+                )
+                .map_err(err)?;
+            let updated_cfg =
+                bibalak_core::notetype_preset::set_keepsake_preset_in_config(&cfg, None)?;
+            conn.execute(
+                r#"UPDATE notetypes SET config = ?1, "mod" = ?2, usn = -1 WHERE id = ?3"#,
+                params![updated_cfg, now_ms, notetype_id],
+            )
+            .map_err(err)?;
+        } else {
+            conn.execute(
+                r#"UPDATE notetypes SET "mod" = ?1, usn = -1 WHERE id = ?2"#,
+                params![now_ms, notetype_id],
+            )
+            .map_err(err)?;
+        }
+        Ok(())
+    })();
+    match res {
+        Ok(()) => conn
+            .execute_batch("RELEASE SAVEPOINT save_template_tx")
+            .map_err(err),
+        Err(e) => {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT save_template_tx; RELEASE SAVEPOINT save_template_tx;",
+            );
+            Err(e)
+        }
     }
-    conn.execute(
-        r#"UPDATE notetypes SET "mod" = ?1, usn = -1 WHERE id = ?2"#,
-        params![now_ms, notetype_id],
-    )
-    .map_err(err)?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -276,5 +350,24 @@ mod tests {
         assert_eq!(detail.templates[0].name, "Updated");
         assert_eq!(detail.templates[0].qfmt, "{{Back}}");
         assert_eq!(detail.templates[0].afmt, "{{Front}}");
+    }
+
+    #[test]
+    fn save_template_rejects_empty_and_duplicate_names_and_clears_preset() {
+        let Setup { s, nt_id, .. } = setup();
+        assert!(s
+            .save_template(nt_id, 0, "   ", "{{Front}}", "{{Back}}", 1_000)
+            .is_err());
+        s.add_template(nt_id, "Card 2", "{{Back}}", "{{Front}}", 1_000)
+            .unwrap();
+        assert!(s
+            .save_template(nt_id, 0, "card 2", "{{Front}}", "{{Back}}", 1_500)
+            .is_err());
+        assert!(s
+            .add_template(nt_id, "Card 1", "{{Front}}", "{{Back}}", 1_500)
+            .is_err());
+        assert!(s
+            .add_template(nt_id, "  ", "{{Front}}", "{{Back}}", 1_500)
+            .is_err());
     }
 }

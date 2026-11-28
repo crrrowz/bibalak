@@ -423,31 +423,10 @@ describe("StatsScreen error state, retry, and coach cards", () => {
         },
       }),
     );
-    const baseCfg = {
-      config_id: 1,
-      new_per_day: 20,
-      review_per_day: 200,
-      learning_steps_min: [1, 10],
-      graduating_interval_days: 1,
-      easy_interval_days: 4,
-      starting_ease_milli: 2500,
-      easy_bonus: 1.3,
-      hard_interval_factor: 1.2,
-      interval_modifier: 1.0,
-      maximum_interval_days: 36500,
-      relearning_steps_min: [10],
-      lapse_interval_factor: 0.0,
-      minimum_interval_days: 1,
-      leech_threshold: 8,
-      fsrs_weights: Array.from({ length: 21 }, () => 0.5),
-      desired_retention: 0.9,
-    };
-    const cfgSpy = vi.spyOn(ipc.ipc, "getDeckConfig").mockImplementation(async (deckId) => ({
-      ...baseCfg,
-      deck_id: deckId,
-      config_id: deckId,
-      algorithm: deckId === 1 ? "fsrs" : "sm2",
-    }));
+    const algSpy = vi.spyOn(ipc.ipc, "listDeckAlgorithms").mockResolvedValue([
+      { deck_id: 1, algorithm: "fsrs" },
+      { deck_id: 2, algorithm: "sm2" },
+    ]);
 
     const { unmount } = render(
       <QueryClientProvider client={queryClient}>
@@ -461,12 +440,10 @@ describe("StatsScreen error state, retry, and coach cards", () => {
 
     const qc2 = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.spyOn(ipc.ipc, "getStats").mockResolvedValue(makeStats());
-    cfgSpy.mockImplementation(async (deckId) => ({
-      ...baseCfg,
-      deck_id: deckId,
-      config_id: deckId,
-      algorithm: "sm2",
-    }));
+    algSpy.mockResolvedValue([
+      { deck_id: 1, algorithm: "sm2" },
+      { deck_id: 2, algorithm: "sm2" },
+    ]);
 
     render(
       <QueryClientProvider client={qc2}>
@@ -475,5 +452,108 @@ describe("StatsScreen error state, retry, and coach cards", () => {
     );
 
     expect(await screen.findByText(/No decks currently use FSRS/i)).toBeInTheDocument();
+  });
+
+  it("A5-08: opening Stats with 12 decks fires one batch listDeckAlgorithms IPC and zero getDeckConfig calls", async () => {
+    const decks = Array.from({ length: 12 }, (_, i) => ({
+      id: i + 1,
+      name: `Deck ${i + 1}`,
+      parent_id: null,
+      is_filtered: false,
+      collapsed: false,
+      new_count: 0,
+      learning_count: 0,
+      review_count: 0,
+    }));
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue(decks);
+    vi.spyOn(ipc.ipc, "getStats").mockResolvedValue(
+      makeStats({
+        fsrs: {
+          card_count: 10,
+          stability_buckets: [2, 3, 2, 1, 1, 1, 0],
+          difficulty_buckets: [1, 2, 2, 2, 1, 1, 1, 0, 0, 0],
+          avg_retrievability: 92,
+        },
+      }),
+    );
+    const algSpy = vi
+      .spyOn(ipc.ipc, "listDeckAlgorithms")
+      .mockResolvedValue(decks.map((d) => ({ deck_id: d.id, algorithm: "fsrs" as const })));
+    const getCfgSpy = vi.spyOn(ipc.ipc, "getDeckConfig");
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <StatsScreen />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/Covers FSRS decks:/i)).toBeInTheDocument();
+    expect(algSpy).toHaveBeenCalledTimes(1);
+    expect(getCfgSpy).not.toHaveBeenCalled();
+  });
+
+  it("A3-07: StatsScreen displays MotivationState current and best streak on All decks even when today has 0 card reviews", async () => {
+    vi.spyOn(ipc.ipc, "listDecks").mockResolvedValue([]);
+    vi.spyOn(ipc.ipc, "getStats").mockResolvedValue(
+      makeStats({
+        today: 10,
+        reviews: [
+          { day: 8, date: "2026-11-26", count: 5 },
+          { day: 9, date: "2026-11-27", count: 4 },
+        ],
+      }),
+    );
+    vi.spyOn(ipc.ipc, "getMotivationState").mockResolvedValue({
+      daily_goal_xp: 20,
+      today_xp: 0,
+      goal_met_today: false,
+      current_streak: 5,
+      best_streak: 9,
+      studied_today: false,
+      next_milestone: 7,
+      today_day_index: 10,
+      today_date: "2026-11-28",
+      days_remaining_in_week: 2,
+      daily_quests: [],
+      weekly_quest: {
+        id: "w",
+        kind: "weekly",
+        metric: "reviews",
+        progress: 0,
+        target: 150,
+        completed: false,
+        reward_gold_cents: 1000,
+      },
+      monthly_badge: {
+        month_key: "2026-11",
+        completed_daily_quests: 5,
+        target_daily_quests: 20,
+        earned: false,
+        earned_at: null,
+        seen: false,
+        reward_gold_cents: 1000,
+      },
+      earned_monthly_badges: [],
+      comeback_offer: null,
+      onboarding_completed: true,
+      auto_frozen_day: null,
+    });
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <StatsScreen />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("9 days")).toBeInTheDocument();
+    const streakCard = screen.getByText("Streak").closest(".rounded-xl");
+    await waitFor(
+      () => {
+        expect(streakCard?.textContent).toContain("5");
+      },
+      { timeout: 2000 },
+    );
   });
 });

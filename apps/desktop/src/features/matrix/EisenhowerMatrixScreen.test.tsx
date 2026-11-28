@@ -327,12 +327,8 @@ describe("EisenhowerMatrixScreen (M2)", () => {
     await waitFor(() => expect(completeSpy).toHaveBeenCalledWith("t-4"));
     await waitFor(() => expect(within(q4).queryByText("Sort old PDFs")).not.toBeInTheDocument());
 
-    const undoBtn = screen.getByRole("button", { name: /^Undo$/i });
-    await waitFor(() => expect(undoBtn).not.toBeDisabled());
-    expect(undoBtn).toHaveAttribute(
-      "title",
-      expect.stringContaining('Complete task "Sort old PDFs"'),
-    );
+    // F4: generic toolbar Undo button is removed; Ctrl+Z triggers undo
+    expect(screen.queryByRole("button", { name: /^Undo$/i })).not.toBeInTheDocument();
 
     const showCompletedToggle = screen.getByRole("switch", { name: /show completed/i });
     await user.click(showCompletedToggle);

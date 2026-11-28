@@ -3,6 +3,22 @@
 //! handles nested same-name conditional sections and degrades unmatched
 //! `{{/…}}` closers to literal text instead of eating surrounding content.
 
+/// Maximum nested conditional section depth (`{{#F}}...{{/F}}` / `{{^F}}...{{/F}}`)
+/// permitted in a single template before returning a [`RenderError`].
+pub const MAX_TEMPLATE_DEPTH: usize = 64;
+
+/// Error returned when a card template exceeds safety limits (e.g. nesting depth).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderError(pub String);
+
+impl std::fmt::Display for RenderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for RenderError {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Node {
     Text(String),
@@ -24,10 +40,10 @@ enum Token<'a> {
     Replacement { inner: &'a str },
 }
 
-pub fn parse(template: &str) -> Vec<Node> {
+pub fn parse(template: &str) -> Result<Vec<Node>, RenderError> {
     let tokens = tokenize(template);
     let mut pos = 0;
-    parse_nodes(&tokens, &mut pos, None)
+    parse_nodes(&tokens, &mut pos, None, 0)
 }
 
 fn tokenize(template: &str) -> Vec<Token<'_>> {
@@ -76,8 +92,14 @@ fn tokenize(template: &str) -> Vec<Token<'_>> {
 
 /// Parses a run of nodes, stopping (without consuming) when it meets a close
 /// tag matching `closing`. Called recursively for section bodies so nested
-/// same-name sections resolve independently at each depth.
-fn parse_nodes<'a>(tokens: &[Token<'a>], pos: &mut usize, closing: Option<&str>) -> Vec<Node> {
+/// same-name sections resolve independently at each depth, bounded by
+/// [`MAX_TEMPLATE_DEPTH`].
+fn parse_nodes<'a>(
+    tokens: &[Token<'a>],
+    pos: &mut usize,
+    closing: Option<&str>,
+    depth: usize,
+) -> Result<Vec<Node>, RenderError> {
     let mut nodes = Vec::new();
     while *pos < tokens.len() {
         match &tokens[*pos] {
@@ -93,10 +115,15 @@ fn parse_nodes<'a>(tokens: &[Token<'a>], pos: &mut usize, closing: Option<&str>)
                 *pos += 1;
             }
             Token::Open { negate, name } => {
+                if depth >= MAX_TEMPLATE_DEPTH {
+                    return Err(RenderError(format!(
+                        "template section nesting exceeds maximum depth of {MAX_TEMPLATE_DEPTH}"
+                    )));
+                }
                 let negate = *negate;
                 let name = name.to_string();
                 *pos += 1;
-                let body = parse_nodes(tokens, pos, Some(&name));
+                let body = parse_nodes(tokens, pos, Some(&name), depth + 1)?;
                 if *pos < tokens.len() {
                     if let Token::Close { name: close_name } = &tokens[*pos] {
                         if *close_name == name {
@@ -108,7 +135,7 @@ fn parse_nodes<'a>(tokens: &[Token<'a>], pos: &mut usize, closing: Option<&str>)
             }
             Token::Close { name } => {
                 if closing == Some(*name) {
-                    return nodes;
+                    return Ok(nodes);
                 }
                 // Unmatched closer — degrade to literal text rather than
                 // silently swallowing surrounding content.
@@ -117,7 +144,7 @@ fn parse_nodes<'a>(tokens: &[Token<'a>], pos: &mut usize, closing: Option<&str>)
             }
         }
     }
-    nodes
+    Ok(nodes)
 }
 
 #[cfg(test)]
@@ -126,7 +153,7 @@ mod tests {
 
     #[test]
     fn flat_replacement_and_text() {
-        let nodes = parse("hi {{Front}}!");
+        let nodes = parse("hi {{Front}}!").unwrap();
         assert_eq!(
             nodes,
             vec![
@@ -142,7 +169,7 @@ mod tests {
 
     #[test]
     fn nested_same_name_sections() {
-        let nodes = parse("{{#A}}outer{{#A}}inner{{/A}}rest{{/A}}");
+        let nodes = parse("{{#A}}outer{{#A}}inner{{/A}}rest{{/A}}").unwrap();
         assert_eq!(
             nodes,
             vec![Node::Section {
@@ -163,7 +190,7 @@ mod tests {
 
     #[test]
     fn unmatched_close_degrades_to_text() {
-        let nodes = parse("a{{/Stray}}b");
+        let nodes = parse("a{{/Stray}}b").unwrap();
         assert_eq!(
             nodes,
             vec![
@@ -176,7 +203,7 @@ mod tests {
 
     #[test]
     fn chained_filters_parsed_in_order() {
-        let nodes = parse("{{text:cloze:Text}}");
+        let nodes = parse("{{text:cloze:Text}}").unwrap();
         assert_eq!(
             nodes,
             vec![Node::Replacement {

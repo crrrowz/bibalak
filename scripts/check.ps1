@@ -38,7 +38,7 @@ if (-not $NoRust) {
 }
 
 Invoke-Step "pnpm lint:ts" { Invoke-Pnpm @("lint:ts") }
-Invoke-Step "pnpm fmt:check" { Invoke-Pnpm @("fmt:check") }
+Invoke-Step "pnpm fmt:check:js" { Invoke-Pnpm @("fmt:check:js") }
 Invoke-Step "pnpm test:ts" { Invoke-Pnpm @("test:ts") }
 Invoke-Step "pnpm --filter @bibalak/desktop build" { Invoke-Pnpm @("--filter", "@bibalak/desktop", "build") }
 Invoke-Step "node --test (repo scripts)" {

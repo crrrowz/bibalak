@@ -7,6 +7,8 @@ const PERMISSION_LABELS: Record<string, LocaleKey> = {
   "write:cards": "settings.perm.write_cards",
   "ui:panel": "settings.perm.ui_panel",
   "ui:command": "settings.perm.ui_command",
+  "ui:toast": "settings.perm.ui_toast",
+  "ui:navigate": "settings.perm.ui_navigate",
   "ui:review-button": "settings.perm.ui_review_button",
   "events:listen": "settings.perm.events_listen",
   "net:fetch": "settings.perm.net_fetch",
@@ -24,13 +26,19 @@ export function permissionLabel(perm: string): string {
 }
 
 export function fmt_size(bytes: number): string {
-  if (bytes < 1024) return `${formatNumber(bytes)} B`;
+  if (bytes < 1024) return `${formatNumber(bytes)} ${t("common.size.b")}`;
   if (bytes < 1024 * 1024) {
-    return `${formatNumber(bytes / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KB`;
+    return `${formatNumber(bytes / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${t("common.size.kb")}`;
   }
-  return `${formatNumber(bytes / (1024 * 1024), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`;
+  return `${formatNumber(bytes / (1024 * 1024), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${t("common.size.mb")}`;
 }
 
 export function fmt_date(ms: number): string {
   return formatDate(ms, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+export function deriveDataDir(mediaDir: string): string {
+  const trimmed = mediaDir.replace(/[\\/]+$/, "");
+  const stripped = trimmed.replace(/[\\/]collection\.media$/i, "");
+  return stripped || trimmed;
 }

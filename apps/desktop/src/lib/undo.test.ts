@@ -82,11 +82,17 @@ describe("formatUndoAction", () => {
       expect(formatUndoAction({ kind: "move-cards", count: 3 })).toBe("Move 3 cards");
       expect(formatUndoAction({ kind: "change-deck-options" })).toBe("Change deck options");
       expect(formatUndoAction({ kind: "increase-today-limit" })).toBe("Increase today's limit");
+      expect(
+        formatUndoAction({ kind: "reset-deck-progress", name: "Biology", count: 3 } as never),
+      ).toBe('Reset progress for "Biology" (3 cards)');
 
       setLocale("ar");
       expect(formatUndoAction({ kind: "suspend-cards", count: 1 })).toBe("تعليق بطاقة واحدة");
       expect(formatUndoAction({ kind: "bury-cards", count: 2 })).toBe("دفن بطاقتين");
       expect(formatUndoAction({ kind: "change-deck-options" })).toBe("تغيير خيارات المجموعة");
+      expect(
+        formatUndoAction({ kind: "reset-deck-progress", name: "Biology", count: 2 } as never),
+      ).toContain("Biology");
     } finally {
       setLocale("en");
     }

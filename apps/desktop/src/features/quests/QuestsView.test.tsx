@@ -118,7 +118,7 @@ describe("QuestsView / QuestsContent (16g)", () => {
   it.each([
     {
       style: "default" as const,
-      dailyHeading: "Daily tasks",
+      dailyHeading: "Daily challenges",
       weeklyHeading: "Weekly goal",
       monthlyHeading: "Monthly milestone",
       dailyReward: "+2 gold",
@@ -311,7 +311,7 @@ describe("QuestsView / QuestsContent (16g)", () => {
 
     expect(await screen.findByTestId("quests-error")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByText("Daily tasks")).toBeInTheDocument();
+    expect(await screen.findByText("Daily challenges")).toBeInTheDocument();
     expect(retrySpy).toHaveBeenCalledTimes(2);
   });
 

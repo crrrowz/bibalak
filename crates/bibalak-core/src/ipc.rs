@@ -15,7 +15,7 @@ use crate::error::{CoreError, CoreResult};
 pub use crate::events::CoreEventName;
 use crate::model::{Algorithm, Deck};
 use crate::notetype_preset::NotetypePreset;
-pub use crate::undo::UndoAction;
+pub use crate::undo::{UndoAction, UndoHistoryEntry, UndoHistoryPage};
 
 /// Basic identity of the running application, surfaced on the home screen and
 /// the About page.
@@ -368,6 +368,9 @@ pub struct StudyCardDto {
     pub algorithm: Algorithm,
     /// The notetype's custom card CSS, applied scoped to the card face.
     pub css: String,
+    /// Card flag (0 = none, 1..=7 = colored flag).
+    #[serde(default)]
+    pub flag: u8,
 }
 
 /// Editor text-direction option for a field, stored via Anki's `"rtl"` key.
@@ -381,7 +384,19 @@ pub enum FieldDirection {
     Ltr,
 }
 
-/// Anki-compatible field editor options (`"rtl"`, `"font"`, `"size"`, `"description"`).
+/// Content kind of a note field, persisted under `"keepsakeFieldKind"` in `fields.config`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum FieldKind {
+    #[default]
+    Text,
+    Image,
+    Audio,
+    Video,
+}
+
+/// Anki-compatible field editor options (`"rtl"`, `"font"`, `"size"`, `"description"`, `"keepsakeFieldKind"`).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct FieldOptions {
@@ -393,6 +408,9 @@ pub struct FieldOptions {
     pub size: u32,
     #[serde(default)]
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub kind: Option<FieldKind>,
 }
 
 /// Parse Anki-compatible field options from `fields.config` JSON.
@@ -422,16 +440,20 @@ pub fn parse_field_options(config_json: &str) -> FieldOptions {
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
+    let kind = map
+        .get("keepsakeFieldKind")
+        .and_then(|v| serde_json::from_value::<FieldKind>(v.clone()).ok());
     FieldOptions {
         direction,
         font,
         size,
         description,
+        kind,
     }
 }
 
-/// Update `fields.config` JSON with Anki's `"rtl"`, `"font"`, `"size"`, `"description"` keys,
-/// preserving any unrelated keys already present.
+/// Update `fields.config` JSON with Anki's `"rtl"`, `"font"`, `"size"`, `"description"`,
+/// and `"keepsakeFieldKind"` keys, preserving any unrelated keys already present.
 pub fn apply_field_options_to_config(config_json: &str, opts: &FieldOptions) -> String {
     let mut map = match serde_json::from_str::<serde_json::Value>(config_json) {
         Ok(serde_json::Value::Object(m)) => m,
@@ -466,6 +488,16 @@ pub fn apply_field_options_to_config(config_json: &str, opts: &FieldOptions) -> 
             "description".into(),
             serde_json::Value::String(opts.description.clone()),
         );
+    }
+    match opts.kind {
+        Some(kind) => {
+            if let Ok(val) = serde_json::to_value(kind) {
+                map.insert("keepsakeFieldKind".into(), val);
+            }
+        }
+        None => {
+            map.remove("keepsakeFieldKind");
+        }
     }
     serde_json::Value::Object(map).to_string()
 }
@@ -557,14 +589,20 @@ pub struct NoteRow {
     pub tags: Vec<String>,
     #[ts(type = "number")]
     pub mod_ms: i64,
+    pub has_suspended: bool,
+    pub has_unsuspended: bool,
+    pub has_buried: bool,
+    pub has_unburied: bool,
 }
 
-/// Preview counts returned before applying Find & Replace to selected notes.
+/// Preview counts and optional sample diff returned before applying Find & Replace to selected notes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct FindReplacePreview {
     pub notes_matched: u32,
     pub occurrences: u32,
+    pub sample_before: Option<String>,
+    pub sample_after: Option<String>,
 }
 
 /// A group of notes whose chosen field normalizes to the same key.
@@ -575,6 +613,22 @@ pub struct DuplicateGroup {
     pub sample_value: String,
     #[ts(type = "number[]")]
     pub note_ids: Vec<i64>,
+}
+
+/// One card whose rendered front is empty and can be cleaned up in Empty Cards (`A2-12`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EmptyCardItem {
+    #[ts(type = "number")]
+    pub card_id: i64,
+    #[ts(type = "number")]
+    pub note_id: i64,
+    pub deck_name: String,
+    pub notetype_name: String,
+    pub template_name: String,
+    pub sort_field: String,
+    #[ts(type = "number")]
+    pub ord: i64,
 }
 
 /// A tag name paired with the number of notes carrying it.
@@ -827,6 +881,23 @@ pub struct DeckStat {
     pub reviews_7d: u32,
 }
 
+/// Compact `(deck_id, algorithm)` pair so dashboards avoid N+1 `get_deck_config` calls.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DeckAlgorithmDto {
+    #[ts(type = "number")]
+    pub deck_id: i64,
+    pub algorithm: Algorithm,
+}
+
+/// Aggregate collection statistics for the dashboards.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DueForecastDto {
+    pub today_date: String,
+    pub forecast: Vec<DayCount>,
+}
+
 /// Aggregate collection statistics for the dashboards.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -925,6 +996,14 @@ pub struct BackupInfo {
     pub created_ms: i64,
     #[ts(type = "number")]
     pub size_bytes: i64,
+}
+
+/// Results of a collection integrity check.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct IntegrityReport {
+    pub errors: Vec<String>,
+    pub repaired_orphan_subdecks: u32,
 }
 
 /// A plugin as shown in the plugin manager UI.
@@ -1054,11 +1133,11 @@ pub struct MediaLibraryPage {
     pub items: Vec<MediaLibraryItem>,
     /// Total stored files matching the current search query.
     pub total_count: u32,
-    /// Total stored files in the library regardless of search filter.
+    /// Total stored files matching the current search/kind/query scope.
     pub library_count: u32,
-    /// Total stored files with zero references across all notes.
+    /// Total stored files in the current scope with zero references across all notes.
     pub unused_count: u32,
-    /// Combined size in bytes of all stored files in the library.
+    /// Combined size in bytes of stored files matching the active filter.
     #[ts(type = "number")]
     pub total_bytes: u64,
 }
@@ -1210,5 +1289,29 @@ mod tests {
         assert!(parse_due_date_spec("abc").is_err());
         assert!(parse_due_date_spec("1-2-3").is_err());
         assert!(parse_due_date_spec("36501").is_err());
+    }
+
+    #[test]
+    fn field_options_roundtrips_keepsake_field_kind_and_preserves_unknown_keys() {
+        use super::{
+            apply_field_options_to_config, parse_field_options, FieldDirection, FieldKind,
+            FieldOptions,
+        };
+
+        let opts = FieldOptions {
+            direction: FieldDirection::Ltr,
+            font: "".into(),
+            size: 0,
+            description: "Clip".into(),
+            kind: Some(FieldKind::Audio),
+        };
+        let config = apply_field_options_to_config(r#"{"sticky":true}"#, &opts);
+        assert!(config.contains(r#""sticky":true"#));
+        assert!(config.contains(r#""keepsakeFieldKind":"audio""#));
+        assert_eq!(parse_field_options(&config), opts);
+
+        let cleared = apply_field_options_to_config(&config, &FieldOptions { kind: None, ..opts });
+        assert!(!cleared.contains("keepsakeFieldKind"));
+        assert_eq!(parse_field_options(&cleared).kind, None);
     }
 }

@@ -8,6 +8,7 @@ export type BrowseDialogKind =
   | "preview"
   | "findReplace"
   | "findDuplicates"
+  | "emptyCards"
   | "changeNotetype"
   | "columns";
 

@@ -6,5 +6,5 @@
   "description": "Shows due cards per deck and adds a command to jump straight into the next deck to study.",
   "author": "Bibalak",
   "apiVersion": "0.2.0",
-  "permissions": ["read:decks", "ui:panel", "ui:command"]
+  "permissions": ["read:decks", "ui:panel", "ui:command", "ui:toast", "ui:navigate"]
 }

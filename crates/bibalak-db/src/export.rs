@@ -1,5 +1,7 @@
 //! Dump the full canonical collection for export.
 
+use std::collections::HashSet;
+
 use bibalak_core::error::{CoreError, CoreResult};
 use bibalak_core::model::{
     CanonicalModel, Card, Deck, DeckConfig, Field, Note, Notetype, Revlog, Template,
@@ -10,6 +12,17 @@ const FIELD_SEP: char = '\u{1f}';
 
 fn err(e: impl std::fmt::Display) -> CoreError {
     CoreError::Storage(e.to_string())
+}
+
+fn card_scope_sql(alias: &str, deck_ids_csv: &str) -> String {
+    let prefix = if alias.is_empty() {
+        String::new()
+    } else {
+        format!("{alias}.")
+    };
+    format!(
+        "({prefix}deck_id IN ({deck_ids_csv}) OR ({prefix}original_deck_id != 0 AND {prefix}original_deck_id IN ({deck_ids_csv})))"
+    )
 }
 
 pub fn dump_collection(conn: &Connection) -> CoreResult<CanonicalModel> {
@@ -37,7 +50,7 @@ pub fn dump_collection_scoped(
             fields: dump_fields(conn, None)?,
             templates: dump_templates(conn, None)?,
             notes: dump_notes(conn, None)?,
-            cards: dump_cards(conn, None)?,
+            cards: dump_cards(conn, None, None)?,
             revlog: if include_revlog {
                 dump_revlog(conn, None)?
             } else {
@@ -58,6 +71,7 @@ pub fn dump_collection_scoped(
         .map(|id| id.to_string())
         .collect::<Vec<_>>()
         .join(",");
+    let id_set: HashSet<i64> = ids.iter().copied().collect();
     let filter = Some(id_list.as_str());
 
     Ok(CanonicalModel {
@@ -68,7 +82,7 @@ pub fn dump_collection_scoped(
         fields: dump_fields(conn, filter)?,
         templates: dump_templates(conn, filter)?,
         notes: dump_notes(conn, filter)?,
-        cards: dump_cards(conn, filter)?,
+        cards: dump_cards(conn, filter, Some(&id_set))?,
         revlog: if include_revlog {
             dump_revlog(conn, filter)?
         } else {
@@ -135,9 +149,10 @@ fn dump_notetypes(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Ve
              WHERE id IN (
                  SELECT DISTINCT n.notetype_id FROM notes n
                  JOIN cards c ON c.note_id = n.id
-                 WHERE c.deck_id IN ({ids})
+                 WHERE {}
              )
-             ORDER BY id"
+             ORDER BY id",
+            card_scope_sql("c", ids)
         ),
         None => "SELECT id, name, kind, mod, usn, config FROM notetypes ORDER BY id".to_string(),
     };
@@ -166,9 +181,10 @@ fn dump_fields(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<F
              WHERE notetype_id IN (
                  SELECT DISTINCT n.notetype_id FROM notes n
                  JOIN cards c ON c.note_id = n.id
-                 WHERE c.deck_id IN ({ids})
+                 WHERE {}
              )
-             ORDER BY notetype_id, ord"
+             ORDER BY notetype_id, ord",
+            card_scope_sql("c", ids)
         ),
         None => "SELECT notetype_id, ord, name, config FROM fields ORDER BY notetype_id, ord"
             .to_string(),
@@ -197,9 +213,10 @@ fn dump_templates(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Ve
              WHERE notetype_id IN (
                  SELECT DISTINCT n.notetype_id FROM notes n
                  JOIN cards c ON c.note_id = n.id
-                 WHERE c.deck_id IN ({ids})
+                 WHERE {}
              )
-             ORDER BY notetype_id, ord"
+             ORDER BY notetype_id, ord",
+            card_scope_sql("c", ids)
         ),
         None => "SELECT notetype_id, ord, name, qfmt, afmt, config
              FROM templates ORDER BY notetype_id, ord"
@@ -228,8 +245,9 @@ fn dump_notes(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<No
         Some(ids) => format!(
             r#"SELECT id, guid, notetype_id, "mod", usn, tags, fields, sort_field, checksum
                FROM notes
-               WHERE id IN (SELECT DISTINCT note_id FROM cards WHERE deck_id IN ({ids}))
-               ORDER BY id"#
+               WHERE id IN (SELECT DISTINCT note_id FROM cards WHERE {})
+               ORDER BY id"#,
+            card_scope_sql("", ids)
         ),
         None => r#"SELECT id, guid, notetype_id, "mod", usn, tags, fields, sort_field, checksum
                FROM notes ORDER BY id"#
@@ -256,13 +274,18 @@ fn dump_notes(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<No
     rows.collect::<rusqlite::Result<_>>().map_err(err)
 }
 
-fn dump_cards(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<Card>> {
+fn dump_cards(
+    conn: &Connection,
+    deck_filter: Option<&str>,
+    scoped_ids: Option<&HashSet<i64>>,
+) -> CoreResult<Vec<Card>> {
     let sql = match deck_filter {
         Some(ids) => format!(
             r#"SELECT id, note_id, deck_id, ord, "mod", usn, type, queue, due, interval,
                       ease_factor, reps, lapses, remaining, original_due, original_deck_id,
                       flags, fsrs_stability, fsrs_difficulty, fsrs_last_review, data
-               FROM cards WHERE deck_id IN ({ids}) ORDER BY id"#
+               FROM cards WHERE {} ORDER BY id"#,
+            card_scope_sql("", ids)
         ),
         None => r#"SELECT id, note_id, deck_id, ord, "mod", usn, type, queue, due, interval,
                       ease_factor, reps, lapses, remaining, original_due, original_deck_id,
@@ -273,7 +296,7 @@ fn dump_cards(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<Ca
     let mut stmt = conn.prepare(&sql).map_err(err)?;
     let rows = stmt
         .query_map([], |r| {
-            Ok(Card {
+            let mut card = Card {
                 id: r.get(0)?,
                 note_id: r.get(1)?,
                 deck_id: r.get(2)?,
@@ -295,7 +318,23 @@ fn dump_cards(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<Ca
                 fsrs_difficulty: r.get(18)?,
                 fsrs_last_review: r.get(19)?,
                 data: r.get(20)?,
-            })
+            };
+            // Like Anki rslib/src/export/package.rs: when exporting a home deck,
+            // cards temporarily placed in a filtered deck export under their home deck.
+            if let Some(ids) = scoped_ids {
+                if !ids.contains(&card.deck_id)
+                    && card.original_deck_id != 0
+                    && ids.contains(&card.original_deck_id)
+                {
+                    card.deck_id = card.original_deck_id;
+                    card.original_deck_id = 0;
+                    if card.original_due != 0 {
+                        card.due = card.original_due;
+                        card.original_due = 0;
+                    }
+                }
+            }
+            Ok(card)
         })
         .map_err(err)?;
     rows.collect::<rusqlite::Result<_>>().map_err(err)
@@ -307,8 +346,9 @@ fn dump_revlog(conn: &Connection, deck_filter: Option<&str>) -> CoreResult<Vec<R
             "SELECT id, card_id, usn, ease, interval, last_interval,
                     ease_factor, taken_ms, review_kind
              FROM revlog
-             WHERE card_id IN (SELECT id FROM cards WHERE deck_id IN ({ids}))
-             ORDER BY id"
+             WHERE card_id IN (SELECT id FROM cards WHERE {})
+             ORDER BY id",
+            card_scope_sql("", ids)
         ),
         None => "SELECT id, card_id, usn, ease, interval, last_interval,
                     ease_factor, taken_ms, review_kind
@@ -626,5 +666,43 @@ mod tests {
             .dump_collection_scoped(Some(&[parent, child]), false)
             .unwrap();
         assert!(scoped_no_sched.revlog.is_empty());
+    }
+
+    #[test]
+    fn a2_22_deck_export_includes_filtered_deck_cards_at_home_deck() {
+        let s = SqliteStorage::open_in_memory().unwrap();
+        s.ensure_collection(1_000).unwrap();
+        let nt_id = s.create_notetype("DeckExp", 0, 1_000).unwrap();
+        let home_deck = s.create_deck("Home", 1_000).unwrap().id;
+        let (_nid, _) = s
+            .add_note_with_cards(
+                nt_id,
+                home_deck,
+                &["Front".into(), "Back".into()],
+                &[],
+                1_000,
+            )
+            .unwrap();
+        {
+            let conn = s.lock();
+            conn.execute(
+                r#"INSERT INTO decks (id, name, parent_id, config_id, "mod", usn, collapsed, is_filtered)
+                   VALUES (50, 'Cram', NULL, 1, 1000, -1, 0, 1)"#,
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE cards SET deck_id = 50, original_deck_id = ?1, original_due = 7 WHERE deck_id = ?1",
+                [home_deck],
+            )
+            .unwrap();
+        }
+        let scoped = s.dump_collection_scoped(Some(&[home_deck]), false).unwrap();
+        assert_eq!(scoped.cards.len(), 1);
+        assert_eq!(scoped.cards[0].deck_id, home_deck);
+        assert_eq!(scoped.cards[0].original_deck_id, 0);
+        assert_eq!(scoped.cards[0].due, 7);
+        assert_eq!(scoped.notes.len(), 1);
+        assert_eq!(scoped.notetypes.len(), 1);
     }
 }

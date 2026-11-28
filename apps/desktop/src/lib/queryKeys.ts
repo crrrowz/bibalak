@@ -17,8 +17,15 @@ export const queryKeys = {
   notetype: (id: number | null) => ["notetypes", id] as const,
   notetypesDetail: (id: number | null) => ["notetypes", id] as const,
   notetypesStock: ["notetypes", "stock"] as const,
-  notetypesPreview: (id: number | null, ord: number, qfmt: string, afmt: string, css: string) =>
-    ["notetypes", "preview", id, ord, qfmt, afmt, css] as const,
+  notetypesPreview: (
+    id: number | null,
+    ord: number,
+    qfmt: string,
+    afmt: string,
+    css: string,
+    sampleKey = "",
+  ) => ["notetypes", "preview", id, ord, qfmt, afmt, css, sampleKey] as const,
+  notetypesSampleNotes: (id: number | null) => ["notetypes", "sample-notes", id] as const,
 
   notesAll: ["notes"] as const,
   notes: (query: string) => ["notes", query] as const,
@@ -26,18 +33,21 @@ export const queryKeys = {
     ["notes", query, offset, limit, sortKey, sortAsc] as const,
   notesCount: (query: string) => ["notes", "count", query] as const,
   notesDetail: (id: number) => ["notes", id] as const,
+  noteNotetypesForIds: (ids: number[]) => ["notes", "notetypes-for-ids", ids] as const,
 
   cardsAll: ["cards"] as const,
   cardsList: (query: string, offset: number, limit: number, sortKey: string, sortAsc: boolean) =>
     ["cards", query, offset, limit, sortKey, sortAsc] as const,
   cardsCount: (query: string) => ["cards", "count", query] as const,
   cardsPreview: (id: number | null) => ["cards", "preview", id] as const,
+  emptyCards: ["empty-cards"] as const,
 
   tags: ["tags"] as const,
   tagCounts: ["tags", "counts"] as const,
 
   statsAll: ["stats"] as const,
   stats: (deckId: number | null, days: number | null) => ["stats", deckId, days] as const,
+  dueForecast: (days: number | null = 30) => ["stats", "due-forecast", days] as const,
   statsSimulateWorkload: (
     deckId: number,
     desiredRetention: number,
@@ -60,6 +70,8 @@ export const queryKeys = {
     ["media-library", search, filter, offset] as const,
   legacyMediaPending: ["legacy-media-pending"] as const,
   undoStatus: ["undo-status"] as const,
+  undoHistoryAll: ["undo-history"] as const,
+  undoHistory: (page = 0) => ["undo-history", page] as const,
 
   aiConfig: ["ai-config"] as const,
   quickAddConfig: ["quick-add-config"] as const,

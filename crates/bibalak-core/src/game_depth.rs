@@ -935,6 +935,18 @@ pub struct ApplyAnswerOutcome {
     pub revlog_id: i64,
 }
 
+/// Result of `Storage::apply_answer_atomic`, which executes card update,
+/// revlog insert, reward/game update, sibling bury, and leech tag/suspend in
+/// one transaction (A1-17).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ApplyAnswerFullOutcome {
+    pub reward_granted: bool,
+    pub game_changed: bool,
+    pub revlog_id: i64,
+    pub buried_siblings: Vec<i64>,
+    pub added_leech_tag: bool,
+}
+
 /// Result of `upsert_habit_log_with_game`.
 #[derive(Debug, Clone)]
 pub struct HabitLogGameOutcome {

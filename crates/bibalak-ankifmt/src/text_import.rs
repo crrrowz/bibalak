@@ -1,6 +1,7 @@
 //! CSV/TSV and Markdown parser for text import (`E4`, `ADR-011`).
 
 use std::collections::BTreeSet;
+use std::io::Read;
 use std::path::Path;
 
 use bibalak_core::ipc::{
@@ -12,6 +13,10 @@ use bibalak_core::{CoreError, CoreResult};
 use pulldown_cmark::{html, Event, Options, Parser};
 
 const PREVIEW_ROW_LIMIT: usize = 20;
+/// Maximum bytes read from disk when generating a text-import preview (512 KiB).
+pub const MAX_PREVIEW_BYTES: usize = 512 * 1024;
+/// Maximum bytes allowed when importing a full CSV/TSV/Markdown text file (64 MiB).
+pub const MAX_TEXT_IMPORT_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug)]
 struct TabularRecord {
@@ -30,11 +35,12 @@ struct ParsedDocument {
 }
 
 /// Preview the columns and first 20 rows of a CSV/TSV or Markdown file.
+/// Reads only a bounded prefix ([`MAX_PREVIEW_BYTES`]) so huge files never spike RAM.
 pub fn preview_text_import(
     path: &Path,
     options: &TextImportOptions,
 ) -> CoreResult<TextImportPreview> {
-    let raw = read_utf8_file(path)?;
+    let raw = read_utf8_prefix(path, MAX_PREVIEW_BYTES)?;
     let hint = path.file_name().and_then(|s| s.to_str());
     preview_text_str(&raw, hint, options)
 }
@@ -140,10 +146,44 @@ pub fn parse_text_str(
     Ok((notes, doc.errors))
 }
 
-fn read_utf8_file(path: &Path) -> CoreResult<String> {
-    let bytes = std::fs::read(path)
+fn read_utf8_prefix(path: &Path, max_bytes: usize) -> CoreResult<String> {
+    let file = std::fs::File::open(path)
         .map_err(|e| CoreError::Format(format!("read {}: {e}", path.display())))?;
-    String::from_utf8(bytes)
+    let mut buf = Vec::new();
+    let read = std::io::copy(&mut file.take((max_bytes + 1) as u64), &mut buf)
+        .map_err(|e| CoreError::Format(format!("read {}: {e}", path.display())))?;
+    let truncated = (read as usize) > max_bytes;
+    if truncated {
+        buf.truncate(max_bytes);
+        // Back up at most 3 bytes to avoid splitting a multi-byte UTF-8 sequence.
+        while !buf.is_empty() && std::str::from_utf8(&buf).is_err() {
+            buf.pop();
+        }
+    }
+    let mut text = String::from_utf8(buf)
+        .map_err(|_| CoreError::Invalid(format!("file '{}' is not valid UTF-8", path.display())))?;
+    if truncated {
+        if let Some(last_nl) = text.rfind('\n') {
+            text.truncate(last_nl + 1);
+        }
+    }
+    Ok(text)
+}
+
+fn read_utf8_file(path: &Path) -> CoreResult<String> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| CoreError::Format(format!("read {}: {e}", path.display())))?;
+    let mut buf = Vec::new();
+    let read = std::io::copy(&mut file.take((MAX_TEXT_IMPORT_BYTES + 1) as u64), &mut buf)
+        .map_err(|e| CoreError::Format(format!("read {}: {e}", path.display())))?;
+    if (read as usize) > MAX_TEXT_IMPORT_BYTES {
+        return Err(CoreError::Format(format!(
+            "text import file '{}' exceeds {} MiB limit",
+            path.display(),
+            MAX_TEXT_IMPORT_BYTES / (1024 * 1024)
+        )));
+    }
+    String::from_utf8(buf)
         .map_err(|_| CoreError::Invalid(format!("file '{}' is not valid UTF-8", path.display())))
 }
 
@@ -289,6 +329,7 @@ fn parse_csv_document(
         .from_reader(clean.as_bytes());
 
     let mut raw_records = Vec::new();
+    let mut header_row: Option<Vec<String>> = None;
     let mut errors = Vec::new();
     let mut max_cols = 0usize;
 
@@ -300,6 +341,11 @@ fn parse_csv_document(
                 }
                 let line = rec.position().map(|p| p.line() as u32).unwrap_or(1);
                 max_cols = max_cols.max(rec.len());
+                if options.has_header && header_row.is_none() {
+                    // Header labels are plain column titles for UI display, never card HTML.
+                    header_row = Some(rec.iter().map(|cell| cell.trim().to_string()).collect());
+                    continue;
+                }
                 let cells: Vec<String> = rec
                     .iter()
                     .map(|cell| {
@@ -323,12 +369,11 @@ fn parse_csv_document(
         }
     }
 
-    let (columns, records) = if options.has_header && !raw_records.is_empty() {
-        let header = raw_records.remove(0);
-        let col_len = max_cols.max(header.cells.len());
+    let (columns, records) = if let Some(header_cells) = header_row {
+        let col_len = max_cols.max(header_cells.len());
         let cols: Vec<String> = (0..col_len)
             .map(|i| {
-                let name = header.cells.get(i).map(|s| s.trim()).unwrap_or("");
+                let name = header_cells.get(i).map(|s| s.as_str()).unwrap_or("");
                 if name.is_empty() {
                     format!("Column {}", i + 1)
                 } else {
@@ -688,5 +733,40 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(notes.len(), 10_000);
         eprintln!("E4 10,000-row CSV parse time: {elapsed:?}");
+    }
+
+    #[test]
+    fn a4_13_preview_text_import_reads_bounded_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("huge.csv");
+        let mut content = String::with_capacity(MAX_PREVIEW_BYTES + 256 * 1024);
+        content.push_str("Front,Back\n");
+        let mut i = 0usize;
+        while content.len() <= MAX_PREVIEW_BYTES + 128 * 1024 {
+            content.push_str(&format!("Question {i},Answer {i}\n"));
+            i += 1;
+        }
+        // Corrupt the tail after MAX_PREVIEW_BYTES with invalid UTF-8 to prove preview never reads it.
+        let mut bytes = content.into_bytes();
+        bytes.extend_from_slice(&[0xFF, 0xFE, 0xFD]);
+        std::fs::write(&path, &bytes).unwrap();
+
+        let preview = preview_text_import(&path, &TextImportOptions::default()).unwrap();
+        assert_eq!(preview.columns, vec!["Front", "Back"]);
+        assert_eq!(preview.rows.len(), PREVIEW_ROW_LIMIT);
+        assert_eq!(preview.rows[0], vec!["Question 0", "Answer 0"]);
+    }
+
+    #[test]
+    fn a2_23_text_import_does_not_escape_headers_when_allow_html_is_false() {
+        let csv_input = "<Front>;Back\n<b>hello</b>;world\n";
+        let opts = TextImportOptions {
+            has_header: true,
+            allow_html: false,
+            ..Default::default()
+        };
+        let preview = preview_text_str(csv_input, Some("headers.csv"), &opts).unwrap();
+        assert_eq!(preview.columns, vec!["<Front>", "Back"]);
+        assert_eq!(preview.rows[0][0], "&lt;b&gt;hello&lt;/b&gt;");
     }
 }

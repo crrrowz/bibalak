@@ -15,6 +15,7 @@ export function invalidateTodayCounts(queryClient: QueryClient): Promise<void[]>
     queryClient.invalidateQueries({ queryKey: queryKeys.progressSummary }),
     queryClient.invalidateQueries({ queryKey: queryKeys.statsAll }),
     queryClient.invalidateQueries({ queryKey: queryKeys.undoStatus }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.undoHistoryAll }),
     queryClient.invalidateQueries({ queryKey: queryKeys.progressHistory }),
     queryClient.invalidateQueries({ queryKey: queryKeys.studyDaysAll }),
     queryClient.invalidateQueries({ queryKey: queryKeys.progressByDeck }),

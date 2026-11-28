@@ -122,6 +122,73 @@ describe("TextImportDialog (E4)", () => {
 
     expect(await screen.findByText(/Added 1 notes \(1 cards\)/i)).toBeInTheDocument();
     expect(screen.getByText(/Line 3: first field cannot be empty/i)).toBeInTheDocument();
+    expect(screen.getByText("Text import cannot be undone.")).toBeInTheDocument();
     expect(onImported).toHaveBeenCalledOnce();
+  });
+
+  it("A2-36: disables Import with a hint when Field 0 (Front) is not mapped to any column", async () => {
+    vi.mocked(platform.pickPath).mockResolvedValue("C:/data/only-back.csv");
+    vi.spyOn(ipc, "listDecks").mockResolvedValue([
+      {
+        id: 1,
+        name: "Default",
+        parent_id: null,
+        new_count: 0,
+        learning_count: 0,
+        review_count: 0,
+        is_filtered: false,
+        collapsed: false,
+      },
+    ]);
+    vi.spyOn(ipc, "listNotetypes").mockResolvedValue([
+      { id: 10, name: "Basic", kind: 0n, field_names: ["Front", "Back"], note_count: 0 },
+    ]);
+    vi.spyOn(ipc, "getNotetype").mockResolvedValue({
+      id: 10,
+      name: "Basic",
+      kind: 0n,
+      css: "",
+      sort_field: 0n,
+      fields: [
+        {
+          ord: 0n,
+          name: "Front",
+          options: { direction: "auto", font: "", size: 0, description: "" },
+        },
+        {
+          ord: 1n,
+          name: "Back",
+          options: { direction: "auto", font: "", size: 0, description: "" },
+        },
+      ],
+      templates: [{ ord: 0n, name: "Card 1", qfmt: "{{Front}}", afmt: "{{Back}}" }],
+      preset: null,
+    });
+    vi.spyOn(ipc, "previewTextImport").mockResolvedValue({
+      detected_format: "csv",
+      detected_delimiter: ",",
+      has_header: true,
+      columns: ["Col1"],
+      rows: [["val1"]],
+      total_rows: 1,
+      errors: [],
+    });
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <TextImportDialog open onClose={vi.fn()} onImported={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Choose file/i }));
+    const colSelect = await screen.findByLabelText("Mapping for Col1");
+    await within(colSelect).findByRole("option", { name: "Field: Front" });
+
+    fireEvent.change(colSelect, { target: { value: "ignore" } });
+
+    const importBtn = screen.getByRole("button", { name: /Import notes/i });
+    expect(importBtn).toBeDisabled();
+    expect(screen.getByText(/Map a column to "Front"/i)).toBeInTheDocument();
   });
 });

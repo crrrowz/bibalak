@@ -6,5 +6,6 @@ export {
   SetDueDateDialog,
 } from "./CardSchedulingDialogs";
 export { ChangeNotetypeDialog } from "./ChangeNotetypeDialog";
+export { EmptyCardsDialog } from "./EmptyCardsDialog";
 export { FindDuplicatesDialog } from "./FindDuplicatesDialog";
 export { FindReplaceDialog } from "./FindReplaceDialog";

@@ -27,10 +27,12 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
     >
       <select
         ref={ref}
+        data-styled-select="true"
         className={cn(
-          "w-full truncate appearance-none rounded-md border border-input bg-background text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+          "w-full truncate rounded-md border border-input bg-background text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
           SELECT_SIZE_CLASSES[selectSize],
           className,
+          "appearance-none bg-none",
         )}
         {...props}
       >

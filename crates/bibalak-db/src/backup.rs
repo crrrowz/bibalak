@@ -1,12 +1,17 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsString,
     io::{Read, Write},
     path::{Path, PathBuf},
 };
 
 use bibalak_core::error::{CoreError, CoreResult};
+use bibalak_core::ipc::IntegrityReport;
 use bibalak_core::media_refs::{extract_media_refs, rewrite_media_refs};
-use rusqlite::{params, Connection, MAIN_DB};
+use rusqlite::{params, Connection, OpenFlags, MAIN_DB};
+
+/// Maximum uncompressed size allowed when extracting `collection.sqlite` from a backup zip (256 MiB).
+pub const MAX_BACKUP_DB_BYTES: u64 = 256 * 1024 * 1024;
 
 fn err(e: impl std::fmt::Display) -> CoreError {
     CoreError::Storage(e.to_string())
@@ -19,30 +24,28 @@ pub fn backup_db(conn: &Connection, dest_path: &Path) -> CoreResult<()> {
         .map_err(err)
 }
 
-/// Run `PRAGMA integrity_check`. Returns empty vec on a healthy database,
-/// or a list of error strings otherwise.
-/// Also inspects and repairs orphan subdecks (decks with `::` in their name
-/// whose parent decks are missing or unlinked), reporting repairs performed.
-pub fn integrity_check(conn: &mut Connection, now_ms: i64) -> CoreResult<Vec<String>> {
+/// Run `PRAGMA integrity_check` and repair orphan subdecks (decks with `::` in their
+/// name whose parent decks are missing or unlinked), returning structured counts.
+pub fn integrity_check(conn: &mut Connection, now_ms: i64) -> CoreResult<IntegrityReport> {
     let mut stmt = conn.prepare("PRAGMA integrity_check").map_err(err)?;
     let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
-    let mut results = Vec::new();
+    let mut errors = Vec::new();
     for row in rows {
         let s = row.map_err(err)?;
         if s != "ok" {
-            results.push(s);
+            errors.push(s);
         }
     }
     drop(stmt);
-    if results.is_empty() {
-        let repaired = repair_orphan_subdecks(conn, now_ms)?;
-        if repaired > 0 {
-            results.push(format!(
-                "Repaired {repaired} orphan subdeck(s): created missing parent decks"
-            ));
-        }
-    }
-    Ok(results)
+    let repaired_orphan_subdecks = if errors.is_empty() {
+        u32::try_from(repair_orphan_subdecks(conn, now_ms)?).unwrap_or(u32::MAX)
+    } else {
+        0
+    };
+    Ok(IntegrityReport {
+        errors,
+        repaired_orphan_subdecks,
+    })
 }
 
 /// Check for subdecks (`A::B`) that are missing their parent decks or have an unlinked
@@ -140,25 +143,6 @@ pub fn note_media_refs(conn: &Connection) -> CoreResult<Vec<String>> {
         .collect())
 }
 
-/// Collect distinct-note media ref counts from any query returning a single
-/// `fields` text column per distinct note row.
-pub(crate) fn collect_media_ref_counts(
-    stmt: &mut rusqlite::Statement<'_>,
-    params: impl rusqlite::Params,
-) -> CoreResult<Vec<(String, u32)>> {
-    let mut counts: BTreeMap<String, u32> = BTreeMap::new();
-    let rows = stmt
-        .query_map(params, |r| r.get::<_, String>(0))
-        .map_err(err)?;
-    for row in rows {
-        let flds = row.map_err(err)?;
-        for name in extract_media_refs(&flds) {
-            *counts.entry(name).or_insert(0) += 1;
-        }
-    }
-    Ok(counts.into_iter().collect())
-}
-
 /// Extract media filenames referenced in note fields, notetype templates, and CSS
 /// alongside the count of distinct notes/templates/notetypes referencing each filename.
 pub fn note_media_ref_counts(conn: &Connection) -> CoreResult<Vec<(String, u32)>> {
@@ -175,39 +159,71 @@ pub fn note_media_ref_counts(conn: &Connection) -> CoreResult<Vec<(String, u32)>
         }
     }
 
-    {
-        let mut stmt = conn
-            .prepare("SELECT qfmt, afmt FROM templates")
-            .map_err(err)?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(err)?;
-        for row in rows {
-            let (qfmt, afmt) = row.map_err(err)?;
-            let mut refs = extract_media_refs(&qfmt);
-            refs.extend(extract_media_refs(&afmt));
-            for name in refs {
-                *counts.entry(name).or_insert(0) += 1;
-            }
-        }
-    }
-
-    {
-        let mut stmt = conn.prepare("SELECT config FROM notetypes").map_err(err)?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
-        for row in rows {
-            let cfg = row.map_err(err)?;
-            let css = serde_json::from_str::<serde_json::Value>(&cfg)
-                .ok()
-                .and_then(|v| v.get("css").and_then(|c| c.as_str()).map(str::to_string));
-            let target = css.as_deref().unwrap_or(&cfg);
-            for name in extract_media_refs(target) {
-                *counts.entry(name).or_insert(0) += 1;
-            }
-        }
-    }
+    add_template_and_css_refs(conn, None, &mut counts)?;
 
     Ok(counts.into_iter().collect())
+}
+
+/// Add template (`qfmt`/`afmt`) and notetype CSS media reference counts into `counts`.
+/// When `notetype_ids` is `Some(ids)`, restricts to those note types; when `None`,
+/// scans all templates and note types.
+pub(crate) fn add_template_and_css_refs(
+    conn: &Connection,
+    notetype_ids: Option<&[i64]>,
+    counts: &mut BTreeMap<String, u32>,
+) -> CoreResult<()> {
+    let filter_json = match notetype_ids {
+        Some([]) => return Ok(()),
+        Some(ids) => Some(serde_json::to_string(ids).map_err(err)?),
+        None => None,
+    };
+
+    let (tmpl_sql, nt_sql) = if filter_json.is_some() {
+        (
+            "SELECT qfmt, afmt FROM templates WHERE notetype_id IN (SELECT value FROM json_each(?1))",
+            "SELECT config FROM notetypes WHERE id IN (SELECT value FROM json_each(?1))",
+        )
+    } else {
+        (
+            "SELECT qfmt, afmt FROM templates",
+            "SELECT config FROM notetypes",
+        )
+    };
+    let bind: Vec<&str> = filter_json.as_deref().into_iter().collect();
+
+    let mut stmt = conn.prepare(tmpl_sql).map_err(err)?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(bind.iter().copied()), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(err)?;
+    for row in rows {
+        let (qfmt, afmt) = row.map_err(err)?;
+        let mut refs = extract_media_refs(&qfmt);
+        refs.extend(extract_media_refs(&afmt));
+        for name in refs {
+            *counts.entry(name).or_insert(0) += 1;
+        }
+    }
+
+    let mut stmt = conn.prepare(nt_sql).map_err(err)?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(bind.iter().copied()), |r| {
+            r.get::<_, String>(0)
+        })
+        .map_err(err)?;
+    for row in rows {
+        let cfg = row.map_err(err)?;
+        let css = serde_json::from_str::<serde_json::Value>(&cfg)
+            .ok()
+            .and_then(|v| v.get("css").and_then(|c| c.as_str()).map(str::to_string));
+        let target = css.as_deref().unwrap_or(&cfg);
+        for name in extract_media_refs(target) {
+            *counts.entry(name).or_insert(0) += 1;
+        }
+    }
+
+    Ok(())
 }
 
 /// Rewrite `<img src="old_name">`, `<img src='old_name'>`, and `[sound:old_name]`
@@ -272,39 +288,94 @@ pub fn rewrite_media_ref(
     Ok(updated)
 }
 
+fn is_precompressed_media(name: &str) -> bool {
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "jpg"
+            | "jpeg"
+            | "png"
+            | "gif"
+            | "webp"
+            | "avif"
+            | "mp3"
+            | "ogg"
+            | "oga"
+            | "opus"
+            | "aac"
+            | "m4a"
+            | "flac"
+            | "weba"
+            | "mp4"
+            | "m4v"
+            | "webm"
+            | "mkv"
+            | "mov"
+            | "avi"
+            | "ogv"
+            | "woff2"
+            | "zip"
+            | "gz"
+            | "zst"
+    )
+}
+
+fn stream_into_zip<W: Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    entry_name: &str,
+    src_path: &Path,
+    method: zip::CompressionMethod,
+) -> CoreResult<()> {
+    let opts: zip::write::FileOptions<()> =
+        zip::write::FileOptions::default().compression_method(method);
+    zip.start_file(entry_name, opts).map_err(err)?;
+    let mut src = std::fs::File::open(src_path).map_err(err)?;
+    std::io::copy(&mut src, zip).map_err(err)?;
+    Ok(())
+}
+
+/// Create a DB-only `.zip` archive at `zip_path` containing only `collection.sqlite` (streamed).
+pub fn create_db_only_zip(db_backup: &Path, zip_path: &Path) -> CoreResult<u64> {
+    create_zip_inner(db_backup, None, zip_path)
+}
+
 /// Create a `.zip` archive at `zip_path` containing:
-/// - `collection.sqlite` (the hot-backup copy at `db_backup`)
-/// - all files under `media_dir/` (non-recursive, skipping dirs)
+/// - `collection.sqlite` (the hot-backup copy at `db_backup`, deflated & streamed)
+/// - all files under `media_dir/` (non-recursive, streamed; `Stored` for pre-compressed media)
 ///
 /// Returns the archive size in bytes.
 pub fn create_zip(db_backup: &Path, media_dir: &Path, zip_path: &Path) -> CoreResult<u64> {
+    create_zip_inner(db_backup, Some(media_dir), zip_path)
+}
+
+fn create_zip_inner(
+    db_backup: &Path,
+    media_dir: Option<&Path>,
+    zip_path: &Path,
+) -> CoreResult<u64> {
     let file = std::fs::File::create(zip_path).map_err(err)?;
     let mut zip = zip::ZipWriter::new(file);
-    let opts: zip::write::FileOptions<()> =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-    // Add the DB backup.
-    zip.start_file("collection.sqlite", opts).map_err(err)?;
-    let mut db_bytes = Vec::new();
-    std::fs::File::open(db_backup)
-        .map_err(err)?
-        .read_to_end(&mut db_bytes)
-        .map_err(err)?;
-    zip.write_all(&db_bytes).map_err(err)?;
+    // Stream the DB backup compressed.
+    stream_into_zip(
+        &mut zip,
+        "collection.sqlite",
+        db_backup,
+        zip::CompressionMethod::Deflated,
+    )?;
 
-    // Add media files (flat, non-recursive).
-    if media_dir.is_dir() {
+    // Stream media files (flat, non-recursive); skip Deflate on already-compressed media.
+    if let Some(media_dir) = media_dir.filter(|d| d.is_dir()) {
         for entry in std::fs::read_dir(media_dir).map_err(err)? {
             let entry = entry.map_err(err)?;
             if entry.file_type().map_err(err)?.is_file() {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                zip.start_file(format!("media/{name}"), opts).map_err(err)?;
-                let mut bytes = Vec::new();
-                std::fs::File::open(entry.path())
-                    .map_err(err)?
-                    .read_to_end(&mut bytes)
-                    .map_err(err)?;
-                zip.write_all(&bytes).map_err(err)?;
+                let method = if is_precompressed_media(&name) {
+                    zip::CompressionMethod::Stored
+                } else {
+                    zip::CompressionMethod::Deflated
+                };
+                stream_into_zip(&mut zip, &format!("media/{name}"), &entry.path(), method)?;
             }
         }
     }
@@ -314,23 +385,128 @@ pub fn create_zip(db_backup: &Path, media_dir: &Path, zip_path: &Path) -> CoreRe
     Ok(size)
 }
 
-/// Validate a SQLite file with `PRAGMA integrity_check`. Returns errors, empty = ok.
+/// Validate a SQLite file read-only with `PRAGMA integrity_check`. Returns errors, empty = ok.
 pub fn validate_sqlite_file(path: &Path) -> CoreResult<Vec<String>> {
-    let mut conn = Connection::open(path).map_err(err)?;
-    integrity_check(&mut conn, 0)
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let conn = Connection::open_with_flags(path, flags).map_err(err)?;
+    let mut stmt = conn.prepare("PRAGMA integrity_check").map_err(err)?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
+    let mut results = Vec::new();
+    for row in rows {
+        let s = row.map_err(err)?;
+        if s != "ok" {
+            results.push(s);
+        }
+    }
+    Ok(results)
 }
 
-/// Extract `collection.sqlite` from a backup zip to `dest_path`.
-/// Returns an error if the zip doesn't contain the expected file.
+fn copy_bounded(reader: &mut dyn Read, writer: &mut dyn Write, max_bytes: u64) -> CoreResult<u64> {
+    let mut limited = reader.take(max_bytes.saturating_add(1));
+    let copied = std::io::copy(&mut limited, writer).map_err(err)?;
+    if copied > max_bytes {
+        return Err(CoreError::Format(format!(
+            "backup database exceeds maximum allowed size of {max_bytes} bytes"
+        )));
+    }
+    Ok(copied)
+}
+
+/// Extract `collection.sqlite` from a backup zip to `dest_path`, bounded by [`MAX_BACKUP_DB_BYTES`].
 pub fn extract_db_from_zip(zip_path: &Path, dest_path: &Path) -> CoreResult<()> {
+    extract_db_from_zip_with_cap(zip_path, dest_path, MAX_BACKUP_DB_BYTES)
+}
+
+/// Extract `collection.sqlite` from a backup zip to `dest_path`, rejecting entries above `max_bytes`.
+pub fn extract_db_from_zip_with_cap(
+    zip_path: &Path,
+    dest_path: &Path,
+    max_bytes: u64,
+) -> CoreResult<()> {
     let file = std::fs::File::open(zip_path).map_err(err)?;
     let mut archive = zip::ZipArchive::new(file).map_err(err)?;
     let mut entry = archive
         .by_name("collection.sqlite")
         .map_err(|_| CoreError::Storage("backup zip missing collection.sqlite".into()))?;
-    let mut out = std::fs::File::create(dest_path).map_err(err)?;
-    std::io::copy(&mut entry, &mut out).map_err(err)?;
+    if entry.size() > max_bytes {
+        return Err(CoreError::Format(format!(
+            "backup database exceeds maximum allowed size of {max_bytes} bytes"
+        )));
+    }
+    let result = {
+        let mut out = std::fs::File::create(dest_path).map_err(err)?;
+        copy_bounded(&mut entry, &mut out, max_bytes)
+    };
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(dest_path);
+        return Err(e);
+    }
     Ok(())
+}
+
+fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut os: OsString = path.as_os_str().to_os_string();
+    os.push(suffix);
+    PathBuf::from(os)
+}
+
+/// Path of the staged restore file (`<db_path>.pending-restore`) swapped in on next startup.
+pub fn pending_restore_path(db_path: &Path) -> PathBuf {
+    append_suffix(db_path, ".pending-restore")
+}
+
+/// Stage a backup restore next to `db_path` (`collection.sqlite.pending-restore`) without
+/// overwriting the open database or its WAL files.
+pub fn stage_restore(zip_path: &Path, db_path: &Path) -> CoreResult<PathBuf> {
+    let tmp = append_suffix(db_path, ".restore.tmp");
+    extract_db_from_zip(zip_path, &tmp)?;
+    let errors = match validate_sqlite_file(&tmp) {
+        Ok(errs) => errs,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+    };
+    if !errors.is_empty() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(CoreError::Format(format!(
+            "backup integrity check failed: {}",
+            errors.join("; ")
+        )));
+    }
+    let pending = pending_restore_path(db_path);
+    if let Err(e) = std::fs::rename(&tmp, &pending) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err(e));
+    }
+    Ok(pending)
+}
+
+/// If `<db_path>.pending-restore` exists, validate it, remove stale `-wal`/`-shm` sidecars,
+/// and swap it into place before SQLite opens `db_path`. Returns `true` when a restore ran.
+pub fn apply_pending_restore(db_path: &Path) -> CoreResult<bool> {
+    let pending = pending_restore_path(db_path);
+    if !pending.is_file() {
+        return Ok(false);
+    }
+    let errors = validate_sqlite_file(&pending)?;
+    if !errors.is_empty() {
+        let _ = std::fs::remove_file(&pending);
+        return Err(CoreError::Format(format!(
+            "staged backup integrity check failed: {}",
+            errors.join("; ")
+        )));
+    }
+    for sidecar in ["-wal", "-shm"] {
+        let sidecar_path = append_suffix(db_path, sidecar);
+        if let Err(e) = std::fs::remove_file(&sidecar_path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(err(e));
+            }
+        }
+    }
+    std::fs::rename(&pending, db_path).map_err(err)?;
+    Ok(true)
 }
 
 /// List `.zip` files in `backup_dir`, sorted newest-first.
@@ -395,8 +571,9 @@ mod tests {
     fn integrity_check_clean_db_returns_ok() {
         let s = make_db();
         let mut conn = s.lock();
-        let errs = integrity_check(&mut conn, 1_000).unwrap();
-        assert!(errs.is_empty(), "unexpected errors: {errs:?}");
+        let report = integrity_check(&mut conn, 1_000).unwrap();
+        assert!(report.errors.is_empty(), "unexpected errors: {report:?}");
+        assert_eq!(report.repaired_orphan_subdecks, 0);
     }
 
     #[test]
@@ -517,15 +694,10 @@ mod tests {
         // Run integrity check
         let mut conn = s.lock();
         let report = integrity_check(&mut conn, 1_000).unwrap();
+        assert!(report.errors.is_empty(), "expected no errors: {report:?}");
         assert_eq!(
-            report.len(),
-            1,
-            "should report repaired orphans: {report:?}"
-        );
-        assert!(
-            report[0].contains('2') && report[0].to_lowercase().contains("orphan"),
-            "report must state how many were fixed: {}",
-            report[0]
+            report.repaired_orphan_subdecks, 2,
+            "should report 2 repaired orphans: {report:?}"
         );
 
         // Verify parents were created and linked
@@ -569,7 +741,10 @@ mod tests {
 
         // Running integrity_check again on now-healthy DB reports no errors/repairs
         let report2 = integrity_check(&mut conn, 1_000).unwrap();
-        assert!(report2.is_empty(), "second check on healthy DB is empty");
+        assert!(
+            report2.errors.is_empty() && report2.repaired_orphan_subdecks == 0,
+            "second check on healthy DB is empty"
+        );
     }
 
     #[test]
@@ -595,5 +770,157 @@ mod tests {
         assert_eq!(counts.get("bg.png"), Some(&1));
         assert_eq!(counts.get("_font.woff2"), Some(&1));
         assert_eq!(counts.get("tpl_icon.png"), Some(&1));
+    }
+
+    #[test]
+    fn a4_05_extract_db_from_zip_rejects_oversized_entry() {
+        let dir = std::env::temp_dir().join(format!("bibalak_a4_05_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let zip_path = dir.join("backup.zip");
+        {
+            let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+            let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            w.start_file("collection.sqlite", opts).unwrap();
+            let payload = vec![0u8; 8 * 1024 * 1024];
+            w.write_all(&payload).unwrap();
+            w.finish().unwrap();
+        }
+
+        let out_path = dir.join("out.sqlite");
+        let res = extract_db_from_zip_with_cap(&zip_path, &out_path, 4 * 1024 * 1024);
+        assert!(res.is_err(), "oversized zip entry must be rejected");
+        assert!(
+            !out_path.exists(),
+            "rejected extraction must not leave partial output file"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copy_bounded_enforces_streaming_limit_without_header() {
+        let mut infinite = std::io::repeat(b'x');
+        let mut sink = Vec::new();
+        let res = copy_bounded(&mut infinite, &mut sink, 1024);
+        assert!(res.is_err(), "unbounded stream must fail at limit + 1");
+        assert_eq!(sink.len(), 1025);
+    }
+
+    #[test]
+    fn stage_restore_leaves_live_db_intact_and_swaps_on_next_open() {
+        let dir = std::env::temp_dir().join(format!("bibalak_a5_10_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let db_path = dir.join("collection.sqlite");
+        let zip_path = dir.join("snap.zip");
+        let backup_tmp = dir.join("snap.tmp.sqlite");
+
+        {
+            let s = SqliteStorage::open(&db_path).unwrap();
+            seed_note(&s, &["before_backup", "back"], 1_700_000_000_000);
+            {
+                let conn = s.lock();
+                backup_db(&conn, &backup_tmp).unwrap();
+            }
+            create_zip(&backup_tmp, &dir.join("missing_media"), &zip_path).unwrap();
+            let _ = std::fs::remove_file(&backup_tmp);
+
+            // Mutate live DB after backup was taken.
+            seed_note(&s, &["after_backup", "back"], 1_700_000_001_000);
+
+            // Stage restore while storage is still open.
+            let staged = stage_restore(&zip_path, &db_path).unwrap();
+            assert_eq!(staged, pending_restore_path(&db_path));
+            assert!(staged.is_file());
+
+            // Live connection still sees both notes and was never renamed over.
+            let conn = s.lock();
+            let live_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(live_count, 2);
+        }
+
+        // Plant stale WAL/SHM sidecars to verify apply_pending_restore cleans them up.
+        let wal_path = append_suffix(&db_path, "-wal");
+        let shm_path = append_suffix(&db_path, "-shm");
+        std::fs::write(&wal_path, b"stale wal").unwrap();
+        std::fs::write(&shm_path, b"stale shm").unwrap();
+
+        // Re-opening applies the staged restore before SQLite opens the DB.
+        {
+            let reopened = SqliteStorage::open(&db_path).unwrap();
+            assert!(!pending_restore_path(&db_path).exists());
+            let conn = reopened.lock();
+            let restored_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(restored_count, 1);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a5_16_create_zip_uses_stored_for_precompressed_media_and_deflated_for_db_and_svg() {
+        let dir = std::env::temp_dir().join(format!("bibalak_a5_16_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let media_dir = dir.join("collection.media");
+        std::fs::create_dir_all(&media_dir).unwrap();
+
+        let db_file = dir.join("collection.sqlite");
+        std::fs::write(&db_file, vec![b'A'; 4096]).unwrap();
+        std::fs::write(media_dir.join("photo.JPG"), b"fake jpeg bytes").unwrap();
+        std::fs::write(media_dir.join("clip.mp3"), b"fake mp3 bytes").unwrap();
+        std::fs::write(media_dir.join("vector.svg"), b"<svg><rect/></svg>").unwrap();
+
+        let zip_path = dir.join("out.zip");
+        create_zip(&db_file, &media_dir, &zip_path).unwrap();
+
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
+        assert_eq!(
+            archive.by_name("collection.sqlite").unwrap().compression(),
+            zip::CompressionMethod::Deflated
+        );
+        assert_eq!(
+            archive.by_name("media/photo.JPG").unwrap().compression(),
+            zip::CompressionMethod::Stored
+        );
+        assert_eq!(
+            archive.by_name("media/clip.mp3").unwrap().compression(),
+            zip::CompressionMethod::Stored
+        );
+        assert_eq!(
+            archive.by_name("media/vector.svg").unwrap().compression(),
+            zip::CompressionMethod::Deflated
+        );
+
+        let db_only_zip = dir.join("db-only.zip");
+        create_db_only_zip(&db_file, &db_only_zip).unwrap();
+        let db_archive = zip::ZipArchive::new(std::fs::File::open(&db_only_zip).unwrap()).unwrap();
+        assert_eq!(db_archive.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a5_17_integrity_check_orphan_repair_returns_counts_without_hardcoded_english() {
+        let s = make_db();
+        {
+            let conn = s.lock();
+            conn.execute(
+                r#"INSERT INTO decks (id, name, parent_id, config_id, "mod", usn)
+                   VALUES (10, 'OrphanParent::Child', NULL, 1, 1000, 0)"#,
+                [],
+            )
+            .unwrap();
+        }
+        let mut conn = s.lock();
+        let report = integrity_check(&mut conn, 2000).unwrap();
+        assert!(report.errors.is_empty());
+        assert_eq!(report.repaired_orphan_subdecks, 1);
     }
 }

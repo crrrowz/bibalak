@@ -11,8 +11,8 @@
 
 use bibalak_core::error::{CoreError, CoreResult};
 use bibalak_core::ipc::{
-    epoch_days_to_date_string, AnswerButtons, DayCount, DeckStat, FsrsStats, HourlyStat,
-    RetentionWeek, StatsCoachDto, StatsDto,
+    epoch_days_to_date_string, AnswerButtons, DayCount, DeckStat, DueForecastDto, FsrsStats,
+    HourlyStat, RetentionWeek, StatsCoachDto, StatsDto,
 };
 use bibalak_core::model::Revlog;
 use bibalak_core::ports::{SimCardSnapshot, WorkloadSnapshot};
@@ -36,6 +36,53 @@ fn err(e: impl std::fmt::Display) -> CoreError {
 #[inline]
 fn day_bucket(id_ms: i64, tz_offset_minutes: i32, rollover_hour: u8, created_day: i64) -> i64 {
     progress::day_index_for_ms(id_ms, tz_offset_minutes, rollover_hour, created_day)
+}
+
+/// Query due review card counts for `0..=days` from today without scanning `revlog`.
+pub fn due_forecast(
+    conn: &Connection,
+    days: u32,
+    tz_offset_minutes: i32,
+    rollover_hour: u8,
+    now_ms: i64,
+    created_ms: i64,
+) -> CoreResult<DueForecastDto> {
+    let clamped = i64::from(days.clamp(1, 365));
+    let created_epoch_day =
+        progress::created_epoch_day(created_ms, tz_offset_minutes, rollover_hour);
+    let now_epoch_day = progress::created_epoch_day(now_ms, tz_offset_minutes, rollover_hour);
+    let today_i64 = now_epoch_day - created_epoch_day;
+    let today_date = epoch_days_to_date_string(now_epoch_day);
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT due - ?1, COUNT(*)
+             FROM cards
+             WHERE type = 2 AND queue = 2 AND due BETWEEN ?1 AND ?2
+             GROUP BY due
+             ORDER BY due",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map([today_i64, today_i64 + clamped], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, u32>(1)?))
+        })
+        .map_err(err)?;
+    let mut forecast = Vec::new();
+    for row in rows {
+        let (off_i, count) = row.map_err(err)?;
+        if count > 0 {
+            forecast.push(DayCount {
+                day: off_i,
+                count,
+                date: epoch_days_to_date_string(now_epoch_day + off_i),
+            });
+        }
+    }
+    Ok(DueForecastDto {
+        today_date,
+        forecast,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -74,14 +121,31 @@ pub fn stats(
         stat: DeckStat,
         retention: progress::RetentionTally,
     }
+    let mut cfg_weights: HashMap<i64, [f64; 21]> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT id, config FROM deck_config")
+            .map_err(err)?;
+        let mut rows = stmt.query([]).map_err(err)?;
+        while let Some(r) = rows.next().map_err(err)? {
+            let cid: i64 = r.get(0).map_err(err)?;
+            let json: String = r.get(1).map_err(err)?;
+            cfg_weights.insert(cid, crate::study::parse_sched_config(&json).fsrs_weights);
+        }
+    }
+    let mut deck_weights: HashMap<i64, [f64; 21]> = HashMap::new();
     let mut by_deck: HashMap<i64, DeckAccum> = HashMap::new();
     {
         let mut stmt = conn
-            .prepare("SELECT id, name, parent_id FROM decks")
+            .prepare("SELECT id, name, parent_id, config_id FROM decks")
             .map_err(err)?;
         let mut rows = stmt.query([]).map_err(err)?;
         while let Some(r) = rows.next().map_err(err)? {
             let id: i64 = r.get(0).map_err(err)?;
+            let config_id: i64 = r.get(3).map_err(err)?;
+            if let Some(&w) = cfg_weights.get(&config_id) {
+                deck_weights.insert(id, w);
+            }
             by_deck.insert(
                 id,
                 DeckAccum {
@@ -120,7 +184,7 @@ pub fn stats(
     // 2. Single linear scan of `cards` in `id` order computes card maturity,
     //    forecast, FSRS distributions, deck card rollups, active leeches, and
     //    the sorted `(card_id, deck_id)` lookup table.
-    let mut card_decks: Vec<(i64, i64)> = Vec::new();
+    let mut card_decks: Vec<(i64, i64, i64)> = Vec::new();
     let mut leech_card_ids: Vec<i64> = Vec::new();
     let mut leech_card_set: HashSet<i64> = HashSet::new();
     let mut forecast_buckets = [0_u32; (FORECAST_DAYS as usize) + 1];
@@ -135,7 +199,7 @@ pub fn stats(
         let mut stmt = conn
             .prepare(
                 "SELECT id, note_id, deck_id, type, queue, due, interval,
-                        fsrs_stability, fsrs_difficulty, fsrs_last_review
+                        fsrs_stability, fsrs_difficulty, fsrs_last_review, original_deck_id
                  FROM cards ORDER BY id",
             )
             .map_err(err)?;
@@ -148,9 +212,15 @@ pub fn stats(
             let queue: i64 = r.get(4).map_err(err)?;
             let due: i64 = r.get(5).map_err(err)?;
             let interval: i64 = r.get(6).map_err(err)?;
-            card_decks.push((id, deck_id));
+            let original_deck_id: i64 = r.get(10).map_err(err)?;
+            let home_deck_id = if original_deck_id > 0 {
+                original_deck_id
+            } else {
+                deck_id
+            };
+            card_decks.push((id, deck_id, home_deck_id));
 
-            if let Some(d) = by_deck.get_mut(&deck_id) {
+            if let Some(d) = by_deck.get_mut(&home_deck_id) {
                 d.stat.total_cards += 1;
                 if queue == -1 {
                     d.stat.suspended_count += 1;
@@ -175,7 +245,7 @@ pub fn stats(
 
             let matches_deck = match deck_ids {
                 None => true,
-                Some(ids) => ids.contains(&deck_id),
+                Some(ids) => ids.contains(&deck_id) || ids.contains(&home_deck_id),
             };
             if !matches_deck {
                 continue;
@@ -203,23 +273,26 @@ pub fn stats(
                     2 => stats.mature_count += 1,
                     _ => {}
                 }
-                if queue >= 0 {
-                    let stability: Option<f64> = r.get(7).map_err(err)?;
-                    let difficulty: Option<f64> = r.get(8).map_err(err)?;
-                    if let (Some(stab), Some(diff)) = (stability, difficulty) {
-                        fsrs.card_count += 1;
-                        let s_idx = STABILITY_EDGES
-                            .iter()
-                            .position(|&edge| stab < edge)
-                            .unwrap_or(STABILITY_EDGES.len());
-                        fsrs.stability_buckets[s_idx] += 1;
-                        let d_idx = ((diff - 1.0).clamp(0.0, 8.999)) as usize;
-                        fsrs.difficulty_buckets[d_idx.min(9)] += 1;
-                        if let Some(last_day) = r.get::<_, Option<i64>>(9).map_err(err)? {
-                            let elapsed = (today_i64 - last_day).max(0) as f64;
-                            sum_r += retrievability(elapsed, stab, fsrs_weights) * 100.0;
-                            n_r += 1;
-                        }
+                let stability: Option<f64> = r.get(7).map_err(err)?;
+                let difficulty: Option<f64> = r.get(8).map_err(err)?;
+                if let (Some(stab), Some(diff)) = (stability, difficulty) {
+                    fsrs.card_count += 1;
+                    let s_idx = STABILITY_EDGES
+                        .iter()
+                        .position(|&edge| stab < edge)
+                        .unwrap_or(STABILITY_EDGES.len());
+                    fsrs.stability_buckets[s_idx] += 1;
+                    let d_idx = ((diff - 1.0).clamp(0.0, 8.999)) as usize;
+                    fsrs.difficulty_buckets[d_idx.min(9)] += 1;
+                    if let Some(last_day) = r.get::<_, Option<i64>>(9).map_err(err)? {
+                        let elapsed = (today_i64 - last_day).max(0) as f64;
+                        let card_weights = if deck_ids.is_none() {
+                            deck_weights.get(&home_deck_id).unwrap_or(fsrs_weights)
+                        } else {
+                            fsrs_weights
+                        };
+                        sum_r += retrievability(elapsed, stab, card_weights) * 100.0;
+                        n_r += 1;
                     }
                 }
             }
@@ -247,7 +320,9 @@ pub fn stats(
     //    per-deck 7d/30d rollups. Because `id` increases strictly, `day_bucket`
     //    never decreases and `seen_today.insert(card_id)` identifies exact
     //    `MIN(id)` per `(card_id, day)` without temp sorts.
-    let cutoff_ms = days.map(|d| now_ms - i64::from(d) * MS_PER_DAY);
+    let rollover_ms = i64::from(rollover_hour) * 3_600_000;
+    let cutoff_ms =
+        days.map(|d| (now_epoch_day - i64::from(d)) * MS_PER_DAY - tz_off_ms + rollover_ms);
     let reviews_cutoff = now_ms - REVIEWS_7D_MS;
     let leech_28d_cutoff = now_ms - REVIEWS_28D_MS;
     let mut leech_7d_ms = 0_i64;
@@ -268,13 +343,31 @@ pub fn stats(
     let mut hourly: BTreeMap<u8, (u32, u32)> = BTreeMap::new();
 
     {
-        let mut stmt = conn
-            .prepare(
+        let (sql, bound_min): (&str, Option<i64>) = match cutoff_ms {
+            Some(c) => {
+                // Keep at least 31d so `RetentionCounter`'s 30d boundary day sees
+                // every earlier review on that day (`seen_today`), plus 7d/28d rollups.
+                let min_id = c
+                    .min(now_ms - progress::RETENTION_30D_MS - MS_PER_DAY)
+                    .min(reviews_cutoff)
+                    .min(leech_28d_cutoff);
+                (
+                    "SELECT id, card_id, ease, last_interval, taken_ms, review_kind
+                     FROM revlog WHERE id >= ?1 ORDER BY id",
+                    Some(min_id),
+                )
+            }
+            None => (
                 "SELECT id, card_id, ease, last_interval, taken_ms, review_kind
                  FROM revlog ORDER BY id",
-            )
-            .map_err(err)?;
-        let mut rows = stmt.query([]).map_err(err)?;
+                None,
+            ),
+        };
+        let mut stmt = conn.prepare(sql).map_err(err)?;
+        let mut rows = match bound_min {
+            Some(min_id) => stmt.query([min_id]).map_err(err)?,
+            None => stmt.query([]).map_err(err)?,
+        };
         while let Some(r) = rows.next().map_err(err)? {
             let id: i64 = r.get(0).map_err(err)?;
             let card_id: i64 = r.get(1).map_err(err)?;
@@ -290,13 +383,13 @@ pub fn stats(
             let (is_first, retention_30d_pass) =
                 retention_30d.observe(card_id, id, review_kind, ease, day_idx);
 
-            let Ok(card_pos) = card_decks.binary_search_by_key(&card_id, |&(cid, _)| cid) else {
+            let Ok(card_pos) = card_decks.binary_search_by_key(&card_id, |&(cid, _, _)| cid) else {
                 continue;
             };
-            let deck_id = card_decks[card_pos].1;
+            let (_, deck_id, home_deck_id) = card_decks[card_pos];
 
             if id >= reviews_cutoff || retention_30d_pass.is_some() {
-                if let Some(d) = by_deck.get_mut(&deck_id) {
+                if let Some(d) = by_deck.get_mut(&home_deck_id) {
                     if id >= reviews_cutoff {
                         d.stat.reviews_7d += 1;
                     }
@@ -308,9 +401,24 @@ pub fn stats(
 
             let matches_deck = match deck_ids {
                 None => true,
-                Some(ids) => ids.contains(&deck_id),
+                Some(ids) => ids.contains(&deck_id) || ids.contains(&home_deck_id),
             };
             if !matches_deck {
+                continue;
+            }
+
+            if id >= reviews_cutoff {
+                scope_reviews_7d += 1;
+            }
+            if id >= leech_28d_cutoff && leech_card_set.contains(&card_id) {
+                let dur = taken_ms.max(0);
+                leech_28d_ms += dur;
+                if id >= reviews_cutoff {
+                    leech_7d_ms += dur;
+                }
+            }
+
+            if cutoff_ms.is_some_and(|c| id < c) {
                 continue;
             }
 
@@ -320,22 +428,8 @@ pub fn stats(
                 reviews_by_day.push((day_idx, 1));
             }
 
-            if id >= reviews_cutoff {
-                scope_reviews_7d += 1;
-            }
-            if id >= leech_28d_cutoff && leech_card_set.contains(&card_id) {
-                leech_28d_ms += taken_ms;
-                if id >= reviews_cutoff {
-                    leech_7d_ms += taken_ms;
-                }
-            }
-
-            if cutoff_ms.is_some_and(|c| id < c) {
-                continue;
-            }
-
             stats.total_reviews += 1;
-            stats.total_time_ms += taken_ms;
+            stats.total_time_ms += taken_ms.max(0);
             if last_studied_day != Some(day_idx) {
                 stats.studied_days += 1;
                 last_studied_day = Some(day_idx);
@@ -346,7 +440,7 @@ pub fn stats(
                 if ease > 1 {
                     ret_passed += 1;
                 }
-                let wk = day_idx / 7;
+                let wk = day_idx.div_euclid(7);
                 let entry = weekly.entry(wk).or_insert(RetentionWeek {
                     week_index: wk,
                     young_total: 0,
@@ -367,23 +461,21 @@ pub fn stats(
                 }
             }
 
-            if review_kind <= 2 {
-                if (1..=4).contains(&ease) {
-                    let idx = (ease - 1) as usize;
-                    if review_kind == 0 || review_kind == 2 {
-                        buttons.learning[idx] += 1;
-                    } else if last_interval < 21 {
-                        buttons.young[idx] += 1;
-                    } else {
-                        buttons.mature[idx] += 1;
-                    }
+            if (1..=4).contains(&ease) {
+                let idx = (ease - 1) as usize;
+                if review_kind == 0 || review_kind == 2 {
+                    buttons.learning[idx] += 1;
+                } else if last_interval < 21 {
+                    buttons.young[idx] += 1;
+                } else {
+                    buttons.mature[idx] += 1;
                 }
-                let hour = ((id + tz_off_ms).rem_euclid(MS_PER_DAY) / 3_600_000) as u8;
-                let h = hourly.entry(hour).or_insert((0, 0));
-                h.0 += 1;
-                if ease > 1 {
-                    h.1 += 1;
-                }
+            }
+            let hour = ((id + tz_off_ms).rem_euclid(MS_PER_DAY) / 3_600_000) as u8;
+            let h = hourly.entry(hour).or_insert((0, 0));
+            h.0 += 1;
+            if ease > 1 {
+                h.1 += 1;
             }
         }
     }
@@ -414,7 +506,7 @@ pub fn stats(
 
     // Populate `dates` mapping for calendar rendering (heatmap window + forecast window + all review days).
     {
-        let min_heatmap_day = (today_i64 - 370).max(0);
+        let min_heatmap_day = today_i64 - 370;
         let max_forecast_day = today_i64 + FORECAST_DAYS + 14;
         for d in min_heatmap_day..=max_forecast_day {
             stats
@@ -585,6 +677,7 @@ pub fn revlogs_for_optimize(conn: &Connection, deck_id: Option<i64>) -> CoreResu
 
 #[cfg(test)]
 mod tests {
+    use crate::stats::{due_forecast, stats};
     use crate::storage::SqliteStorage;
     use bibalak_core::model::{Card, Revlog};
     use bibalak_core::ports::*;
@@ -997,8 +1090,9 @@ mod tests {
             .unwrap();
 
         assert!(cutoff_30d > created_ms + 6 * 3_600_000);
-        assert_eq!(all.total_reviews, 3);
-        assert_eq!(all.total_time_ms, 6500);
+        // A3-09 aligns `days` cutoff to rollover start (`created_ms`), so both Day 0 reviews are included.
+        assert_eq!(all.total_reviews, 4);
+        assert_eq!(all.total_time_ms, 8000);
         assert_eq!(all.retention_pct, Some(100.0));
         assert_eq!(all.backlog_count, 1);
         assert_eq!(all.mature_count, 1);
@@ -1470,5 +1564,40 @@ mod tests {
             .find(|c| c.state.phase == bibalak_core::scheduling::CardPhase::Learning)
             .unwrap();
         assert_eq!(learn_snap.state.steps_remaining, 2);
+    }
+
+    #[test]
+    fn a5_08_due_forecast_matches_stats_forecast() {
+        let now_ms = 1_794_830_400_000;
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        storage.ensure_collection(now_ms).unwrap();
+        let nt_id = storage.list_notetypes().unwrap()[0].id;
+        storage
+            .add_note_with_cards(nt_id, 1, &["Q1".into(), "A1".into()], &[], now_ms)
+            .unwrap();
+        storage
+            .add_note_with_cards(nt_id, 1, &["Q2".into(), "A2".into()], &[], now_ms)
+            .unwrap();
+        let ids = storage.deck_card_ids(&[1]).unwrap();
+        storage.set_due_date(&ids[..1], 0, 0, 0, now_ms).unwrap();
+        storage.set_due_date(&ids[1..], 5, 5, 0, now_ms).unwrap();
+
+        let full = stats(
+            &storage.lock(),
+            None,
+            None,
+            180,
+            4,
+            &FSRS6_DEFAULT_WEIGHTS,
+            90.0,
+            0,
+            now_ms,
+            now_ms,
+        )
+        .unwrap();
+        let fast = due_forecast(&storage.lock(), 30, 180, 4, now_ms, now_ms).unwrap();
+        assert_eq!(fast.today_date, full.today_date);
+        assert_eq!(fast.forecast, full.forecast);
+        assert_eq!(fast.forecast.len(), 2);
     }
 }

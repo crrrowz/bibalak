@@ -19,17 +19,34 @@ function tsxFiles(dir: string): string[] {
   });
 }
 
+function uiTsFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) {
+      return name === "dev" || name === "test" || name === "locales" ? [] : uiTsFiles(p);
+    }
+    if (!p.endsWith(".ts") || p.endsWith(".test.ts") || p.endsWith(".d.ts")) return [];
+    const rel = relative(SRC, p).split("\\").join("/");
+    return rel.startsWith("features/") || rel.startsWith("components/") ? [p] : [];
+  });
+}
+
 const files = tsxFiles(SRC).map((p) => ({
+  path: relative(SRC, p).split("\\").join("/"),
+  src: readFileSync(p, "utf8"),
+}));
+
+const tsHelperFiles = uiTsFiles(SRC).map((p) => ({
   path: relative(SRC, p).split("\\").join("/"),
   src: readFileSync(p, "utf8"),
 }));
 
 /** Text that is not language: brand, key caps, units, symbols. */
 const ALLOWED_TEXT =
-  /^(Bibalak|Anki|FSRS|FSRS-5|FSRS-6|SM-2|KaTeX|⌘K|Ctrl|Esc|Space|Enter|Tab|[A-Z]|[0-9]+|[0-9]+[a-z]?|apkg|\.apkg|\.colpkg|B|I|U|S)$/;
+  /^(Bibalak|Anki|FSRS|FSRS-5|FSRS-6|SM-2|KaTeX|⌘K|Ctrl|Esc|Space|Enter|Tab|[A-Z]|[0-9]+|[0-9]+[a-z]?|apkg|\.apkg|\.colpkg|B|I|U|S|h1|h2|h3|h4|p|div|span|button)$/;
 
 describe("i18n guard", () => {
-  it("has no hard-coded English text in JSX", () => {
+  it("has no hard-coded English text in JSX or UI helper .ts files", () => {
     const offenders: string[] = [];
     for (const { path, src } of files) {
       // Text nodes: >Some words<   (ignores {expressions})
@@ -46,9 +63,20 @@ describe("i18n guard", () => {
           offenders.push(`${path}: "${text.slice(0, 60)}"`);
         }
       }
+      // Inline JSX ternary/fallback string expressions: {cond ? "Text" : ...} or {x ?? "Text"}
+      for (const m of src.matchAll(
+        />\s*\{([^}]*(?:\?|:|\|\||\?\?)\s*"([A-Z][A-Za-z0-9 ,.!?\-:'()/]{2,})")[^}]*\}\s*</g,
+      )) {
+        const expr = m[1];
+        const val = m[2].trim();
+        const beforeVal = expr.slice(0, expr.indexOf(`"${val}"`));
+        if (!/\btn?\s*\(\s*"[^"]*"\s*$/.test(beforeVal) && !ALLOWED_TEXT.test(val)) {
+          offenders.push(`${path}: {${val.slice(0, 60)}}`);
+        }
+      }
       // User-facing string props (direct string or string literals inside ternaries/expressions).
       for (const m of src.matchAll(
-        /\b(placeholder|title|aria-label|alt|label|description)=(?:"([^"]*[A-Za-z][^"]*)"|\{([\s\S]*?)\})/g,
+        /\b(placeholder|title|aria-label|ariaLabel|alt|label|description|confirmLabel|cancelLabel|emptyText|helperText|hint|heading|subtitle)=(?:"([^"]*[A-Za-z][^"]*)"|\{([\s\S]*?)\})/g,
       )) {
         const prop = m[1];
         if (m[2]) {
@@ -65,6 +93,20 @@ describe("i18n guard", () => {
             }
             if (!ALLOWED_TEXT.test(val)) offenders.push(`${path}: ${prop}="${val.slice(0, 60)}"`);
           }
+        }
+      }
+    }
+    // Check user-facing UI helper .ts files for multi-word English UI string returns or fields.
+    for (const { path, src } of tsHelperFiles) {
+      const noComments = src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+      for (const m of noComments.matchAll(
+        /(?:return\s+|(?:label|title|description|message|hint|emptyText)\s*:\s*)"([A-Z][a-z]+(?:\s+[A-Za-z]{2,})+[^"]*)"/g,
+      )) {
+        const val = m[1].trim();
+        const before = noComments.slice(Math.max(0, (m.index ?? 0) - 32), m.index ?? 0);
+        if (/new\s+Error\s*\($|throw\s+$|console\.\w+\s*\($/.test(before)) continue;
+        if (!ALLOWED_TEXT.test(val)) {
+          offenders.push(`${path}: "${val.slice(0, 60)}"`);
         }
       }
     }

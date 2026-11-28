@@ -1,6 +1,7 @@
-import { AlertTriangle, Check, Loader2, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, Trash2 } from "lucide-react";
 import { CardFace } from "@/components/CardFace";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import type { EditableDraft } from "@/features/ai/generateHelpers";
 import { buildClozePreviewHtml, plainTextToFieldHtml } from "@/lib/aiFormat";
 import { t, tn } from "@/lib/i18n";
@@ -211,7 +212,7 @@ export function GenerateDraftReviewSection({
           })}
         </span>
         <Button type="button" disabled={!canAddSelected} onClick={onAddSelected}>
-          {addingBatch ? <Loader2 className="me-1.5 size-4 animate-spin" aria-hidden /> : null}
+          {addingBatch ? <Spinner size="md" className="me-1.5" /> : null}
           {tn("ai.generate.addSelected", acceptedCount, {
             deck: selectedDeckName ?? "",
           })}

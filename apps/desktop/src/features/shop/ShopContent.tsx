@@ -12,7 +12,7 @@ import type {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FrostShieldIcon } from "@/components/icons/game";
-import { GoldIcon } from "@/components/icons/progress";
+import { GoldIcon, KnowledgePointsIcon } from "@/components/icons/progress";
 import { Button } from "@/components/ui/button";
 import { gameItemTitle, spendEntryLabel } from "@/features/game/itemTitle";
 import { useGameState } from "@/features/game/useGameState";
@@ -21,8 +21,10 @@ import { errorMessage, ipc, isTauri } from "@/lib/ipc";
 import { queryKeys } from "@/lib/queryKeys";
 import { playStyleCue } from "@/lib/styleAudio";
 import { formatCurrency, formatPoints } from "@/lib/styles/scholar";
+import { useOptionalNavigate } from "@/lib/useOptionalNavigate";
 import { cn } from "@/lib/utils";
 import type { LocaleKey } from "@/locales/en";
+import { useStyle } from "@/stores/style";
 import { toast } from "@/stores/toast";
 import { CustomRewardDialog } from "./CustomRewardDialog";
 import { RewardIconGlyph } from "./rewardIcons";
@@ -55,6 +57,21 @@ function slotLabel(slot: EquipmentSlot): string {
  */
 export function ShopContent() {
   const tauri = isTauri();
+  const style = useStyle((s) => s.style);
+  const navigate = useOptionalNavigate();
+  const isDefaultStyle = style === "default";
+  const isScholar = style === "scholar";
+  const currencyStyle = isScholar ? "scholar" : "game";
+  const CurrencyIcon = isScholar ? KnowledgePointsIcon : GoldIcon;
+  const buyKey: LocaleKey = isScholar ? "scholar.shop.buy" : "game.shop.buy";
+  const needKey: LocaleKey = isScholar ? "scholar.shop.needPoints" : "game.shop.needGold";
+  const purchasedToastKey: LocaleKey = isScholar
+    ? "scholar.shop.purchasedToast"
+    : "game.shop.purchasedToast";
+  const refundedToastKey: LocaleKey = isScholar
+    ? "scholar.shop.refundedToast"
+    : "game.shop.refundedToast";
+
   const queryClient = useQueryClient();
   const tabsRef = useRef<(HTMLButtonElement | null)[]>([]);
   const baseId = useId();
@@ -66,16 +83,16 @@ export function ShopContent() {
   const [deletingReward, setDeletingReward] = useState<CustomRewardDto | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
-  const gameQuery = useGameState(true);
+  const gameQuery = useGameState(!isDefaultStyle);
   const rewardsQuery = useQuery({
     queryKey: queryKeys.customRewards,
     queryFn: ipc.listCustomRewards,
-    enabled: tauri,
+    enabled: tauri && !isDefaultStyle,
   });
   const historyQuery = useQuery({
     queryKey: queryKeys.spendHistory,
     queryFn: () => ipc.listSpendHistory(50),
-    enabled: tauri,
+    enabled: tauri && !isDefaultStyle,
   });
 
   useEffect(() => {
@@ -105,7 +122,7 @@ export function ShopContent() {
       applyGameState(nextState);
       void invalidateShopQueries();
       toast.success(
-        t("game.shop.refundedToast", {
+        t(refundedToastKey, {
           item: vars.label,
           gold: formatPoints(vars.amountCents),
         }),
@@ -132,7 +149,7 @@ export function ShopContent() {
       void invalidateShopQueries();
       const label = gameItemTitle(item.item_key);
       toast.success(
-        t("game.shop.purchasedToast", {
+        t(purchasedToastKey, {
           item: label,
           gold: formatPoints(item.price_cents),
         }),
@@ -207,7 +224,7 @@ export function ShopContent() {
       applyGameState(res.state);
       void invalidateShopQueries();
       toast.success(
-        t("game.shop.purchasedToast", {
+        t(purchasedToastKey, {
           item: reward.title,
           gold: formatPoints(reward.cost_cents),
         }),
@@ -265,6 +282,27 @@ export function ShopContent() {
     tabsRef.current[nextIdx]?.focus();
   };
 
+  if (isDefaultStyle) {
+    const openAppearanceSettings = () => {
+      try {
+        sessionStorage.setItem("keepsake-settings-category", "general");
+      } catch {
+        // ignore sessionStorage failures
+      }
+      navigate?.("/settings");
+    };
+    return (
+      <div className="mx-auto w-full max-w-3xl p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card p-5">
+          <p className="text-sm text-foreground">{t("game.shop.defaultStyleNote")}</p>
+          <Button type="button" size="sm" onClick={openAppearanceSettings}>
+            {t("scholar.transcript.openAppearance")}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!tauri) {
     return (
       <div className="mx-auto max-w-5xl p-4 sm:p-6 lg:p-8">
@@ -315,10 +353,13 @@ export function ShopContent() {
         <div className="flex flex-wrap items-center gap-4">
           <div
             data-testid="shop-gold-balance"
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-background/70 px-3 py-1.5 text-sm font-semibold text-[hsl(var(--game-gold))]"
+            className={cn(
+              "inline-flex items-center gap-2 rounded-lg border border-border bg-background/70 px-3 py-1.5 text-sm font-semibold",
+              isScholar ? "text-primary" : "text-[hsl(var(--game-gold))]",
+            )}
           >
-            <GoldIcon className="size-4 shrink-0" />
-            <span className="tnum">{formatCurrency(availableGold, "game")}</span>
+            <CurrencyIcon className="size-4 shrink-0" />
+            <span className="tnum">{formatCurrency(availableGold, currencyStyle)}</span>
           </div>
 
           <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-background/70 px-3 py-1.5 text-xs font-medium text-[hsl(var(--game-freeze))]">
@@ -403,8 +444,13 @@ export function ShopContent() {
               </div>
 
               <div className="flex shrink-0 items-center gap-3">
-                <span className="tnum text-sm font-semibold text-[hsl(var(--game-gold))]">
-                  {formatCurrency(freezeItem.price_cents, "game")}
+                <span
+                  className={cn(
+                    "tnum text-sm font-semibold",
+                    isScholar ? "text-primary" : "text-[hsl(var(--game-gold))]",
+                  )}
+                >
+                  {formatCurrency(freezeItem.price_cents, currencyStyle)}
                 </span>
                 {freezeAtCap ? (
                   <Button type="button" size="sm" variant="outline" disabled>
@@ -416,11 +462,11 @@ export function ShopContent() {
                     size="sm"
                     variant="outline"
                     disabled
-                    title={t("game.shop.needGold", {
+                    title={t(needKey, {
                       missing: formatPoints(freezeItem.price_cents - availableGold),
                     })}
                   >
-                    {t("game.shop.needGold", {
+                    {t(needKey, {
                       missing: formatPoints(freezeItem.price_cents - availableGold),
                     })}
                   </Button>
@@ -431,7 +477,7 @@ export function ShopContent() {
                     disabled={buyMut.isPending}
                     onClick={() => buyMut.mutate({ item: freezeItem })}
                   >
-                    {t("game.shop.buy", { price: formatPoints(freezeItem.price_cents) })}
+                    {t(buyKey, { price: formatPoints(freezeItem.price_cents) })}
                   </Button>
                 )}
               </div>
@@ -467,7 +513,7 @@ export function ShopContent() {
               const shortfall = Math.max(0, item.price_cents - availableGold);
               const insufficient = !item.owned && shortfall > 0;
               const shortfallText = insufficient
-                ? t("game.shop.needGold", { missing: formatPoints(shortfall) })
+                ? t(needKey, { missing: formatPoints(shortfall) })
                 : undefined;
 
               return (
@@ -503,9 +549,14 @@ export function ShopContent() {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-3">
-                    <span className="tnum inline-flex items-center gap-1 text-xs font-semibold text-[hsl(var(--game-gold))]">
-                      <GoldIcon className="size-3.5 shrink-0" />
-                      {formatCurrency(item.price_cents, "game")}
+                    <span
+                      className={cn(
+                        "tnum inline-flex items-center gap-1 text-xs font-semibold",
+                        isScholar ? "text-primary" : "text-[hsl(var(--game-gold))]",
+                      )}
+                    >
+                      <CurrencyIcon className="size-3.5 shrink-0" />
+                      {formatCurrency(item.price_cents, currencyStyle)}
                     </span>
 
                     {item.owned && item.slot ? (
@@ -549,7 +600,7 @@ export function ShopContent() {
                         disabled={buyMut.isPending}
                         onClick={() => buyMut.mutate({ item })}
                       >
-                        {t("game.shop.buy", { price: formatPoints(item.price_cents) })}
+                        {t(buyKey, { price: formatPoints(item.price_cents) })}
                       </Button>
                     )}
                   </div>
@@ -636,7 +687,7 @@ export function ShopContent() {
                 const shortfall = Math.max(0, reward.cost_cents - availableGold);
                 const insufficient = shortfall > 0;
                 const shortfallText = insufficient
-                  ? t("game.shop.needGold", { missing: formatPoints(shortfall) })
+                  ? t(needKey, { missing: formatPoints(shortfall) })
                   : undefined;
 
                 return (
@@ -693,9 +744,14 @@ export function ShopContent() {
                     </div>
 
                     <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-3">
-                      <span className="tnum inline-flex items-center gap-1 text-xs font-semibold text-[hsl(var(--game-gold))]">
-                        <GoldIcon className="size-3.5 shrink-0" />
-                        {formatCurrency(reward.cost_cents, "game")}
+                      <span
+                        className={cn(
+                          "tnum inline-flex items-center gap-1 text-xs font-semibold",
+                          isScholar ? "text-primary" : "text-[hsl(var(--game-gold))]",
+                        )}
+                      >
+                        <CurrencyIcon className="size-3.5 shrink-0" />
+                        {formatCurrency(reward.cost_cents, currencyStyle)}
                       </span>
 
                       {insufficient ? (
@@ -781,8 +837,13 @@ export function ShopContent() {
                     </div>
 
                     <div className="flex items-center gap-3">
-                      <span className="tnum text-sm font-semibold text-[hsl(var(--game-gold))]">
-                        -{formatCurrency(entry.amount_cents, "game")}
+                      <span
+                        className={cn(
+                          "tnum text-sm font-semibold",
+                          isScholar ? "text-primary" : "text-[hsl(var(--game-gold))]",
+                        )}
+                      >
+                        -{formatCurrency(entry.amount_cents, currencyStyle)}
                       </span>
                       {canRefund && (
                         <Button

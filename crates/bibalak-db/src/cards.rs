@@ -213,8 +213,15 @@ pub fn set_card_flag(conn: &Connection, card_ids: &[i64], flag: u8, now_ms: i64)
     Ok(())
 }
 
-/// Ensure the `leech` tag is present on a note (idempotent).
-pub fn add_note_tag(conn: &Connection, note_id: i64, tag: &str, now_ms: i64) -> CoreResult<()> {
+/// Ensure `tag` is present on a note (idempotent). Returns `true` if the tag
+/// was added, `false` if it was already present.
+pub fn add_note_tag_if_missing(
+    conn: &Connection,
+    note_id: i64,
+    tag: &str,
+    now_ms: i64,
+) -> CoreResult<bool> {
+    let tag = crate::tags::validate_tag(tag)?;
     let current: String = conn
         .query_row("SELECT tags FROM notes WHERE id = ?1", [note_id], |r| {
             r.get(0)
@@ -223,7 +230,7 @@ pub fn add_note_tag(conn: &Connection, note_id: i64, tag: &str, now_ms: i64) -> 
     // Tags blob: ` tag1 tag2 ` (space-padded). Check inclusion before writing.
     let needle = format!(" {tag} ");
     if current.contains(&needle) {
-        return Ok(());
+        return Ok(false);
     }
     let new_tags = if current.trim().is_empty() {
         format!(" {tag} ")
@@ -235,7 +242,12 @@ pub fn add_note_tag(conn: &Connection, note_id: i64, tag: &str, now_ms: i64) -> 
         params![note_id, new_tags, now_ms],
     )
     .map_err(err)?;
-    Ok(())
+    Ok(true)
+}
+
+/// Ensure the `leech` tag is present on a note (idempotent).
+pub fn add_note_tag(conn: &Connection, note_id: i64, tag: &str, now_ms: i64) -> CoreResult<()> {
+    add_note_tag_if_missing(conn, note_id, tag, now_ms).map(|_| ())
 }
 
 pub(crate) const CARD_SNAPSHOT_COLS: &str = r#"id, note_id, deck_id, ord, "mod", usn, type, queue, due,
@@ -298,22 +310,25 @@ pub fn fetch_cards_by_ids(conn: &Connection, card_ids: &[i64]) -> CoreResult<Vec
 }
 
 /// Return all card IDs belonging to `deck_ids` (including cards currently in a
-/// filtered deck whose `original_deck_id` is in `deck_ids`), ordered by `id`.
+/// filtered deck whose `original_deck_id` is in `deck_ids`), ordered by `id`,
+/// capped at `MAX_DECK_CARD_IDS` (A4-11).
 pub fn deck_card_ids(conn: &Connection, deck_ids: &[i64]) -> CoreResult<Vec<i64>> {
     if deck_ids.is_empty() {
         return Ok(vec![]);
     }
+    const MAX_DECK_CARD_IDS: i64 = 100_000;
     let json = serde_json::to_string(deck_ids).map_err(err)?;
     let mut stmt = conn
         .prepare(
             "SELECT id FROM cards
              WHERE deck_id IN (SELECT value FROM json_each(?1))
                 OR (original_deck_id != 0 AND original_deck_id IN (SELECT value FROM json_each(?1)))
-             ORDER BY id",
+             ORDER BY id
+             LIMIT ?2",
         )
         .map_err(err)?;
     let ids = stmt
-        .query_map([json], |r| r.get::<_, i64>(0))
+        .query_map(params![json, MAX_DECK_CARD_IDS], |r| r.get::<_, i64>(0))
         .map_err(err)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(err)?;
@@ -545,12 +560,19 @@ pub fn reposition_new_cards(
 
     if shift_existing {
         let selected_json = serde_json::to_string(&ordered_ids).map_err(err)?;
+        let mut deck_ids: Vec<i64> = snapshots.iter().map(|c| c.deck_id).collect();
+        deck_ids.sort_unstable();
+        deck_ids.dedup();
+        let decks_json = serde_json::to_string(&deck_ids).map_err(err)?;
         let sql = format!(
-            "SELECT {CARD_SNAPSHOT_COLS} FROM cards WHERE type = 0 AND due >= ?1 AND id NOT IN (SELECT value FROM json_each(?2))"
+            "SELECT {CARD_SNAPSHOT_COLS} FROM cards
+             WHERE type = 0 AND due >= ?1
+               AND deck_id IN (SELECT value FROM json_each(?3))
+               AND id NOT IN (SELECT value FROM json_each(?2))"
         );
         let mut stmt = tx.prepare(&sql).map_err(err)?;
         let shifted: Vec<Card> = stmt
-            .query_map(params![start, &selected_json], row_to_card)
+            .query_map(params![start, &selected_json, &decks_json], row_to_card)
             .map_err(err)?
             .collect::<rusqlite::Result<_>>()
             .map_err(err)?;
@@ -560,8 +582,10 @@ pub fn reposition_new_cards(
         let shift_by = (ordered_ids.len() as i64) * step;
         tx.execute(
             r#"UPDATE cards SET due = due + ?1, "mod" = ?2, usn = -1
-               WHERE type = 0 AND due >= ?3 AND id NOT IN (SELECT value FROM json_each(?4))"#,
-            params![shift_by, now_ms, start, &selected_json],
+               WHERE type = 0 AND due >= ?3
+                 AND deck_id IN (SELECT value FROM json_each(?5))
+                 AND id NOT IN (SELECT value FROM json_each(?4))"#,
+            params![shift_by, now_ms, start, &selected_json, &decks_json],
         )
         .map_err(err)?;
     }
@@ -1446,5 +1470,35 @@ mod tests {
             )
             .unwrap();
         assert_eq!((d972, od972, odue972, t972, q972), (fdeck.id, 1, 12, 3, 1));
+    }
+
+    #[test]
+    fn reposition_shift_does_not_mutate_other_decks() {
+        use bibalak_core::ports::FixedClock;
+        use bibalak_core::Collection;
+        use std::sync::Arc;
+
+        let s = SqliteStorage::open_in_memory().unwrap();
+        let col = Collection::new(Box::new(s), Arc::new(FixedClock(1_794_830_400_000))).unwrap();
+        let nt = col.add_stock_notetype(0).unwrap();
+        let deck_a = col.create_deck("DeckA").unwrap();
+        let deck_b = col.create_deck("DeckB").unwrap();
+
+        col.add_note(nt.id, deck_a.id, &["A1".into(), "B".into()], &[])
+            .unwrap();
+        col.add_note(nt.id, deck_b.id, &["B1".into(), "B".into()], &[])
+            .unwrap();
+
+        let a_ids = col.deck_card_ids(deck_a.id, false).unwrap();
+        let b_due_before = col.search_cards("deck:DeckB", 10, 0, None, true).unwrap()[0].due;
+
+        // Reposition only DeckA's card at start=1 with shift_existing=true.
+        col.reposition_new_cards(&a_ids, 1, 1, false, true).unwrap();
+
+        let b_due_after = col.search_cards("deck:DeckB", 10, 0, None, true).unwrap()[0].due;
+        assert_eq!(
+            b_due_after, b_due_before,
+            "repositioning DeckA shifted unrelated DeckB card from {b_due_before} to {b_due_after}"
+        );
     }
 }

@@ -149,8 +149,14 @@ pub trait NoteStore: Send + Sync {
     /// Bulk: append `tag` to many notes in a single transaction.
     fn bulk_add_tag(&self, note_ids: &[i64], tag: &str, now_ms: i64) -> CoreResult<()>;
 
+    /// Bulk: append multiple `tags` to many notes in a single transaction.
+    fn bulk_add_tags(&self, note_ids: &[i64], tags: &[String], now_ms: i64) -> CoreResult<()>;
+
     /// Bulk: remove `tag` from many notes in a single transaction.
     fn bulk_remove_tag(&self, note_ids: &[i64], tag: &str, now_ms: i64) -> CoreResult<()>;
+
+    /// Bulk: remove multiple `tags` from many notes in a single transaction.
+    fn bulk_remove_tags(&self, note_ids: &[i64], tags: &[String], now_ms: i64) -> CoreResult<()>;
 
     /// Restore note fields/tags from snapshots through the normal note update path (used by undo).
     fn restore_notes(&self, snapshots: &[NoteSnapshot], now_ms: i64) -> CoreResult<()>;

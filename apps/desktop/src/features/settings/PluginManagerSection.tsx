@@ -4,6 +4,7 @@ import type { PluginInfo } from "@bibalak/ipc-types";
 import { AlertTriangle, FolderOpen, PackageOpen, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
+import { SettingsCard, SettingsSectionHeader } from "@/components/ui/settings-kit";
 import { t } from "@/lib/i18n";
 import { errorMessage, ipc } from "@/lib/ipc";
 import { platform } from "@/lib/platform";
@@ -195,14 +196,9 @@ export function PluginManagerSection() {
   const commands = hostSnapshot.commands;
 
   return (
-    <section className="space-y-4 rounded-xl border border-border bg-card p-5">
+    <SettingsCard>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-medium text-foreground">{t("settings.plugins.title")}</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t("settings.plugins.description")}
-          </p>
-        </div>
+        <SettingsSectionHeader title={t("settings.plugins.cardTitle")} />
         <div className="flex flex-wrap gap-2">
           <Button
             size="sm"
@@ -485,6 +481,6 @@ export function PluginManagerSection() {
           }
         }}
       />
-    </section>
+    </SettingsCard>
   );
 }

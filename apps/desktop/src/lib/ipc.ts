@@ -23,10 +23,13 @@ import type {
   CustomRewardDto,
   CustomRewardInput,
   FsrsOptimizeResult,
+  DeckAlgorithmDto,
   DeckConfig,
   DeckProgress,
   DeckSummary,
+  DueForecastDto,
   DuplicateGroup,
+  EmptyCardItem,
   EquipmentSlot,
   ExportEstimate,
   ExportPackageRequest,
@@ -46,6 +49,7 @@ import type {
   HabitLogDto,
   HabitLogInput,
   ImportSummary,
+  IntegrityReport,
   IpcError,
   MatrixBoardDto,
   MatrixQuadrantDto,
@@ -89,6 +93,8 @@ import type {
   TextImportPreview,
   TextImportSummary,
   UndoAction,
+  UndoHistoryEntry,
+  UndoHistoryPage,
   WeekStart,
   WorkloadComparisonDto,
   YesterdaySummaryDto,
@@ -104,6 +110,12 @@ export type RatingValue = (typeof Rating)[keyof typeof Rating];
  * `invoke` directly, so the command surface is discoverable and type-checked
  * against the Rust-generated `@bibalak/ipc-types`. Rejections are `IpcError`.
  */
+export type StudyCardWithFlag = StudyCardDto;
+export type ExtendedUndoAction = UndoAction;
+export type UndoHistoryEntryDto = UndoHistoryEntry;
+export type UndoHistoryPageDto = UndoHistoryPage;
+export type { DueForecastDto };
+
 export const ipc = {
   appInfo: () => invoke<AppInfo>("app_info"),
 
@@ -128,6 +140,8 @@ export const ipc = {
     invoke<void>("increase_today_limit", { deckId, extraNew }),
   deckCardIds: (deckId: number, includeSubdecks: boolean) =>
     invoke<number[]>("deck_card_ids", { deckId, includeSubdecks }),
+  resetDeckProgress: (deckId: number, includeSubdecks = true) =>
+    invoke<number>("reset_deck_progress", { deckId, includeSubdecks }),
 
   // Import
   importPackage: (path: string, importId?: string) =>
@@ -138,15 +152,17 @@ export const ipc = {
   importText: (path: string, mapping: TextImportMapping) =>
     invoke<TextImportSummary>("import_text", { path, mapping }),
 
-  // Media (editor image/audio insert)
+  // Media (editor image/audio insert — ADR-038 raw binary body)
   saveMedia: (bytes: Uint8Array, filename: string) =>
-    invoke<string>("save_media", { bytes: Array.from(bytes), filename }),
+    invoke<string>("save_media", bytes, {
+      headers: { "x-media-filename": encodeURIComponent(filename) },
+    }),
   saveMediaFromPath: (sourcePath: string) => invoke<string>("save_media_from_path", { sourcePath }),
 
   // Study
-  getNextCard: (deckId: number) => invoke<StudyCardDto | null>("get_next_card", { deckId }),
+  getNextCard: (deckId: number) => invoke<StudyCardWithFlag | null>("get_next_card", { deckId }),
   answerCard: (cardId: number, rating: RatingValue, deckId: number, timeMs: number) =>
-    invoke<StudyCardDto | null>("answer_card", { cardId, rating, deckId, timeMs }),
+    invoke<StudyCardWithFlag | null>("answer_card", { cardId, rating, deckId, timeMs }),
 
   // Note types (summary list — used by Add Note picker)
   listNotetypes: () => invoke<NotetypeSummary[]>("list_notetypes"),
@@ -243,13 +259,17 @@ export const ipc = {
     find: string,
     useRegex: boolean,
     caseSensitive: boolean,
+    replace = "",
+    includeHtml = false,
   ) =>
     invoke<FindReplacePreview>("preview_find_replace", {
       noteIds,
       fieldName,
       find,
+      replace,
       useRegex,
       caseSensitive,
+      includeHtml,
     }),
   findReplaceNotes: (
     noteIds: number[],
@@ -258,6 +278,7 @@ export const ipc = {
     replace: string,
     useRegex: boolean,
     caseSensitive: boolean,
+    includeHtml = false,
   ) =>
     invoke<number>("find_replace_notes", {
       noteIds,
@@ -266,9 +287,12 @@ export const ipc = {
       replace,
       useRegex,
       caseSensitive,
+      includeHtml,
     }),
   findDuplicates: (notetypeId: number, fieldOrd: number) =>
     invoke<DuplicateGroup[]>("find_duplicates", { notetypeId, fieldOrd }),
+  findEmptyCards: () => invoke<EmptyCardItem[]>("find_empty_cards"),
+  deleteEmptyCards: (cardIds: number[]) => invoke<number>("delete_empty_cards", { cardIds }),
   changeNoteType: (
     noteIds: number[],
     targetNotetypeId: number,
@@ -290,8 +314,12 @@ export const ipc = {
   moveCardsToDeck: (cardIds: number[], deckId: number) =>
     invoke<void>("move_cards_to_deck", { cardIds, deckId }),
   bulkAddTag: (noteIds: number[], tag: string) => invoke<void>("bulk_add_tag", { noteIds, tag }),
+  bulkAddTags: (noteIds: number[], tags: string[]) =>
+    invoke<void>("bulk_add_tag", { noteIds, tags }),
   bulkRemoveTag: (noteIds: number[], tag: string) =>
     invoke<void>("bulk_remove_tag", { noteIds, tag }),
+  bulkRemoveTags: (noteIds: number[], tags: string[]) =>
+    invoke<void>("bulk_remove_tag", { noteIds, tags }),
 
   // Tag manager (M17)
   listTags: () => invoke<string[]>("list_tags"),
@@ -328,8 +356,9 @@ export const ipc = {
   previewCard: (cardId: number) => invoke<CardPreviewDto>("preview_card", { cardId }),
 
   // Undo
-  undo: () => invoke<UndoAction | null>("undo"),
-  undoStatus: () => invoke<UndoAction | null>("undo_status"),
+  undo: () => invoke<ExtendedUndoAction | null>("undo"),
+  undoStatus: () => invoke<ExtendedUndoAction | null>("undo_status"),
+  undoHistory: (page = 0) => invoke<UndoHistoryPageDto>("undo_history", { page }),
 
   // Export
   getExportEstimate: (scope: ExportScope, includeMedia: boolean) =>
@@ -345,6 +374,12 @@ export const ipc = {
       days,
       tzOffsetMinutes: -new Date().getTimezoneOffset(),
     }),
+  dueForecast: (days: number | null = 30) =>
+    invoke<DueForecastDto>("due_forecast", {
+      days,
+      tzOffsetMinutes: -new Date().getTimezoneOffset(),
+    }),
+  listDeckAlgorithms: () => invoke<DeckAlgorithmDto[]>("list_deck_algorithms"),
 
   // FSRS optimizer (M20) & workload simulator (E9)
   optimizeFsrs: (deckId: number | null) => invoke<FsrsOptimizeResult>("optimize_fsrs", { deckId }),
@@ -389,7 +424,7 @@ export const ipc = {
   listBackups: () => invoke<BackupInfo[]>("list_backups"),
   restoreBackup: (name: string) => invoke<void>("restore_backup", { name }),
   deleteBackup: (name: string) => invoke<void>("delete_backup", { name }),
-  checkIntegrity: () => invoke<string[]>("check_integrity"),
+  checkIntegrity: () => invoke<IntegrityReport>("check_integrity"),
   optimizeDb: () => invoke<void>("optimize_db"),
   checkMedia: () => invoke<MediaReport>("check_media"),
   deleteOrphanMedia: (files: string[]) => invoke<number>("delete_orphan_media", { files }),
@@ -543,8 +578,12 @@ export const ipc = {
 };
 
 /** Backend call through the host platform (Tauri IPC on desktop). */
-function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  return platform.invoke<T>(command, args);
+function invoke<T>(
+  command: string,
+  args?: Record<string, unknown> | number[] | ArrayBuffer | Uint8Array,
+  options?: { headers?: Record<string, string> },
+): Promise<T> {
+  return options ? platform.invoke<T>(command, args, options) : platform.invoke<T>(command, args);
 }
 
 /**

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import type { AIProviderKind } from "@bibalak/ipc-types";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { mapAiErrorMessage } from "@/lib/aiErrors";
 import { t } from "@/lib/i18n";
 import { ipc } from "@/lib/ipc";
@@ -280,7 +281,7 @@ export function AISetupForm() {
           disabled={saving || testing}
           onClick={() => void handleTestConnection()}
         >
-          {testing && <Loader2 className="me-1.5 size-3.5 animate-spin" aria-hidden />}
+          {testing && <Spinner className="me-1.5" />}
           {t("ai.settings.testConnection")}
         </Button>
       </div>
@@ -313,7 +314,7 @@ export function AISetupForm() {
           disabled={saving || testing}
           onClick={() => void saveSettings(false)}
         >
-          {saving && <Loader2 className="me-1.5 size-3.5 animate-spin" aria-hidden />}
+          {saving && <Spinner className="me-1.5" />}
           {t("ai.settings.save")}
         </Button>
       </div>

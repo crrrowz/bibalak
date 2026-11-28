@@ -22,30 +22,33 @@ export function RolloverSection() {
   });
 
   return (
-    <div className="flex items-center gap-3">
-      <label htmlFor="rollover-hour" className="text-sm" title={t("settings.rollover.hint")}>
-        {t("settings.rollover.label")}
-      </label>
-      <Select
-        id="rollover-hour"
-        selectSize="xs"
-        containerClassName="w-auto"
-        className="text-sm"
-        value={prefsQuery.data?.rollover_hour ?? 4}
-        disabled={!prefsQuery.data}
-        onChange={(e) => setRolloverMut.mutate(Number(e.target.value))}
-      >
-        {Array.from({ length: 24 }, (_, h) => (
-          <option key={h} value={h}>
-            {h.toString().padStart(2, "0")}:00
-          </option>
-        ))}
-      </Select>
-      {msg && (
-        <span className="text-sm text-muted-foreground" aria-live="polite">
-          {msg}
-        </span>
-      )}
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-3">
+        <label htmlFor="rollover-hour" className="text-sm">
+          {t("settings.rollover.label")}
+        </label>
+        <Select
+          id="rollover-hour"
+          selectSize="xs"
+          containerClassName="w-auto"
+          className="text-sm"
+          value={prefsQuery.data?.rollover_hour ?? 4}
+          disabled={!prefsQuery.data}
+          onChange={(e) => setRolloverMut.mutate(Number(e.target.value))}
+        >
+          {Array.from({ length: 24 }, (_, h) => (
+            <option key={h} value={h}>
+              {h.toString().padStart(2, "0")}:00
+            </option>
+          ))}
+        </Select>
+        {msg && (
+          <span className="text-sm text-muted-foreground" aria-live="polite">
+            {msg}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">{t("settings.rollover.hint")}</p>
     </div>
   );
 }

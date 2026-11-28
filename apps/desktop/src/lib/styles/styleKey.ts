@@ -1,4 +1,5 @@
-import { en, type LocaleKey } from "@/locales/en";
+import { hasTranslationKey } from "@/lib/i18n";
+import type { LocaleKey } from "@/locales/en";
 import type { Style } from "@/stores/style";
 
 export type PresentationStyleOrGame = Style | "game";
@@ -9,14 +10,14 @@ export type PresentationStyleOrGame = Style | "game";
  */
 export function styleKey(baseKey: string, style: PresentationStyleOrGame): LocaleKey {
   const variant = `${baseKey}.${style}`;
-  if (Object.prototype.hasOwnProperty.call(en, variant)) {
+  if (hasTranslationKey(variant)) {
     return variant as LocaleKey;
   }
-  if (Object.prototype.hasOwnProperty.call(en, baseKey)) {
+  if (hasTranslationKey(baseKey)) {
     return baseKey as LocaleKey;
   }
   const fallbackDefault = `${baseKey}.default`;
-  if (Object.prototype.hasOwnProperty.call(en, fallbackDefault)) {
+  if (hasTranslationKey(fallbackDefault)) {
     return fallbackDefault as LocaleKey;
   }
   return baseKey as LocaleKey;

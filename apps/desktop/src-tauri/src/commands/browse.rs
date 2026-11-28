@@ -1,8 +1,8 @@
 //! Card/note browser commands: list, fetch, save notes; Anki-query card search; bulk ops.
 
 use bibalak_core::ipc::{
-    AddNoteResult, CardRow, DuplicateGroup, FindReplacePreview, IpcError, IpcErrorKind, NoteDetail,
-    NoteOverview, NoteRow, NotetypeSummary,
+    AddNoteResult, CardRow, DuplicateGroup, EmptyCardItem, FindReplacePreview, IpcError,
+    IpcErrorKind, NoteDetail, NoteOverview, NoteRow, NotetypeSummary,
 };
 use bibalak_core::Collection;
 use tauri::{AppHandle, Manager};
@@ -205,37 +205,82 @@ pub async fn move_cards_to_deck(app: AppHandle, card_ids: Vec<i64>, deck_id: i64
     .await
 }
 
-/// Add a tag to multiple notes (bulk).
-#[tauri::command]
-pub async fn bulk_add_tag(app: AppHandle, note_ids: Vec<i64>, tag: String) -> IpcResult<()> {
-    check_batch_len(note_ids.len(), MAX_BATCH_IDS, "note_ids")?;
-    let tag = tag.trim().to_string();
-    if tag.is_empty() || tag.contains(' ') {
+fn validate_bulk_tag(tag: &str) -> IpcResult<String> {
+    let clean = tag.trim().to_string();
+    if clean.is_empty() || clean.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(IpcError {
             kind: IpcErrorKind::Invalid,
-            message: "tag must be non-empty and contain no spaces".into(),
+            message: "tag must be non-empty and contain no whitespace or control characters".into(),
+        });
+    }
+    Ok(clean)
+}
+
+/// Add one or more tags to multiple notes (bulk, single transaction).
+#[tauri::command]
+pub async fn bulk_add_tag(
+    app: AppHandle,
+    note_ids: Vec<i64>,
+    tag: Option<String>,
+    tags: Option<Vec<String>>,
+) -> IpcResult<()> {
+    check_batch_len(note_ids.len(), MAX_BATCH_IDS, "note_ids")?;
+    let mut list = Vec::new();
+    if let Some(t) = tag {
+        list.push(validate_bulk_tag(&t)?);
+    }
+    if let Some(ts) = tags {
+        for t in ts {
+            list.push(validate_bulk_tag(&t)?);
+        }
+    }
+    if list.is_empty() {
+        return Err(IpcError {
+            kind: IpcErrorKind::Invalid,
+            message: "tag must be non-empty".into(),
         });
     }
     with_collection(app, move |collection| {
-        collection.bulk_add_tag(&note_ids, &tag)?;
+        if list.len() == 1 {
+            collection.bulk_add_tag(&note_ids, &list[0])?;
+        } else {
+            collection.bulk_add_tags(&note_ids, &list)?;
+        }
         Ok(())
     })
     .await
 }
 
-/// Remove a tag from multiple notes (bulk).
+/// Remove one or more tags from multiple notes (bulk, single transaction).
 #[tauri::command]
-pub async fn bulk_remove_tag(app: AppHandle, note_ids: Vec<i64>, tag: String) -> IpcResult<()> {
+pub async fn bulk_remove_tag(
+    app: AppHandle,
+    note_ids: Vec<i64>,
+    tag: Option<String>,
+    tags: Option<Vec<String>>,
+) -> IpcResult<()> {
     check_batch_len(note_ids.len(), MAX_BATCH_IDS, "note_ids")?;
-    let tag = tag.trim().to_string();
-    if tag.is_empty() || tag.contains(' ') {
+    let mut list = Vec::new();
+    if let Some(t) = tag {
+        list.push(validate_bulk_tag(&t)?);
+    }
+    if let Some(ts) = tags {
+        for t in ts {
+            list.push(validate_bulk_tag(&t)?);
+        }
+    }
+    if list.is_empty() {
         return Err(IpcError {
             kind: IpcErrorKind::Invalid,
-            message: "tag must be non-empty and contain no spaces".into(),
+            message: "tag must be non-empty".into(),
         });
     }
     with_collection(app, move |collection| {
-        collection.bulk_remove_tag(&note_ids, &tag)?;
+        if list.len() == 1 {
+            collection.bulk_remove_tag(&note_ids, &list[0])?;
+        } else {
+            collection.bulk_remove_tags(&note_ids, &list)?;
+        }
         Ok(())
     })
     .await
@@ -279,15 +324,18 @@ pub async fn count_note_rows(app: AppHandle, query: String) -> IpcResult<u32> {
     .await
 }
 
-/// Preview match counts for Find & Replace across selected notes.
+/// Preview match counts and sample diff for Find & Replace across selected notes.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn preview_find_replace(
     app: AppHandle,
     note_ids: Vec<i64>,
     field_name: Option<String>,
     find: String,
+    replace: Option<String>,
     use_regex: bool,
     case_sensitive: bool,
+    include_html: Option<bool>,
 ) -> IpcResult<FindReplacePreview> {
     check_batch_len(note_ids.len(), MAX_BATCH_IDS, "note_ids")?;
     with_collection(app, move |collection| {
@@ -295,14 +343,17 @@ pub async fn preview_find_replace(
             &note_ids,
             field_name.as_deref(),
             &find,
+            replace.as_deref().unwrap_or(""),
             use_regex,
             case_sensitive,
+            include_html.unwrap_or(false),
         )?)
     })
     .await
 }
 
 /// Apply Find & Replace across selected notes inside one transaction.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn find_replace_notes(
     app: AppHandle,
@@ -312,6 +363,7 @@ pub async fn find_replace_notes(
     replace: String,
     use_regex: bool,
     case_sensitive: bool,
+    include_html: Option<bool>,
 ) -> IpcResult<u32> {
     check_batch_len(note_ids.len(), MAX_BATCH_IDS, "note_ids")?;
     with_collection(app, move |collection| {
@@ -322,6 +374,7 @@ pub async fn find_replace_notes(
             &replace,
             use_regex,
             case_sensitive,
+            include_html.unwrap_or(false),
         )?)
     })
     .await
@@ -336,6 +389,22 @@ pub async fn find_duplicates(
 ) -> IpcResult<Vec<DuplicateGroup>> {
     with_collection(app, move |collection| {
         Ok(collection.find_duplicates(notetype_id, field_ord)?)
+    })
+    .await
+}
+
+/// Find existing cards whose rendered front template is currently empty (`A2-12`).
+#[tauri::command]
+pub async fn find_empty_cards(app: AppHandle) -> IpcResult<Vec<EmptyCardItem>> {
+    with_collection(app, move |collection| Ok(collection.find_empty_cards()?)).await
+}
+
+/// Delete confirmed empty cards inside one transaction (`A2-12`).
+#[tauri::command]
+pub async fn delete_empty_cards(app: AppHandle, card_ids: Vec<i64>) -> IpcResult<u32> {
+    check_batch_len(card_ids.len(), MAX_BATCH_IDS, "card_ids")?;
+    with_collection(app, move |collection| {
+        Ok(collection.delete_empty_cards(&card_ids)?)
     })
     .await
 }

@@ -218,4 +218,18 @@ describe("StyleHud (14d)", () => {
     const xpText = await screen.findByText(/80 من 300 XP/);
     expect(xpText).not.toHaveAttribute("dir", "ltr");
   });
+
+  it("A1-32: keeps Game XP bar and status chips on a single non-wrapping row at desktop widths", async () => {
+    setLocale("ar");
+    useStyle.getState().setStyle("game");
+    vi.spyOn(ipcModule.ipc, "getGameState").mockResolvedValue(SAMPLE_GAME_STATE);
+
+    renderHud(false);
+
+    const progressBar = await screen.findByRole("progressbar");
+    const xpWrapper = progressBar.parentElement as HTMLElement;
+    const hudRow = xpWrapper.parentElement as HTMLElement;
+    expect(hudRow.className).toContain("lg:flex-nowrap");
+    expect(xpWrapper.className).toContain("min-w-[110px]");
+  });
 });

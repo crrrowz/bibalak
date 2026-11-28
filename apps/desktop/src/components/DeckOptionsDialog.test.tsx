@@ -292,9 +292,11 @@ describe("DeckOptionsDialog UX2 Simple/Advanced & FSRS-6 (B1-B7)", () => {
 
     expect(screen.getByText(/Waits 1 day$/i)).toBeInTheDocument();
 
-    // Switch to SM-2 -> SM-2 fields appear, FSRS controls disappear.
+    // Switch to SM-2 -> SM-2 fine-tuning starts collapsed by default, expands on click.
     await user.click(screen.getByRole("button", { name: /SM-2/i }));
-    expect(screen.getByText(/SM-2 fine-tuning/i)).toBeInTheDocument();
+    const sm2Toggle = screen.getByRole("button", { name: /SM-2 fine-tuning/i });
+    expect(sm2Toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(sm2Toggle);
     expect(screen.getByLabelText(/Starting ease/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/New interval after a lapse/i)).toBeInTheDocument();
     expect(screen.getByText(/At least 1 day after a lapse/i)).toBeInTheDocument();
@@ -382,5 +384,96 @@ describe("DeckOptionsDialog UX2 Simple/Advanced & FSRS-6 (B1-B7)", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByText(/أقل من دقيقة يوميًا/i)).toBeInTheDocument();
+  });
+});
+
+describe("DeckOptionsDialog F3 / A1-20 / A1-30 / A1-33", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setLocale("en");
+    vi.restoreAllMocks();
+  });
+
+  it("F3 / A1-30: edits learning steps as chips with unit picker, max interval year presets, and Forgot/Remembered/Easy terminology", async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.spyOn(ipc.ipc, "getDeckConfig").mockResolvedValue(sampleConfig);
+    vi.spyOn(ipc.ipc, "simulateWorkload").mockResolvedValue(makeComparison(30, 1));
+    const setSpy = vi.spyOn(ipc.ipc, "setDeckConfig").mockResolvedValue();
+
+    render(
+      <QueryClientProvider client={qc}>
+        <DeckOptionsDialog deckId={1} deckName="Anatomy" onClose={vi.fn()} onSaved={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: /Advanced/i }));
+
+    // Step chips: default [1, 10] rendered cleanly with add/remove controls, no free-text "1m 10m".
+    expect(screen.queryByDisplayValue("1m 10m")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Add learning step/i }));
+    const unitPickers = screen.getAllByLabelText(/Step \d+ unit/i);
+    await user.selectOptions(unitPickers[2]!, "hours");
+    expect(screen.getByText(/10 hours/i)).toBeInTheDocument();
+
+    // Max interval year presets update stored days cleanly.
+    await user.click(screen.getByRole("button", { name: /^5 years$/i }));
+
+    // Aligned button terms: Remembered/Forgot, not Good/Again.
+    const dialogText = screen.getByRole("dialog").textContent ?? "";
+    expect(dialogText).toMatch(/Remembered/);
+    expect(dialogText).toMatch(/Forgot/);
+    expect(dialogText).not.toMatch(/tapping Good|tapping Again|with Good|pressing Again/i);
+
+    await user.click(screen.getByRole("button", { name: /^Save$/i }));
+    expect(setSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maximum_interval_days: 1825,
+        learning_steps_min: [1, 10, 600],
+      }),
+    );
+
+    // Arabic steps & presets use localized units with zero "1m 10m" English tokens.
+    setLocale("ar");
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <DeckOptionsDialog deckId={2} deckName="تشريح" onClose={vi.fn()} onSaved={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("إضافة خطوة تعلّم");
+    const arText = screen.getAllByRole("dialog")[1]!.textContent ?? "";
+    expect(arText).not.toContain("1m 10m");
+  });
+
+  it("A1-20 / F3: shows inline validation error for decimals/out-of-range integers without silent revert and blocks Save", async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.spyOn(ipc.ipc, "getDeckConfig").mockResolvedValue(sampleConfig);
+    vi.spyOn(ipc.ipc, "simulateWorkload").mockResolvedValue(makeComparison(30, 1));
+    const setSpy = vi.spyOn(ipc.ipc, "setDeckConfig").mockResolvedValue();
+
+    render(
+      <QueryClientProvider client={qc}>
+        <DeckOptionsDialog deckId={1} deckName="Anatomy" onClose={vi.fn()} onSaved={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    const newInput = await screen.findByLabelText(/New cards a day/i);
+    await user.clear(newInput);
+    await user.type(newInput, "1.5");
+
+    expect(newInput).toHaveValue(1.5);
+    expect(newInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Save$/i })).toBeDisabled();
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("A1-33: exports uniform XAxis tick marks for 30d (5..30) and 90d (15..90)", async () => {
+    const mod = await import("@/components/stats/chartTheme");
+    expect(mod.WORKLOAD_TICKS[30]).toEqual([4, 9, 14, 19, 24, 29]);
+    expect(mod.WORKLOAD_TICKS[90]).toEqual([14, 29, 44, 59, 74, 89]);
   });
 });

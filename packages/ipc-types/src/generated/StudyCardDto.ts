@@ -29,4 +29,8 @@ algorithm: Algorithm,
 /**
  * The notetype's custom card CSS, applied scoped to the card face.
  */
-css: string, };
+css: string, 
+/**
+ * Card flag (0 = none, 1..=7 = colored flag).
+ */
+flag: number, };

@@ -49,8 +49,8 @@ export function HourlyChart({ hourly }: { hourly: HourlyStat[] }) {
   }
 
   return (
-    <div className="relative">
-      <div className="absolute end-0 top-0 flex items-center gap-2">
+    <div>
+      <div className="mb-2 flex items-center justify-end gap-2">
         <div className="flex items-center gap-1 text-[10px] font-medium text-foreground">
           <span>{t("stats.hourly.low")}</span>
           <div className="flex overflow-hidden rounded-sm ring-1 ring-border">
@@ -63,7 +63,7 @@ export function HourlyChart({ hourly }: { hourly: HourlyStat[] }) {
         <ExportButton filename="hourly-reviews" rows={data} />
       </div>
       <ResponsiveContainer width="100%" height={220}>
-        <BarChart data={data} margin={{ top: 20, right: 4, bottom: 0, left: -20 }}>
+        <BarChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
           <CartesianGrid {...gridProps} />
           <XAxis dataKey="label" {...hourAxisProps} interval={1} />
           <YAxis allowDecimals={false} {...hourAxisProps} />

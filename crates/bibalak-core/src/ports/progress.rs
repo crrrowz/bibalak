@@ -2,12 +2,13 @@ use crate::error::CoreResult;
 
 /// Progress ledger and study-history persistence (ADR-019).
 pub trait ProgressStore: Send + Sync {
-    /// Sum active (`deleted_at IS NULL`) progress rewards for `user_id` all-time and inside `[today_start_ms, today_end_ms)`.
+    /// Sum active (`deleted_at IS NULL`) progress rewards for `user_id` all-time and inside `[today_start_ms, today_end_ms)` (with `habit_log` attributed to `today_day`).
     fn progress_totals(
         &self,
         user_id: &str,
         today_start_ms: i64,
         today_end_ms: i64,
+        today_day: i32,
     ) -> CoreResult<crate::progress::ProgressTotals>;
 
     /// Look up an active (`deleted_at IS NULL`) ledger grant by `(user_id, source_key)`.

@@ -304,6 +304,19 @@
     @apply tracking-tight;
   }
 
+  [dir="rtl"] h1,
+  [dir="rtl"] h2,
+  [dir="rtl"] h3,
+  [dir="rtl"] .screen-title,
+  :lang(ar) h1,
+  :lang(ar) h2,
+  :lang(ar) h3,
+  :lang(ar) .screen-title {
+    letter-spacing: 0;
+    line-height: 1.45;
+    padding-block: 0.06em;
+  }
+
   [data-style="scholar"] h1,
   [data-style="scholar"] h2,
   [data-style="scholar"] h3,
@@ -317,6 +330,14 @@
   [data-style="game"] .screen-title,
   [data-style="game"] .game-hud-level {
     font-family: var(--font-heading);
+  }
+
+  [dir="rtl"][data-style="game"] h1,
+  [dir="rtl"][data-style="game"] h2,
+  [dir="rtl"][data-style="game"] h3,
+  [dir="rtl"][data-style="game"] .screen-title,
+  [dir="rtl"][data-style="game"] .game-hud-level {
+    font-family: "IBM Plex Sans Arabic", "Figtree Variable", ui-sans-serif, sans-serif;
   }
 
   [data-style="scholar"] section > h2,
@@ -357,7 +378,18 @@
     outline-offset: 2px;
   }
 
-  /* Match native <select> dropdown menus to active light/dark theme tokens. */
+  /* Match native <select> dropdown menus to active light/dark theme tokens and hide native arrows when styled. */
+  select.appearance-none,
+  select[data-styled-select="true"] {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image: none;
+  }
+  select.appearance-none::-ms-expand,
+  select[data-styled-select="true"]::-ms-expand {
+    display: none;
+  }
   select option,
   select optgroup {
     background-color: hsl(var(--popover));

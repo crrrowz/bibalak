@@ -18,6 +18,10 @@ interface TemplatesTabProps {
   tauri: boolean;
   night: boolean;
   isSaving: boolean;
+  noteIndex?: number;
+  noteCount?: number;
+  onPrevNote?: () => void;
+  onNextNote?: () => void;
   onSelectTemplate: (ord: number) => void;
   onAddTemplate: () => void;
   onRemoveTemplate: (ord: number) => void;
@@ -42,6 +46,10 @@ export function TemplatesTab({
   tauri,
   night,
   isSaving,
+  noteIndex = 0,
+  noteCount = 0,
+  onPrevNote,
+  onNextNote,
   onSelectTemplate,
   onAddTemplate,
   onRemoveTemplate,
@@ -180,6 +188,11 @@ export function TemplatesTab({
               tauri={tauri}
               night={night}
               bottomSpacing
+              noteIndex={noteIndex}
+              noteCount={noteCount}
+              onPrevNote={onPrevNote}
+              onNextNote={onNextNote}
+              isImported={nt.preset === null}
             />
           </div>
         </div>

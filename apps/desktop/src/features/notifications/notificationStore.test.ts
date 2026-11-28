@@ -3,6 +3,7 @@ import { toast, useToastStore } from "@/stores/toast";
 import {
   initNotificationsFromStorage,
   pushNotification,
+  setNotificationCollectionScope,
   useNotificationStore,
 } from "./notificationStore";
 
@@ -88,5 +89,43 @@ describe("notificationStore (16h)", () => {
     expect(useNotificationStore.getState().items).toHaveLength(2);
     expect(useNotificationStore.getState().items[0]?.kind).toBe("purchase");
     expect(useToastStore.getState().items).toHaveLength(3);
+  });
+
+  it("A3-12: durable unlock dedupe keys are never evicted by >250 transient notifications and scope isolates collections", () => {
+    pushNotification({
+      kind: "unlock",
+      title: "Pet",
+      body: "Unlocked Barn Owl",
+      dedupeKey: "unlock:pet:owl",
+      showPopup: false,
+    });
+    for (let i = 0; i < 300; i++) {
+      pushNotification({
+        kind: "goal",
+        title: `Goal ${i}`,
+        body: `Met day ${i}`,
+        dedupeKey: `goal:${i}`,
+        showPopup: false,
+      });
+    }
+    const replay = pushNotification({
+      kind: "unlock",
+      title: "Pet",
+      body: "Unlocked Barn Owl",
+      dedupeKey: "unlock:pet:owl",
+      showPopup: false,
+    });
+    expect(replay).toBeNull();
+
+    setNotificationCollectionScope("C:/profiles/second/collection.media");
+    expect(useNotificationStore.getState().items).toHaveLength(0);
+    const secondColUnlock = pushNotification({
+      kind: "unlock",
+      title: "Pet",
+      body: "Unlocked Barn Owl",
+      dedupeKey: "unlock:pet:owl",
+      showPopup: false,
+    });
+    expect(secondColUnlock).not.toBeNull();
   });
 });

@@ -50,7 +50,7 @@ pub async fn import_package(
         let cancel = _reg.as_ref().map(|r| &r.flag).unwrap_or(&fallback_cancel);
 
         let checked = picked.verify_open_file(&path, &["apkg", "colpkg"])?;
-        let (model, media_imported) = bibalak_ankifmt::read_package_with_progress(
+        let (model, media_stats) = bibalak_ankifmt::read_package_with_progress_stats(
             &checked,
             Some(&*media.0),
             cancel,
@@ -61,6 +61,14 @@ pub async fn import_package(
                 );
             },
         )?;
+        if media_stats.renamed > 0 || media_stats.skipped > 0 {
+            tracing::info!(
+                imported = media_stats.imported,
+                renamed = media_stats.renamed,
+                skipped = media_stats.skipped,
+                "package import normalized/skipped media filenames"
+            );
+        }
 
         if cancel.load(Ordering::Relaxed) {
             return Err(CoreError::Cancelled.into());
@@ -77,7 +85,7 @@ pub async fn import_package(
             );
         };
         let mut summary = collection.import_with_progress(&model, &mut on_progress)?;
-        summary.media_imported = media_imported;
+        summary.media_imported = media_stats.imported;
         Ok(summary)
     })
     .await

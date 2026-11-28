@@ -71,7 +71,11 @@ export interface Platform {
   /** True when a backend is reachable (false in a plain browser via `pnpm dev:web`). */
   isAvailable(): boolean;
   /** Call a backend command (Tauri IPC on desktop, HTTP on the web). */
-  invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
+  invoke<T>(
+    command: string,
+    args?: Record<string, unknown> | number[] | ArrayBuffer | Uint8Array,
+    options?: { headers?: Record<string, string> },
+  ): Promise<T>;
   /** Subscribe to a backend event; returns an unsubscribe function. */
   listen<T>(event: string, handler: (payload: T) => void): () => void;
   /**
@@ -86,6 +90,8 @@ export interface Platform {
   }): Promise<string | null>;
   /** Ask where to save a file; returns the chosen path or `null`. Desktop only today. */
   pickSavePath(options: { defaultPath: string; filters?: FileFilter[] }): Promise<string | null>;
+  /** Open a permitted local file or folder in the OS file manager. */
+  openPath?(path: string): Promise<void>;
   /** Native window controls when the app draws its own title bar; `null` otherwise. */
   readonly window: WindowControls | null;
   /** OS-wide keyboard shortcuts when running on desktop; `null` on web. */

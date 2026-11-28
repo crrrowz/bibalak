@@ -14,7 +14,8 @@ mod window_state;
 
 use bibalak_db::backup as db_backup;
 use bibalak_plugin::PluginManager;
-use std::sync::{Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use tracing_subscriber::{fmt, EnvFilter};
 
 use bibalak_core::{Collection, DomainEvent, MediaStore, SystemClock};
@@ -58,34 +59,147 @@ fn rebuild_search_index(handle: &tauri::AppHandle) {
     }
 }
 
-fn mime_for(filename: &str) -> &'static str {
-    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
-    match ext.as_str() {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "svg" => "image/svg+xml",
-        "bmp" => "image/bmp",
-        "avif" => "image/avif",
-        "ico" => "image/x-icon",
-        "tiff" | "tif" => "image/tiff",
-        "mp3" => "audio/mpeg",
-        "ogg" | "oga" => "audio/ogg",
-        "wav" => "audio/wav",
-        "flac" => "audio/flac",
-        "aac" => "audio/aac",
-        "m4a" => "audio/mp4",
-        "opus" => "audio/opus",
-        "weba" => "audio/webm",
-        "mp4" | "m4v" => "video/mp4",
-        "webm" => "video/webm",
-        "mkv" => "video/x-matroska",
-        "mov" => "video/quicktime",
-        "avi" => "video/x-msvideo",
-        "ogv" => "video/ogg",
-        _ => "application/octet-stream",
+fn parse_byte_range(header: &str, total_len: u64) -> Result<Option<(u64, u64)>, ()> {
+    let trimmed = header.trim();
+    let Some(spec) = trimmed
+        .strip_prefix("bytes=")
+        .or_else(|| trimmed.strip_prefix("BYTES="))
+    else {
+        return Ok(None);
+    };
+    // Multi-range requests fall back to full 200 or first range; handle single range cleanly.
+    if spec.contains(',') {
+        return Ok(None);
     }
+    let Some((start_s, end_s)) = spec.split_once('-') else {
+        return Err(());
+    };
+    if total_len == 0 {
+        return Err(());
+    }
+    let start_s = start_s.trim();
+    let end_s = end_s.trim();
+    if start_s.is_empty() {
+        let suffix: u64 = end_s.parse().map_err(|_| ())?;
+        if suffix == 0 {
+            return Err(());
+        }
+        let start = total_len.saturating_sub(suffix);
+        return Ok(Some((start, total_len - 1)));
+    }
+    let start: u64 = start_s.parse().map_err(|_| ())?;
+    if start >= total_len {
+        return Err(());
+    }
+    let end = if end_s.is_empty() {
+        total_len - 1
+    } else {
+        let parsed_end: u64 = end_s.parse().map_err(|_| ())?;
+        if parsed_end < start {
+            return Err(());
+        }
+        parsed_end.min(total_len - 1)
+    };
+    Ok(Some((start, end)))
+}
+
+fn build_media_file_response(
+    filename: &str,
+    path: &Path,
+    range_header: Option<&str>,
+) -> tauri::http::Response<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let Some(mime) = bibalak_core::media_refs::allowed_media_mime(filename) else {
+        return tauri::http::Response::builder()
+            .status(403)
+            .header("X-Content-Type-Options", "nosniff")
+            .body(Vec::new())
+            .unwrap();
+    };
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return tauri::http::Response::builder()
+            .status(404)
+            .header("X-Content-Type-Options", "nosniff")
+            .body(Vec::new())
+            .unwrap();
+    };
+    let Ok(meta) = file.metadata() else {
+        return tauri::http::Response::builder()
+            .status(404)
+            .header("X-Content-Type-Options", "nosniff")
+            .body(Vec::new())
+            .unwrap();
+    };
+    let total_len = meta.len();
+
+    let range = match range_header.map(|h| parse_byte_range(h, total_len)) {
+        Some(Err(())) => {
+            return tauri::http::Response::builder()
+                .status(416)
+                .header("Accept-Ranges", "bytes")
+                .header("Content-Range", format!("bytes */{total_len}"))
+                .header("X-Content-Type-Options", "nosniff")
+                .body(Vec::new())
+                .unwrap();
+        }
+        Some(Ok(r)) => r,
+        None => None,
+    };
+
+    let (status, start, end) = match range {
+        Some((s, e)) => (206u16, s, e),
+        None => (200u16, 0, total_len.saturating_sub(1)),
+    };
+    let to_read = if total_len == 0 {
+        0
+    } else {
+        end.saturating_sub(start).saturating_add(1)
+    };
+    let mut buf = Vec::with_capacity(to_read.min(8 * 1024 * 1024) as usize);
+    if to_read > 0
+        && (file.seek(SeekFrom::Start(start)).is_err()
+            || file.take(to_read).read_to_end(&mut buf).is_err())
+    {
+        return tauri::http::Response::builder()
+            .status(500)
+            .header("X-Content-Type-Options", "nosniff")
+            .body(Vec::new())
+            .unwrap();
+    }
+
+    let mut builder = tauri::http::Response::builder()
+        .status(status)
+        .header("Content-Type", mime)
+        .header("Accept-Ranges", "bytes")
+        .header("Content-Length", buf.len().to_string())
+        .header("X-Content-Type-Options", "nosniff");
+    if status == 206 {
+        builder = builder.header("Content-Range", format!("bytes {start}-{end}/{total_len}"));
+    }
+    if mime == "image/svg+xml" {
+        builder = builder.header("Content-Security-Policy", "sandbox");
+    }
+    builder.body(buf).unwrap()
+}
+
+fn build_media_response(filename: &str, body: Vec<u8>) -> tauri::http::Response<Vec<u8>> {
+    let Some(mime) = bibalak_core::media_refs::allowed_media_mime(filename) else {
+        return tauri::http::Response::builder()
+            .status(403)
+            .header("X-Content-Type-Options", "nosniff")
+            .body(Vec::new())
+            .unwrap();
+    };
+    let mut builder = tauri::http::Response::builder()
+        .header("Content-Type", mime)
+        .header("Accept-Ranges", "bytes")
+        .header("Content-Length", body.len().to_string())
+        .header("X-Content-Type-Options", "nosniff");
+    if mime == "image/svg+xml" {
+        builder = builder.header("Content-Security-Policy", "sandbox");
+    }
+    builder.body(body).unwrap()
 }
 
 /// Tauri managed state wrapping the search index.
@@ -107,6 +221,33 @@ fn event_name(event: &DomainEvent) -> &'static str {
     event.event_name().as_str()
 }
 
+static CRASH_LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+fn format_panic_location(info: &std::panic::PanicHookInfo<'_>) -> String {
+    // Never write panic message payloads (which could carry card/note text) to crash logs.
+    match info.location() {
+        Some(loc) => format!("panic at {}:{}:{}\n", loc.file(), loc.line(), loc.column()),
+        None => "panic at <unknown location>\n".to_string(),
+    }
+}
+
+fn write_private_crash_log(dir: &Path, entry: &str) -> std::io::Result<PathBuf> {
+    use std::io::Write;
+
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join("bibalak-crash.log");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(&path)?;
+    file.write_all(entry.as_bytes())?;
+    Ok(path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Structured log subscriber: RUST_LOG env var controls filter; defaults to info.
@@ -117,13 +258,17 @@ pub fn run() {
         .with_target(true)
         .init();
 
-    // Capture panics → log + write a crash report file next to the DB.
+    // Capture panics → log + write a private crash report in `data_dir` without card text.
     std::panic::set_hook(Box::new(|info| {
-        let msg = info.to_string();
-        tracing::error!("PANIC: {msg}");
-        // Best-effort: write to <tmp>/bibalak-crash.txt so it survives process death.
-        let path = std::env::temp_dir().join("bibalak-crash.txt");
-        let _ = std::fs::write(&path, format!("{msg}\n"));
+        let loc_line = format_panic_location(info);
+        tracing::error!("PANIC: {}", loc_line.trim());
+        if let Some(dir) = CRASH_LOG_DIR
+            .get()
+            .map(PathBuf::as_path)
+            .or_else(data_dir::portable_data_dir)
+        {
+            let _ = write_private_crash_log(dir, &loc_line);
+        }
     }));
 
     // First launch after the app id change: rename the old OS folders
@@ -145,33 +290,43 @@ pub fn run() {
             let encoded = uri.path().trim_start_matches('/');
             let decoded = percent_decode_str(encoded).decode_utf8_lossy().into_owned();
 
+            if bibalak_core::media_refs::allowed_media_mime(&decoded).is_none()
+                || bibalak_core::media_refs::validate_media_filename(&decoded).is_err()
+            {
+                return build_media_response(&decoded, Vec::new());
+            }
+
+            let range_header = request
+                .headers()
+                .get("range")
+                .and_then(|v| v.to_str().ok());
             let handle = app.app_handle();
-            let body = handle
-                .try_state::<MediaState>()
-                .and_then(|state| state.0.read(&decoded).ok())
-                .or_else(|| {
-                    let dirs = handle.try_state::<LegacyMediaDirs>()?;
-                    let legacy_dir = dirs.legacy_dir.as_deref()?;
-                    let path = legacy::resolve_media_path(
+            if let Some(dirs) = handle.try_state::<LegacyMediaDirs>() {
+                let primary_path = dirs.new_dir.join("collection.media").join(&decoded);
+                if primary_path.is_file() {
+                    return build_media_file_response(&decoded, &primary_path, range_header);
+                }
+                if let Some(legacy_dir) = dirs.legacy_dir.as_deref() {
+                    if let Some(legacy_path) = legacy::resolve_media_path(
                         &decoded,
                         &dirs.new_dir,
                         legacy_dir,
                         legacy::legacy_copy_pending(&dirs.new_dir),
-                    )?;
-                    std::fs::read(path).ok()
-                });
+                    ) {
+                        return build_media_file_response(&decoded, &legacy_path, range_header);
+                    }
+                }
+            }
+
+            let body = handle
+                .try_state::<MediaState>()
+                .and_then(|state| state.0.read(&decoded).ok());
 
             match body {
-                Some(body) => {
-                    let mime = mime_for(&decoded);
-                    tauri::http::Response::builder()
-                        .header("Content-Type", mime)
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(body)
-                        .unwrap()
-                }
+                Some(body) => build_media_response(&decoded, body),
                 None => tauri::http::Response::builder()
                     .status(404)
+                    .header("X-Content-Type-Options", "nosniff")
                     .body(Vec::new())
                     .unwrap(),
             }
@@ -198,6 +353,7 @@ pub fn run() {
             // Kept synchronous: cheap (single file open + migration check) and
             // every command needs `Collection` state to exist before it can run.
             let dir = data_dir::data_dir(app)?;
+            let _ = CRASH_LOG_DIR.set(dir.clone());
             app.manage(paths_guard::PickedPathsState::new(dir.clone()));
             app.manage(commands::export::ExportJobsState::default());
             app.manage(commands::import::ImportJobsState::default());
@@ -455,12 +611,14 @@ pub fn run() {
             commands::deck::delete_deck,
             commands::deck::undo,
             commands::deck::undo_status,
+            commands::deck::undo_history,
             commands::deck::get_deck_config,
             commands::deck::set_deck_config,
             commands::deck::set_deck_collapsed,
             commands::deck::get_today_extra_new,
             commands::deck::increase_today_limit,
             commands::deck::deck_card_ids,
+            commands::deck::reset_deck_progress,
             commands::deck::get_collection_prefs,
             commands::deck::set_collection_prefs,
             commands::deck::set_local_offset,
@@ -488,6 +646,8 @@ pub fn run() {
             commands::export::export_package,
             commands::export::cancel_export,
             commands::stats::get_stats,
+            commands::stats::due_forecast,
+            commands::stats::list_deck_algorithms,
             commands::notetype::get_notetype,
             commands::notetype::create_notetype,
             commands::notetype::delete_notetype,
@@ -524,6 +684,8 @@ pub fn run() {
             commands::browse::preview_find_replace,
             commands::browse::find_replace_notes,
             commands::browse::find_duplicates,
+            commands::browse::find_empty_cards,
+            commands::browse::delete_empty_cards,
             commands::browse::change_note_type,
             commands::tags::list_tags,
             commands::tags::list_tag_counts,
@@ -733,5 +895,97 @@ mod tests {
         assert!(info.message.contains("fts5 unavailable"));
 
         assert!(super::open_startup_note_index(super::NoteIndex::new).is_ok());
+    }
+
+    #[test]
+    fn a4_08_media_protocol_blocks_html_js_and_sandboxes_svg_without_cors_wildcard() {
+        let html_resp = super::build_media_response("page.html", b"<script>".to_vec());
+        assert_eq!(html_resp.status(), 403);
+        let js_resp = super::build_media_response("_helper.js", b"alert(1)".to_vec());
+        assert_eq!(js_resp.status(), 403);
+
+        let svg_resp = super::build_media_response("diagram.svg", b"<svg/>".to_vec());
+        assert_eq!(svg_resp.status(), 200);
+        assert_eq!(
+            svg_resp.headers().get("Content-Type").unwrap(),
+            "image/svg+xml"
+        );
+        assert_eq!(
+            svg_resp.headers().get("Content-Security-Policy").unwrap(),
+            "sandbox"
+        );
+        assert_eq!(
+            svg_resp.headers().get("X-Content-Type-Options").unwrap(),
+            "nosniff"
+        );
+        assert!(svg_resp
+            .headers()
+            .get("Access-Control-Allow-Origin")
+            .is_none());
+    }
+
+    fn temp_test_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("bibalak-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a2_30_media_protocol_streams_http_byte_ranges() {
+        let dir = temp_test_dir("a2-30");
+        let file_path = dir.join("clip.mp4");
+        std::fs::write(&file_path, b"0123456789ABCDEF").unwrap();
+
+        let full = super::build_media_file_response("clip.mp4", &file_path, None);
+        assert_eq!(full.status(), 200);
+        assert_eq!(full.headers().get("Accept-Ranges").unwrap(), "bytes");
+        assert_eq!(full.body(), b"0123456789ABCDEF");
+
+        let partial = super::build_media_file_response("clip.mp4", &file_path, Some("bytes=4-9"));
+        assert_eq!(partial.status(), 206);
+        assert_eq!(partial.headers().get("Accept-Ranges").unwrap(), "bytes");
+        assert_eq!(
+            partial.headers().get("Content-Range").unwrap(),
+            "bytes 4-9/16"
+        );
+        assert_eq!(partial.headers().get("Content-Length").unwrap(), "6");
+        assert_eq!(partial.body(), b"456789");
+
+        let suffix = super::build_media_file_response("clip.mp4", &file_path, Some("bytes=-4"));
+        assert_eq!(suffix.status(), 206);
+        assert_eq!(
+            suffix.headers().get("Content-Range").unwrap(),
+            "bytes 12-15/16"
+        );
+        assert_eq!(suffix.body(), b"CDEF");
+
+        let invalid =
+            super::build_media_file_response("clip.mp4", &file_path, Some("bytes=99-120"));
+        assert_eq!(invalid.status(), 416);
+        assert_eq!(
+            invalid.headers().get("Content-Range").unwrap(),
+            "bytes */16"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a4_13_crash_log_writes_to_private_data_dir_file_without_card_text() {
+        let dir = temp_test_dir("a4-13");
+        let log_path = super::write_private_crash_log(&dir, "panic at src/lib.rs:10:5\n").unwrap();
+        assert!(log_path.starts_with(&dir));
+        assert_eq!(log_path.file_name().unwrap(), "bibalak-crash.log");
+        assert_eq!(
+            std::fs::read_to_string(&log_path).unwrap(),
+            "panic at src/lib.rs:10:5\n"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&log_path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

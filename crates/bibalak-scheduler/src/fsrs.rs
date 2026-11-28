@@ -58,7 +58,6 @@ fn fsrs_learning(
         CardPhase::Learning
     };
     let w = &cfg.fsrs_weights;
-    let g = rating as i64;
 
     match step_action(state, rating, steps) {
         StepAction::Restart { minutes, total } => AnswerOutcome {
@@ -83,19 +82,27 @@ fn fsrs_learning(
         StepAction::Graduate { rating: grad_r } => {
             let g_grad = grad_r as i64;
             let (stability, difficulty) = if is_relearn {
-                // After a lapse: recalculate lapse stability, keep difficulty.
-                let (s0, d0) = match (state.stability, state.difficulty) {
+                match (state.stability, state.difficulty) {
                     (Some(s), Some(d)) => {
                         let elapsed =
                             (ctx.today - state.last_review_day.unwrap_or(ctx.today)).max(0) as f64;
-                        let r = retrievability(elapsed, s, w);
-                        let new_d = next_difficulty(w, d, g);
-                        let new_s = forget_stability(w, d, s, r);
+                        let new_d = next_difficulty(w, d, g_grad);
+                        let new_s = if elapsed == 0.0 {
+                            short_term_stability(w, s, g_grad)
+                        } else {
+                            let r = retrievability(elapsed, s, w);
+                            success_stability(w, d, s, r, g_grad)
+                        };
                         (new_s, new_d)
                     }
+                    _ if state.interval_days > 0 => {
+                        let (s, d) =
+                            memory_state_from_sm2(state.interval_days, state.ease_milli, w);
+                        let r = retrievability(f64::from(state.interval_days.max(1)), s, w);
+                        (forget_stability(w, d, s, r), next_difficulty(w, d, g_grad))
+                    }
                     _ => (initial_stability(w, g_grad), initial_difficulty(w, g_grad)),
-                };
-                (s0, d0)
+                }
             } else {
                 // New card graduating: initialize stability from graduation rating.
                 (initial_stability(w, g_grad), initial_difficulty(w, g_grad))
@@ -128,26 +135,33 @@ fn fsrs_review(state: &CardState, rating: Rating, ctx: &SchedContext) -> AnswerO
     let w = &cfg.fsrs_weights;
     let g = rating as i64;
 
-    let (stability, difficulty, lapse) = match (state.stability, state.difficulty) {
+    let (s, d, elapsed) = match (state.stability, state.difficulty) {
         (Some(s), Some(d)) => {
             let elapsed = (ctx.today - state.last_review_day.unwrap_or(ctx.today)).max(0) as f64;
-
-            let difficulty = next_difficulty(w, d, g);
-
-            let (stability, is_lapse) = if elapsed == 0.0 {
-                // Same-day review: use FSRS-6 short-term stability formula.
-                (short_term_stability(w, s, g), false)
-            } else if g == 1 {
-                let r = retrievability(elapsed, s, w);
-                (forget_stability(w, d, s, r), true)
-            } else {
-                let r = retrievability(elapsed, s, w);
-                (success_stability(w, d, s, r, g), false)
-            };
-            (stability, difficulty, is_lapse)
+            (s, d, elapsed)
         }
-        // First-ever review (card somehow reached Review without going through steps).
-        _ => (initial_stability(w, g), initial_difficulty(w, g), false),
+        // Card reached Review without FSRS memory state (SM-2->FSRS switch or set_due_date):
+        // derive (S, D) from SM-2 interval and ease per Anki rslib/src/scheduler/fsrs/memory_state.rs.
+        _ => {
+            let (s, d) = memory_state_from_sm2(state.interval_days, state.ease_milli, w);
+            let elapsed = state
+                .last_review_day
+                .map(|ld| (ctx.today - ld).max(0) as f64)
+                .unwrap_or_else(|| f64::from(state.interval_days.max(1)));
+            (s, d, elapsed)
+        }
+    };
+
+    let difficulty = next_difficulty(w, d, g);
+    let (stability, lapse) = if elapsed == 0.0 {
+        // Same-day review: use FSRS-6 short-term stability formula.
+        (short_term_stability(w, s, g), false)
+    } else if g == 1 {
+        let r = retrievability(elapsed, s, w);
+        (forget_stability(w, d, s, r), true)
+    } else {
+        let r = retrievability(elapsed, s, w);
+        (success_stability(w, d, s, r, g), false)
     };
 
     if lapse {
@@ -274,6 +288,24 @@ fn short_term_stability(w: &[f64; 21], s: f64, g: i64) -> f64 {
     (s * factor).max(0.1)
 }
 
+/// Derive FSRS `(stability, difficulty)` from SM-2 `(interval_days, ease_milli)`,
+/// matching Anki's `rslib/src/scheduler/fsrs/memory_state.rs::memory_state_from_sm2`.
+fn memory_state_from_sm2(interval_days: u32, ease_milli: u32, w: &[f64; 21]) -> (f64, f64) {
+    const SM2_RETENTION: f64 = 0.9;
+    let interval = f64::from(interval_days.max(1));
+    let ease = f64::from(ease_milli.max(1300)) / 1000.0;
+    let decay = fsrs6_decay(w);
+    let factor = fsrs6_factor(w);
+    let stability = (interval * factor / (SM2_RETENTION.powf(1.0 / decay) - 1.0)).max(0.1);
+    let denom = w[8].exp() * stability.powf(-w[9]) * ((w[10] * (1.0 - SM2_RETENTION)).exp() - 1.0);
+    let difficulty = if denom > 1e-9 {
+        (11.0 - (ease - 1.0) / denom).clamp(1.0, 10.0)
+    } else {
+        initial_difficulty(w, 3)
+    };
+    (stability, difficulty)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -379,5 +411,97 @@ mod tests {
             o3.next.stability.unwrap() > review.stability.unwrap(),
             "stability must grow on Good review"
         );
+    }
+
+    #[test]
+    fn relearning_graduation_does_not_reapply_forget_stability() {
+        let s = FsrsScheduler;
+        let c = ctx();
+        let review = CardState {
+            phase: CardPhase::Review,
+            steps_remaining: 0,
+            interval_days: 40,
+            ease_milli: 2500,
+            reps: 5,
+            lapses: 0,
+            stability: Some(40.0),
+            difficulty: Some(5.0),
+            last_review_day: Some(c.today - 40),
+        };
+        let lapsed = s.answer(&review, Rating::Again, &c);
+        assert_eq!(lapsed.next.phase, CardPhase::Relearning);
+        let s_after_lapse = lapsed.next.stability.expect("post-lapse stability");
+
+        // Passing the single relearning step should not apply forget_stability a 2nd time.
+        let graduated = s.answer(&lapsed.next, Rating::Good, &c);
+        let s_after_grad = graduated.next.stability.expect("graduated stability");
+        assert!(
+            s_after_grad >= s_after_lapse * 0.9,
+            "relearning graduation collapsed stability twice: post-lapse={s_after_lapse}, graduated={s_after_grad}"
+        );
+
+        // Even if graduated the next day, stability must not re-lapse.
+        let mut next_day = c.clone();
+        next_day.today += 1;
+        let grad_next_day = s.answer(&lapsed.next, Rating::Good, &next_day);
+        assert!(
+            grad_next_day.next.stability.unwrap() >= s_after_lapse,
+            "next-day relearning graduation should grow stability"
+        );
+    }
+
+    #[test]
+    fn sm2_to_fsrs_switch_preserves_maturity_and_records_lapse() {
+        let s = FsrsScheduler;
+        let c = ctx();
+        // Mature SM-2 Review card (180d interval, ease 250%) has stability=None, difficulty=None.
+        let sm2_mature = CardState {
+            phase: CardPhase::Review,
+            steps_remaining: 0,
+            interval_days: 180,
+            ease_milli: 2500,
+            reps: 10,
+            lapses: 0,
+            stability: None,
+            difficulty: None,
+            last_review_day: Some(c.today - 180),
+        };
+
+        let again = s.answer(&sm2_mature, Rating::Again, &c);
+        assert_eq!(
+            again.next.phase,
+            CardPhase::Relearning,
+            "failing an SM-2 card under FSRS must lapse into Relearning (got {:?}, lapses={})",
+            again.next.phase,
+            again.next.lapses
+        );
+        assert_eq!(again.next.lapses, 1);
+
+        let good = s.answer(&sm2_mature, Rating::Good, &c);
+        let good_days = days(good.interval).expect("review interval in days");
+        assert!(
+            good_days >= 100,
+            "passing a 180-day SM-2 card under FSRS should not reset interval to {good_days}d"
+        );
+    }
+
+    #[test]
+    fn set_due_card_without_last_review_day_lapses_on_again() {
+        let s = FsrsScheduler;
+        let c = ctx();
+        let set_due_card = CardState {
+            phase: CardPhase::Review,
+            steps_remaining: 0,
+            interval_days: 1,
+            ease_milli: 2500,
+            reps: 0,
+            lapses: 0,
+            stability: None,
+            difficulty: None,
+            last_review_day: None,
+        };
+        let again = s.answer(&set_due_card, Rating::Again, &c);
+        assert_eq!(again.next.phase, CardPhase::Relearning);
+        assert_eq!(again.next.lapses, 1);
     }
 }

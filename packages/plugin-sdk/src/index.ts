@@ -15,7 +15,14 @@ export const PLUGIN_API_VERSION = "0.2.0";
 // ── Capabilities ─────────────────────────────────────────────────────────────
 
 /** Capabilities active and enforced in plugin API 0.2.0. */
-export type Capability = "read:notes" | "read:decks" | "ui:panel" | "ui:command" | "events:listen";
+export type Capability =
+  | "read:notes"
+  | "read:decks"
+  | "ui:panel"
+  | "ui:command"
+  | "ui:toast"
+  | "ui:navigate"
+  | "events:listen";
 
 /**
  * Capabilities reserved for future API versions.
@@ -37,6 +44,8 @@ export const ACTIVE_CAPABILITIES: readonly Capability[] = [
   "read:decks",
   "ui:panel",
   "ui:command",
+  "ui:toast",
+  "ui:navigate",
   "events:listen",
 ] as const;
 
@@ -177,7 +186,7 @@ export interface PluginContext {
   registerCommand(command: CommandDefinition): Disposable;
   /** Requires `ui:panel`. */
   addSidebarPanel(panel: SidebarPanelDefinition): SidebarPanelHandle;
-  /** Show a brief notification toast to the user. */
+  /** Show a brief notification toast to the user (requires `ui:toast`). */
   showToast(message: string): void;
   /** Requires `events:listen`. */
   onEvent(handler: (event: PluginEvent) => void): Disposable;
@@ -191,7 +200,7 @@ export interface PluginContext {
     get(noteId: number): Promise<PluginNoteSummary | null>;
     checkMediaMissing(): Promise<string[]>;
   };
-  /** Safe high-level navigation actions. */
+  /** Safe high-level navigation actions (requires `ui:navigate`). */
   readonly navigation: {
     openDeck(deckId: number): void;
     openBrowse(query?: string): void;

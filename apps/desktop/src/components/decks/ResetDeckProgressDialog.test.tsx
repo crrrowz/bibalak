@@ -34,7 +34,14 @@ describe("ResetDeckProgressDialog", () => {
           resolveIds = res;
         }),
     );
-    const forgetSpy = vi.spyOn(ipc, "forgetCards").mockResolvedValue(undefined);
+    const resetSpy = vi
+      .spyOn(
+        ipc as {
+          resetDeckProgress?: (deckId: number, includeSubdecks?: boolean) => Promise<number>;
+        },
+        "resetDeckProgress",
+      )
+      .mockResolvedValue(2);
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -52,9 +59,10 @@ describe("ResetDeckProgressDialog", () => {
 
     resolveIds([1, 2]);
     await waitFor(() => expect(confirmBtn).toBeEnabled());
+    expect(screen.getByText(/Gold never drops below zero/i)).toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(confirmBtn);
-    await waitFor(() => expect(forgetSpy).toHaveBeenCalledWith([1, 2], false));
+    await waitFor(() => expect(resetSpy).toHaveBeenCalledWith(1, true));
   });
 });

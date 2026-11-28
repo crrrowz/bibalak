@@ -12,8 +12,11 @@ import { platform } from "@/lib/platform";
 import { queryKeys } from "@/lib/queryKeys";
 import { t, tn } from "@/lib/i18n";
 import {
+  formatAddError,
+  localizeStockFieldName,
   partitionFieldsByTemplates,
   readMoreFieldsExpanded,
+  resolveFieldMediaKind,
   writeMoreFieldsExpanded,
 } from "@/lib/noteFieldGroups";
 import { useNoteComposer } from "@/hooks/useNoteComposer";
@@ -55,11 +58,28 @@ export function QuickAddScreen() {
     setMoreExpanded(readMoreFieldsExpanded(composer.notetypeId));
   }, [composer.notetypeId]);
 
-  const fieldNames = composer.selectedNotetype?.field_names ?? [];
+  const fieldNames = useMemo(
+    () => composer.selectedNotetype?.field_names ?? [],
+    [composer.selectedNotetype?.field_names],
+  );
   const { primary: primaryIndices, extra: extraIndices } = useMemo(
     () => partitionFieldsByTemplates(fieldNames, composer.notetypeDetail.data?.templates),
     [fieldNames, composer.notetypeDetail.data?.templates],
   );
+
+  useEffect(() => {
+    if (!composer.add.isError) return;
+    if (/first field cannot be empty/i.test(errorMessage(composer.add.error))) {
+      if (extraIndices.includes(0)) {
+        setMoreExpanded(true);
+      }
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => {
+          document.getElementById("quick-add-field-0")?.focus();
+        });
+      }
+    }
+  }, [composer.add.isError, composer.add.error, extraIndices]);
 
   const toggleMoreFields = () => {
     setMoreExpanded((prev) => {
@@ -69,18 +89,46 @@ export function QuickAddScreen() {
     });
   };
 
+  const renderDuplicateNotice = () =>
+    composer.duplicateWarning ? (
+      <p className="text-xs font-medium text-amber-500">
+        {composer.duplicateNoteTitle
+          ? t("add.duplicateWarningNamed", { title: composer.duplicateNoteTitle })
+          : t("add.duplicateWarning")}
+      </p>
+    ) : null;
+
   const renderFieldBlock = (index: number, isFirstPrimary: boolean) => {
-    const name = fieldNames[index] ?? "";
+    const rawName = fieldNames[index] ?? "";
+    const name = localizeStockFieldName(rawName);
     const fieldId = `quick-add-field-${index}`;
     const labelId = `quick-add-field-label-${index}`;
     const hintId = `quick-add-field-hint-${index}`;
     const options = composer.notetypeDetail.data?.fields[index]?.options;
     const hint = options?.description?.trim() ?? "";
+    const isSortRequired = index === 0;
+    const mediaKind = resolveFieldMediaKind(
+      rawName,
+      options,
+      composer.notetypeDetail.data?.templates,
+    );
     return (
-      <div key={`${composer.notetypeId}:${name}:${composer.formVersion}`} className="space-y-1">
-        <label id={labelId} htmlFor={fieldId} className="text-xs font-medium">
-          {name}
-        </label>
+      <div key={`${composer.notetypeId}:${rawName}:${composer.formVersion}`} className="space-y-1">
+        <div className="flex items-center gap-1.5">
+          <label id={labelId} htmlFor={fieldId} className="text-xs font-medium">
+            {name}
+          </label>
+          {isSortRequired && (
+            <>
+              <span aria-hidden="true" className="text-xs font-semibold text-destructive">
+                *
+              </span>
+              <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {t("add.requiredBadge")}
+              </span>
+            </>
+          )}
+        </div>
         <FieldEditor
           id={fieldId}
           ariaLabelledBy={labelId}
@@ -91,19 +139,23 @@ export function QuickAddScreen() {
           onFocusEditor={onFocusEditor}
           onDestroyEditor={onDestroyEditor}
           options={options}
+          mediaFieldKind={mediaKind}
           onCtrlEnter={() => {
             if (!composer.add.isPending) composer.add.mutate();
           }}
           onChange={(html) => composer.setField(index, html)}
         />
+        {isSortRequired && extraIndices.includes(0) && (
+          <p className="text-[11px] text-muted-foreground">
+            {t("add.requiredSortHint", { field: name })}
+          </p>
+        )}
         {hint && (
           <p id={hintId} className="text-xs text-muted-foreground">
             {hint}
           </p>
         )}
-        {index === 0 && composer.duplicateWarning && (
-          <p className="text-xs font-medium text-amber-500">{t("add.duplicateWarning")}</p>
-        )}
+        {index === 0 && renderDuplicateNotice()}
       </div>
     );
   };
@@ -190,6 +242,7 @@ export function QuickAddScreen() {
         )}
 
         {primaryIndices.map((index, pos) => renderFieldBlock(index, pos === 0))}
+        {extraIndices.includes(0) && !moreExpanded && renderDuplicateNotice()}
 
         {extraIndices.length > 0 && (
           <div className="space-y-2.5 rounded-lg border border-border/70 bg-card/40 p-2.5">
@@ -237,7 +290,7 @@ export function QuickAddScreen() {
 
         {composer.add.isError && (
           <p role="alert" className="text-xs text-destructive">
-            {errorMessage(composer.add.error)}
+            {formatAddError(composer.add.error, localizeStockFieldName(fieldNames[0] ?? ""))}
           </p>
         )}
         {composer.lastResult && (

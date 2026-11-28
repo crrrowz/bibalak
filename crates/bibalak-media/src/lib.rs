@@ -8,36 +8,21 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
 use bibalak_core::error::{CoreError, CoreResult};
 use bibalak_core::ipc::MediaReport;
+pub use bibalak_core::media_refs::{
+    allowed_media_mime, is_blocked_active_media_extension, normalize_import_media_filename,
+    validate_media_filename,
+};
 use bibalak_core::ports::{MediaEntry, MediaStore, Storage};
 use sha1::{Digest, Sha1};
 
 fn storage_err(e: impl std::fmt::Display) -> CoreError {
     CoreError::Storage(e.to_string())
-}
-
-/// Validate that `name` is a safe single path component inside `collection.media/`.
-pub fn validate_media_filename(name: &str) -> CoreResult<()> {
-    if name.trim().is_empty() || name == "." || name == ".." {
-        return Err(CoreError::Invalid("media filename cannot be empty".into()));
-    }
-    if name.contains(['/', '\\', '\0', ':']) {
-        return Err(CoreError::Invalid(format!(
-            "unsafe media filename: {name:?}"
-        )));
-    }
-    let mut comps = Path::new(name).components();
-    match (comps.next(), comps.next()) {
-        (Some(Component::Normal(_)), None) => Ok(()),
-        _ => Err(CoreError::Invalid(format!(
-            "unsafe media filename: {name:?}"
-        ))),
-    }
 }
 
 fn digest_to_hex(digest: &[u8]) -> String {
@@ -222,6 +207,31 @@ impl FsMediaStore {
         &self.root
     }
 
+    /// Move a previously deleted file back out of `.trash/` into `collection.media`.
+    pub fn restore_trashed(&self, filename: &str) -> CoreResult<()> {
+        validate_media_filename(filename)?;
+        let trashed_path = self.root.join(".trash").join(filename);
+        if !trashed_path.is_file() {
+            return Err(CoreError::NotFound(format!(
+                "trashed media '{filename}' not found"
+            )));
+        }
+        let dest = self.root.join(filename);
+        if dest.exists() {
+            return Err(CoreError::Invalid(format!(
+                "media '{filename}' already exists"
+            )));
+        }
+        if fs::rename(&trashed_path, &dest).is_err() {
+            fs::copy(&trashed_path, &dest).map_err(storage_err)?;
+            fs::remove_file(&trashed_path).map_err(storage_err)?;
+        }
+        let mut idx = self.lock_index()?;
+        idx.initialized = false;
+        idx.generation += 1;
+        Ok(())
+    }
+
     fn lock_index(&self) -> CoreResult<std::sync::MutexGuard<'_, MediaIndex>> {
         self.index
             .lock()
@@ -390,6 +400,77 @@ impl FsMediaStore {
         }
     }
 
+    fn template_field_media_counts(
+        &self,
+        storage: &dyn Storage,
+    ) -> CoreResult<BTreeMap<String, u32>> {
+        let notetypes = storage.list_notetypes()?;
+        let mut media_ords_by_nt: HashMap<i64, BTreeSet<usize>> = HashMap::new();
+        for nt in notetypes {
+            let Some(detail) = storage.get_notetype_detail(nt.id)? else {
+                continue;
+            };
+            let mut field_names = BTreeSet::new();
+            for tpl in &detail.templates {
+                field_names.extend(bibalak_core::media_refs::extract_template_media_fields(
+                    &tpl.qfmt,
+                ));
+                field_names.extend(bibalak_core::media_refs::extract_template_media_fields(
+                    &tpl.afmt,
+                ));
+            }
+            if field_names.is_empty() {
+                continue;
+            }
+            let mut ords = BTreeSet::new();
+            for f in &detail.fields {
+                if field_names
+                    .iter()
+                    .any(|n| n.eq_ignore_ascii_case(f.name.trim()))
+                {
+                    ords.insert(f.ord as usize);
+                }
+            }
+            if !ords.is_empty() {
+                media_ords_by_nt.insert(nt.id, ords);
+            }
+        }
+        if media_ords_by_nt.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+
+        let model = storage.dump_collection()?;
+        let mut counts: BTreeMap<String, u32> = BTreeMap::new();
+        for note in &model.notes {
+            let Some(ords) = media_ords_by_nt.get(&note.notetype_id) else {
+                continue;
+            };
+            let mut seen_in_note = BTreeSet::new();
+            for &ord in ords {
+                if let Some(val) = note.fields.get(ord) {
+                    if let Some(name) = bibalak_core::media_refs::extract_field_media_value(val) {
+                        seen_in_note.insert(name);
+                    }
+                }
+            }
+            for name in seen_in_note {
+                *counts.entry(name).or_insert(0) += 1;
+            }
+        }
+        Ok(counts)
+    }
+
+    fn all_media_ref_counts(&self, storage: &dyn Storage) -> CoreResult<Vec<(String, u32)>> {
+        let mut combined: BTreeMap<String, u32> = BTreeMap::new();
+        for (name, count) in storage.note_media_ref_counts()? {
+            *combined.entry(name).or_insert(0) += count;
+        }
+        for (name, count) in self.template_field_media_counts(storage)? {
+            *combined.entry(name).or_insert(0) += count;
+        }
+        Ok(combined.into_iter().collect())
+    }
+
     fn usage_counts_with_case(
         &self,
         storage: &dyn Storage,
@@ -402,7 +483,7 @@ impl FsMediaStore {
             disk_by_key.entry(key).or_default().push(name.clone());
             counts.insert(name, 0);
         }
-        for (ref_name, count) in storage.note_media_ref_counts()? {
+        for (ref_name, count) in self.all_media_ref_counts(storage)? {
             let key = bibalak_core::media_refs::canonical_media_key(&ref_name, case_insensitive);
             if let Some(disk_names) = disk_by_key.get(&key) {
                 for disk_name in disk_names {
@@ -427,10 +508,10 @@ impl FsMediaStore {
         storage: &dyn Storage,
         case_insensitive: bool,
     ) -> CoreResult<Vec<String>> {
-        let used_keys: BTreeSet<String> = storage
-            .note_media_refs()?
+        let used_keys: BTreeSet<String> = self
+            .all_media_ref_counts(storage)?
             .into_iter()
-            .map(|r| bibalak_core::media_refs::canonical_media_key(&r, case_insensitive))
+            .map(|(r, _)| bibalak_core::media_refs::canonical_media_key(&r, case_insensitive))
             .collect();
         let unused: Vec<String> = self
             .rescan_entries()?
@@ -460,7 +541,11 @@ impl FsMediaStore {
             .iter()
             .map(|name| bibalak_core::media_refs::canonical_media_key(name, case_insensitive))
             .collect();
-        let refs = storage.note_media_refs()?;
+        let refs: Vec<String> = self
+            .all_media_ref_counts(storage)?
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
         let ref_keys: BTreeSet<String> = refs
             .iter()
             .map(|name| bibalak_core::media_refs::canonical_media_key(name, case_insensitive))
@@ -498,6 +583,11 @@ const HOST_CASE_INSENSITIVE: bool = cfg!(any(target_os = "windows", target_os = 
 impl MediaStore for FsMediaStore {
     fn add(&self, filename: &str, bytes: &[u8]) -> CoreResult<String> {
         validate_media_filename(filename)?;
+        if is_blocked_active_media_extension(filename) {
+            return Err(CoreError::Invalid(format!(
+                "blocked scriptable media extension: {filename:?}"
+            )));
+        }
         let new_size = bytes.len() as u64;
         let digest = sha1_hex(bytes);
 
@@ -1112,13 +1202,13 @@ mod tests {
         assert_eq!(page2.items[1].kind, MediaKind::Other);
         assert_eq!(page2.items[1].usage_count, 0);
 
-        // Search filter keeps overall library_count & unused_count accurate.
+        // Search filter narrows scoped library_count & unused_count (A2-20).
         let filtered = col
             .list_media_library(&store, "BETA", &default_filter, 10, 0)
             .unwrap();
         assert_eq!(filtered.total_count, 1);
-        assert_eq!(filtered.library_count, 5);
-        assert_eq!(filtered.unused_count, 2);
+        assert_eq!(filtered.library_count, 1);
+        assert_eq!(filtered.unused_count, 0);
         assert_eq!(filtered.items[0].filename, "beta.mp3");
 
         // Delete unused removes only the 2 unreferenced stored files.
@@ -1192,8 +1282,8 @@ mod tests {
                 0,
             )
             .unwrap();
-        assert_eq!(spanish_page.library_count, 4);
-        assert_eq!(spanish_page.unused_count, 1);
+        assert_eq!(spanish_page.library_count, 2);
+        assert_eq!(spanish_page.unused_count, 0);
         assert_eq!(spanish_page.total_count, 2);
         assert_eq!(
             spanish_page
@@ -1486,15 +1576,16 @@ mod tests {
     #[test]
     fn template_and_underscore_files_count_as_used() {
         let (_dir, store) = temp_store();
-        store.add("_shared_script.js", b"console.log(1)").unwrap();
+        store.add("_shared_style.css", b"body{}").unwrap();
         store.add("tpl_banner.png", b"banner").unwrap();
         store.add("orphan.png", b"orphan").unwrap();
 
         let db = SqliteStorage::open_in_memory().unwrap();
         db.ensure_collection(1_700_000_000_000).unwrap();
         let nt_id = db.create_notetype("WithMedia", 0, 1_000).unwrap();
-        db.add_template(
+        db.save_template(
             nt_id,
+            0,
             "Card 1",
             r#"<img src="tpl_banner.png">{{Front}}"#,
             "{{Back}}",
@@ -1503,7 +1594,7 @@ mod tests {
         .unwrap();
 
         let counts = store.usage_counts(&db).unwrap();
-        assert!(counts.get("_shared_script.js").copied().unwrap_or(0) >= 1);
+        assert!(counts.get("_shared_style.css").copied().unwrap_or(0) >= 1);
         assert_eq!(counts.get("tpl_banner.png"), Some(&1));
         assert_eq!(counts.get("orphan.png"), Some(&0));
         assert_eq!(store.find_unused(&db).unwrap(), vec!["orphan.png"]);
@@ -1575,5 +1666,187 @@ mod tests {
             .unwrap();
         assert_eq!(buf, b"payload-a");
         assert_eq!(hashes.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a2_04_template_wrapped_media_counts_as_used() {
+        let (_dir, store) = temp_store();
+        store.add("diagram.png", b"img-bytes").unwrap();
+        store.add("voice.mp3", b"mp3-bytes").unwrap();
+
+        let s = SqliteStorage::open_in_memory().unwrap();
+        let now_ms = 1_700_000_000_000;
+        s.ensure_collection(now_ms).unwrap();
+        let nt_id = s.create_notetype("PicWrap", 0, now_ms).unwrap();
+        s.save_template(
+            nt_id,
+            0,
+            "Card 1",
+            r#"<img src="{{Front}}">[sound:{{Back}}]"#,
+            "{{Back}}",
+            now_ms,
+        )
+        .unwrap();
+        s.add_note_with_cards(
+            nt_id,
+            1,
+            &["diagram.png".into(), "voice.mp3".into()],
+            &[],
+            now_ms,
+        )
+        .unwrap();
+
+        let unused = store.find_unused(&s).unwrap();
+        assert!(
+            !unused.contains(&"diagram.png".to_string())
+                && !unused.contains(&"voice.mp3".to_string()),
+            "template-wrapped media must not be treated as unused: {unused:?}"
+        );
+        let counts = store.usage_counts(&s).unwrap();
+        assert_eq!(counts.get("diagram.png"), Some(&1));
+        assert_eq!(counts.get("voice.mp3"), Some(&1));
+    }
+
+    #[test]
+    fn a4_04_and_a2_19_validate_media_filename_rejects_windows_reserved_trailing_and_ctrl() {
+        for bad in [
+            "CON",
+            "con.png",
+            "nul.mp3",
+            "PRN.jpg",
+            "AUX",
+            "COM1.wav",
+            "lpt9.ogg",
+            "photo.png ",
+            "photo.png.",
+            "bad\nname.png",
+            "bad\x07name.png",
+            "12:30.mp3",
+        ] {
+            assert!(
+                validate_media_filename(bad).is_err(),
+                "expected invalid filename: {bad:?}"
+            );
+        }
+        assert_eq!(
+            normalize_import_media_filename("12:30.mp3").as_deref(),
+            Some("12_30.mp3")
+        );
+        assert_eq!(
+            normalize_import_media_filename("CON.png").as_deref(),
+            Some("_CON.png")
+        );
+        assert_eq!(normalize_import_media_filename(".."), None);
+    }
+
+    #[test]
+    fn a4_08_media_store_rejects_html_and_js_and_allows_sandboxed_svg() {
+        let (_dir, store) = temp_store();
+        assert!(matches!(
+            store.add("page.html", b"<script>alert(1)</script>"),
+            Err(CoreError::Invalid(_))
+        ));
+        assert!(matches!(
+            store.add("_helper.js", b"alert(1)"),
+            Err(CoreError::Invalid(_))
+        ));
+        assert!(matches!(
+            store.add("mod.mjs", b"export {}"),
+            Err(CoreError::Invalid(_))
+        ));
+        assert_eq!(
+            store
+                .add(
+                    "diagram.svg",
+                    br#"<svg xmlns="http://www.w3.org/2000/svg"></svg>"#
+                )
+                .unwrap(),
+            "diagram.svg"
+        );
+        assert_eq!(allowed_media_mime("diagram.svg"), Some("image/svg+xml"));
+        assert_eq!(allowed_media_mime("page.html"), None);
+        assert_eq!(allowed_media_mime("_helper.js"), None);
+    }
+
+    #[test]
+    fn a2_31_restore_trashed_moves_file_back_and_rejects_conflict() {
+        let (_dir, store) = temp_store();
+        store.add("unused.png", b"dead").unwrap();
+        let removed = store.delete(&["unused.png".into()]).unwrap();
+        assert_eq!(removed, 1);
+        assert!(!store.root().join("unused.png").exists());
+        assert!(store.root().join(".trash/unused.png").is_file());
+
+        store.restore_trashed("unused.png").unwrap();
+        assert_eq!(store.read("unused.png").unwrap(), b"dead");
+        assert!(!store.root().join(".trash/unused.png").exists());
+        assert!(matches!(
+            store.restore_trashed("missing.png"),
+            Err(CoreError::NotFound(_))
+        ));
+
+        // Conflict with an existing file in collection.media must fail without overwriting.
+        std::fs::write(store.root().join(".trash/unused.png"), b"old").unwrap();
+        assert!(matches!(
+            store.restore_trashed("unused.png"),
+            Err(CoreError::Invalid(_))
+        ));
+        assert_eq!(store.read("unused.png").unwrap(), b"dead");
+    }
+
+    #[test]
+    fn a2_20_media_library_deck_filter_unused_returns_empty_and_ignores_templates() {
+        use bibalak_core::ipc::{MediaLibraryFilter, MediaUsageFilter};
+        use bibalak_core::ports::FixedClock;
+        use bibalak_core::Collection;
+        use std::sync::Arc;
+
+        let (_dir, store) = temp_store();
+        store.add("bg.png", b"bg").unwrap();
+        store.add("orphan.png", b"orphan").unwrap();
+
+        let s = SqliteStorage::open_in_memory().unwrap();
+        let now_ms = 1_700_000_000_000;
+        s.ensure_collection(now_ms).unwrap();
+        let nt_id = s.add_stock_notetype(0, now_ms).unwrap();
+        s.save_notetype_css(nt_id, ".card { background: url(\"bg.png\"); }", now_ms)
+            .unwrap();
+        s.add_note_with_cards(nt_id, 1, &["Q".into(), "A".into()], &[], now_ms)
+            .unwrap();
+
+        let col = Collection::new(Box::new(s), Arc::new(FixedClock(now_ms))).unwrap();
+        // Template/CSS media should be counted as used even when a deck query is applied.
+        let deck_used = col
+            .list_media_library(
+                &store,
+                "",
+                &MediaLibraryFilter {
+                    query: "deck:\"Default\"".into(),
+                    usage: MediaUsageFilter::All,
+                    ..Default::default()
+                },
+                50,
+                0,
+            )
+            .unwrap();
+        assert!(
+            deck_used.items.iter().any(|i| i.filename == "bg.png"),
+            "template/CSS media must show under deck usage"
+        );
+        // Combining Unused + deck filter must not silently drop all unused files.
+        let deck_unused = col
+            .list_media_library(
+                &store,
+                "",
+                &MediaLibraryFilter {
+                    query: "deck:\"Default\"".into(),
+                    usage: MediaUsageFilter::Unused,
+                    ..Default::default()
+                },
+                50,
+                0,
+            )
+            .unwrap();
+        assert_eq!(deck_unused.total_count, 1);
     }
 }

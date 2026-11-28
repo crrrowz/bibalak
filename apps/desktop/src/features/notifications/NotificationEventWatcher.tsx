@@ -103,11 +103,16 @@ export function NotificationEventWatcher() {
           Date.now() - recentRefundAtRef.current > 2000 &&
           Date.now() - recentAutoFreezeAtRef.current > 2000
         ) {
+          const dayKey =
+            prevMotivationRef.current?.today_day_index ?? new Date().toISOString().slice(0, 10);
+          const onStreakPage =
+            typeof window !== "undefined" && window.location.pathname.startsWith("/streak");
           pushNotification({
             kind: "freeze",
             title: t("notifications.kind.freeze"),
             body: t("notifications.kind.freezeBody"),
-            link: "/plan/habits",
+            link: onStreakPage ? "/streak" : "/plan/habits",
+            dedupeKey: `freeze:${dayKey}:${gs.freeze_tokens_held}`,
           });
         }
         lastFreezeHeldRef.current = gs.freeze_tokens_held;

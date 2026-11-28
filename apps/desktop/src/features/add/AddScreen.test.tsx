@@ -1,9 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AddScreen } from "./AddScreen";
 import { ipc } from "@/lib/ipc";
+import { platform } from "@/lib/platform";
 import { modShortcut } from "@/lib/shortcuts";
 
 beforeAll(() => {
@@ -56,6 +57,9 @@ vi.mock("@/lib/ipc", () => ({
     listDecks: vi.fn().mockResolvedValue([{ id: 1, name: "Default", is_filtered: false }]),
     addNote: vi.fn().mockResolvedValue({ note_id: 1, cards_added: 1 }),
     checkDuplicate: vi.fn().mockResolvedValue(null),
+    getNote: vi.fn().mockResolvedValue(null),
+    saveMedia: vi.fn().mockResolvedValue("saved.mp3"),
+    saveMediaFromPath: vi.fn().mockResolvedValue("01_0001.mp3"),
     listTags: vi.fn().mockResolvedValue(["spanish", "verbs"]),
     aiGetConfig: vi.fn().mockResolvedValue({
       enabled: false,
@@ -753,6 +757,162 @@ describe("AddScreen BW2-7 template field grouping and hints", () => {
     );
     await waitFor(() => {
       expect(screen.getByRole("textbox", { name: "IPA" })).toBeInTheDocument();
+    });
+  });
+
+  it("F11: marks ord-0 sort field required, maps empty first field error, and attaches media in subs2srs-like fields", async () => {
+    localStorage.clear();
+    const fieldNames = ["SequenceMarker", "Audio", "Snapshot", "Expression"];
+    (
+      ipc.listNotetypes as unknown as { mockResolvedValueOnce: (v: unknown) => void }
+    ).mockResolvedValueOnce([{ id: 88, name: "subs2srs", kind: 0, field_names: fieldNames }]);
+    (
+      ipc.getNotetype as unknown as { mockResolvedValueOnce: (v: unknown) => void }
+    ).mockResolvedValueOnce({
+      id: 88,
+      name: "subs2srs",
+      kind: 0,
+      sort_field: 0,
+      fields: fieldNames.map((name, ord) => ({
+        ord,
+        name,
+        options: { direction: "auto", font: "", size: 0, description: "" },
+      })),
+      templates: [
+        {
+          ord: 0,
+          name: "Card 1",
+          qfmt: "{{Audio}}{{Snapshot}}{{Expression}}",
+          afmt: "{{FrontSide}}",
+        },
+      ],
+      css: "",
+    });
+    (
+      ipc.addNote as unknown as { mockRejectedValueOnce: (v: unknown) => void }
+    ).mockRejectedValueOnce({ kind: "invalid", message: "first field cannot be empty" });
+    const pickSpy = vi.spyOn(platform, "pickPath").mockResolvedValue("C:\\media\\01_0001.mp3");
+
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AddScreen />
+      </QueryClientProvider>,
+    );
+
+    const audioRegion = await screen.findByRole("region", { name: "Audio" });
+    expect(audioRegion).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Audio" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Snapshot" })).toBeNull();
+    expect(screen.getAllByText(/Media files play from your media folder/i).length).toBeGreaterThan(
+      0,
+    );
+
+    // Attach media into Audio field via Attach file button
+    const attachButtons = screen.getAllByRole("button", { name: /Attach file/i });
+    await user.click(attachButtons[0]);
+    await waitFor(() => {
+      expect(pickSpy).toHaveBeenCalled();
+      expect(ipc.saveMediaFromPath).toHaveBeenCalledWith("C:\\media\\01_0001.mp3");
+    });
+
+    // Submitting with empty ord-0 (SequenceMarker) expands More fields & names SequenceMarker
+    await user.click(screen.getByRole("button", { name: /^Add Note$/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/SequenceMarker/);
+    expect(screen.getByRole("textbox", { name: "SequenceMarker" })).toBeInTheDocument();
+    expect(screen.getByText("Required")).toBeInTheDocument();
+  });
+
+  it("A2-34 & A1-31: names duplicate note on Add and disables Suggest back on empty <p></p>", async () => {
+    (ipc.aiGetConfig as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue({
+      enabled: true,
+      provider: "open-ai-compatible",
+      base_url: "https://api.openai.com/v1",
+      model: "gpt-4o-mini",
+      has_api_key: true,
+    });
+    (
+      ipc.checkDuplicate as unknown as { mockResolvedValue: (v: unknown) => void }
+    ).mockResolvedValue(42);
+    (ipc.getNote as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue({
+      note_id: 42,
+      notetype_name: "Basic",
+      fields: [
+        {
+          name: "Front",
+          value: "<b>Café</b>",
+          options: { direction: "auto", font: "", size: 0, description: "" },
+        },
+        {
+          name: "Back",
+          value: "Coffee",
+          options: { direction: "auto", font: "", size: 0, description: "" },
+        },
+      ],
+      tags: [],
+    });
+
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AddScreen />
+      </QueryClientProvider>,
+    );
+
+    const suggestBtn = await screen.findByRole("button", { name: /Suggest back/i });
+    expect(suggestBtn).toBeDisabled();
+
+    const frontInput = screen.getByRole("textbox", { name: "Front" });
+    await user.type(frontInput, "cafe");
+
+    await waitFor(() => {
+      expect(screen.getByText(/Café/)).toBeInTheDocument();
+    });
+    expect(suggestBtn).toBeEnabled();
+  });
+
+  it("F11: pasting a local media path string into a media-aware field imports via saveMediaFromPath", async () => {
+    const fieldNames = ["Expression", "Audio"];
+    (
+      ipc.listNotetypes as unknown as { mockResolvedValueOnce: (v: unknown) => void }
+    ).mockResolvedValueOnce([{ id: 89, name: "MediaType", kind: 0, field_names: fieldNames }]);
+    (
+      ipc.getNotetype as unknown as { mockResolvedValueOnce: (v: unknown) => void }
+    ).mockResolvedValueOnce({
+      id: 89,
+      name: "MediaType",
+      kind: 0,
+      sort_field: 0,
+      fields: fieldNames.map((name, ord) => ({
+        ord,
+        name,
+        options: { direction: "auto", font: "", size: 0, description: "" },
+      })),
+      templates: [{ ord: 0, name: "Card 1", qfmt: "{{Expression}}{{Audio}}", afmt: "" }],
+      css: "",
+    });
+    (ipc.saveMediaFromPath as unknown as ReturnType<typeof vi.fn>).mockClear();
+    (ipc.saveMediaFromPath as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      "02_sample.mp3",
+    );
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AddScreen />
+      </QueryClientProvider>,
+    );
+
+    const audioRegion = await screen.findByRole("region", { name: "Audio" });
+    fireEvent.paste(audioRegion, {
+      clipboardData: {
+        files: [],
+        items: [],
+        getData: (type: string) => (type === "text/plain" ? "C:\\Users\\demo\\02_sample.mp3" : ""),
+      },
+    });
+
+    await waitFor(() => {
+      expect(ipc.saveMediaFromPath).toHaveBeenCalledWith("C:\\Users\\demo\\02_sample.mp3");
     });
   });
 });

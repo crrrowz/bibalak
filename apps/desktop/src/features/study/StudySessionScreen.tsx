@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  ArrowLeft,
   Flag,
   Maximize2,
   Minimize2,
@@ -12,6 +13,7 @@ import {
   SkipForward,
   Sparkles,
   Volume2,
+  X,
 } from "lucide-react";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { Button } from "@/components/ui/button";
@@ -24,13 +26,14 @@ import { SessionFinish } from "@/features/study/feedback/SessionFinish";
 import { SessionProgressBar } from "@/features/study/feedback/SessionProgressBar";
 import { StreakBadge } from "@/features/study/feedback/StreakBadge";
 import { useMotivationState } from "@/features/motivation/useMotivation";
+import { useProgressSummary } from "@/features/progress/useProgressSummary";
 import { TutorPanel } from "@/features/study/TutorPanel";
 import { isAiConfigured } from "@/stores/aiSession";
 import { CardFace } from "@/components/CardFace";
 import { DeckOptionsDialog } from "@/components/DeckOptionsDialog";
 import { DeckCounts } from "@/components/decks/DeckCounts";
 import { Kbd } from "@/components/Kbd";
-import { ipc, isTauri, Rating, type RatingValue } from "@/lib/ipc";
+import { ipc, isTauri, Rating, type RatingValue, type StudyCardWithFlag } from "@/lib/ipc";
 import { queryKeys } from "@/lib/queryKeys";
 import { invalidateTodayCounts } from "@/lib/queryRefresh";
 import { mediaUrl, type QueueEntry } from "@/lib/renderCard";
@@ -39,9 +42,16 @@ import { useTheme } from "@/stores/theme";
 import { useUi } from "@/stores/ui";
 import { getCardEffectiveVolume, subscribeCardEffectiveVolume } from "@/stores/sound";
 import { speak, cancelSpeech } from "@/lib/tts";
-import { formatNumber, t } from "@/lib/i18n";
+import { formatDate, formatNumber, t, useLocale } from "@/lib/i18n";
+import { digitHotkey, matchesKey } from "@/lib/shortcuts";
 import { playStyleCue } from "@/lib/styleAudio";
 import { formatUndoAction } from "@/lib/undo";
+
+const EMPTY_QUEUE: QueueEntry[] = [];
+
+function isStudyStepUndoKind(kind?: string): boolean {
+  return kind === "answer-card" || kind === "bury-cards" || kind === "suspend-cards";
+}
 
 const FLAG_COLORS: Record<number, string> = {
   1: "text-red-500",
@@ -49,12 +59,6 @@ const FLAG_COLORS: Record<number, string> = {
   3: "text-green-500",
   4: "text-blue-500",
 };
-
-function reviewXpForRating(rating: RatingValue): number {
-  if (rating === Rating.Again) return 1;
-  if (rating === Rating.Hard) return 2;
-  return 3;
-}
 
 export function StudySessionScreen() {
   const { deckId } = useParams({ from: "/study/$deckId" });
@@ -68,7 +72,9 @@ export function StudySessionScreen() {
 }
 
 function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
+  const navigate = useNavigate();
   const tauri = isTauri();
+  const locale = useLocale((s) => s.locale);
   const queryClient = useQueryClient();
   const prefersReduced = useReducedMotion();
   const [revealed, setRevealed] = useState(false);
@@ -77,8 +83,8 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   const [tutorOpen, setTutorOpen] = useState(false);
   const [tutorSaveOpen, setTutorSaveOpen] = useState(false);
   const [sessionAnswered, setSessionAnswered] = useState(0);
+  const [sessionUndoSteps, setSessionUndoSteps] = useState(0);
   const [sessionCompleted, setSessionCompleted] = useState(0);
-  const [sessionXp, setSessionXp] = useState(0);
   const [sessionPassed, setSessionPassed] = useState(0);
   const [sessionTimeMs, setSessionTimeMs] = useState(0);
   const [streakBadgeCount, setStreakBadgeCount] = useState<number | null>(null);
@@ -88,14 +94,29 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   const timeHistoryRef = useRef<number[]>([]);
   const completedHistoryRef = useRef<number[]>([]);
   const currentRemainingRef = useRef(0);
-  const rewardedCardIdsRef = useRef<Set<number>>(new Set());
-  const xpHistoryRef = useRef<Array<{ cardId: number; xp: number }>>([]);
+  const baselineTodayXpRef = useRef<number | null>(null);
   const streakTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const initialStudiedTodayRef = useRef<boolean | null>(null);
   const triggerAvatarReaction = useStudyFeedbackStore((s) => s.triggerAvatarReaction);
   const flagRef = useRef<HTMLDivElement>(null);
 
+  const progressQuery = useProgressSummary(tauri);
   const motivationQuery = useMotivationState();
+  const undoStatusQuery = useQuery({
+    queryKey: queryKeys.undoStatus,
+    queryFn: ipc.undoStatus,
+    enabled: tauri,
+  });
+  const backendTodayXp = progressQuery.data?.today_xp ?? motivationQuery.data?.today_xp ?? null;
+  useEffect(() => {
+    if (backendTodayXp !== null && baselineTodayXpRef.current === null && sessionAnswered === 0) {
+      baselineTodayXpRef.current = backendTodayXp;
+    }
+  }, [backendTodayXp, sessionAnswered]);
+  const sessionXp =
+    backendTodayXp !== null && baselineTodayXpRef.current !== null
+      ? Math.max(0, backendTodayXp - baselineTodayXpRef.current)
+      : 0;
   useEffect(() => {
     if (motivationQuery.data && initialStudiedTodayRef.current === null && sessionAnswered === 0) {
       initialStudiedTodayRef.current = motivationQuery.data.studied_today;
@@ -119,26 +140,43 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   }).data;
   const aiConfigured = isAiConfigured(aiConfig);
 
-  const deckName = useQuery({
-    queryKey: queryKeys.decks,
-    queryFn: ipc.listDecks,
+  const prefsQuery = useQuery({
+    queryKey: queryKeys.collectionPrefs,
+    queryFn: ipc.getCollectionPrefs,
     enabled: tauri,
-    select: (decks) => decks.find((d) => d.id === deckId)?.name,
+  });
+  const rolloverTime = formatDate(
+    new Date(2000, 0, 1, prefsQuery.data?.rollover_hour ?? 4, 0, 0),
+    { hour: "numeric", minute: "2-digit" },
+    locale,
+  );
+  const deckMeta = useQuery({
+    queryKey: queryKeys.decks,
+    queryFn: async () => (await ipc.listDecks()) ?? [],
+    enabled: tauri,
+    select: (decks) => decks.find((d) => d.id === deckId) ?? null,
   }).data;
+  const deckName = deckMeta?.name;
+  const isFiltered = deckMeta?.is_filtered ?? false;
 
   const cardQuery = useQuery({
     queryKey: queryKeys.queue(String(deckId)),
     queryFn: () => ipc.getNextCard(deckId),
     staleTime: 0,
+    gcTime: 0,
     refetchOnMount: "always",
     refetchInterval: (query) => (query.state.data == null ? 15000 : false),
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
   });
 
+  const answerPendingRef = useRef(false);
   const answerMut = useMutation({
     mutationFn: ({ cardId, rating }: { cardId: number; rating: RatingValue }) =>
       ipc.answerCard(cardId, rating, deckId, Date.now() - shownAtRef.current),
+    onSettled: () => {
+      answerPendingRef.current = false;
+    },
     onMutate: () => ({ prevRemaining: currentRemainingRef.current }),
     onSuccess: (next, variables, context) => {
       const prevRemaining = context?.prevRemaining ?? 0;
@@ -150,6 +188,7 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
       queryClient.setQueryData(queryKeys.queue(String(deckId)), next ?? null);
       setRevealed(false);
       setSessionAnswered((n) => n + 1);
+      setSessionUndoSteps((n) => n + 1);
       playStyleCue("review_answer");
 
       const passed = variables.rating !== Rating.Again;
@@ -161,15 +200,6 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
       timeHistoryRef.current.push(elapsedMs);
       setSessionTimeMs((ms) => ms + elapsedMs);
       void invalidateTodayCounts(queryClient);
-
-      if (!rewardedCardIdsRef.current.has(variables.cardId)) {
-        rewardedCardIdsRef.current.add(variables.cardId);
-        const gained = reviewXpForRating(variables.rating);
-        xpHistoryRef.current.push({ cardId: variables.cardId, xp: gained });
-        setSessionXp((xp) => xp + gained);
-      } else {
-        xpHistoryRef.current.push({ cardId: variables.cardId, xp: 0 });
-      }
 
       streakHistoryRef.current.push(inARowRef.current);
       if (variables.rating === Rating.Good || variables.rating === Rating.Easy) {
@@ -199,24 +229,28 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   const showActionToast = useCallback((message: string, onUndo?: () => void) => {
     clearTimeout(toastTimerRef.current);
     setActionToast({ message, onUndo });
-    toastTimerRef.current = setTimeout(() => setActionToast(null), 3000);
+    toastTimerRef.current = setTimeout(() => setActionToast(null), 8000);
   }, []);
 
   const unsuspendMut = useMutation({
     mutationFn: (cardId: number) => ipc.unsuspendCards([cardId]),
     onSuccess: () => {
       setActionToast(null);
+      setSessionUndoSteps((n) => Math.max(0, n - 1));
       void queryClient.refetchQueries({ queryKey: queryKeys.queue(String(deckId)) });
+      void invalidateTodayCounts(queryClient);
     },
   });
 
   const suspendMut = useMutation({
     mutationFn: (cardId: number) => ipc.suspendCards([cardId]),
     onSuccess: (_data, cardId) => {
+      setSessionUndoSteps((n) => n + 1);
       showActionToast(t("study.toast.suspended"), () => unsuspendMut.mutate(cardId));
       void queryClient
         .refetchQueries({ queryKey: queryKeys.queue(String(deckId)) })
         .then(() => setRevealed(false));
+      void invalidateTodayCounts(queryClient);
     },
   });
 
@@ -224,17 +258,23 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
     mutationFn: (cardId: number) => ipc.unburyCards([cardId]),
     onSuccess: () => {
       setActionToast(null);
+      setSessionUndoSteps((n) => Math.max(0, n - 1));
       void queryClient.refetchQueries({ queryKey: queryKeys.queue(String(deckId)) });
+      void invalidateTodayCounts(queryClient);
     },
   });
 
   const buryMut = useMutation({
     mutationFn: (cardId: number) => ipc.buryCards([cardId]),
     onSuccess: (_data, cardId) => {
-      showActionToast(t("study.toast.buried"), () => unburyMut.mutate(cardId));
+      setSessionUndoSteps((n) => n + 1);
+      showActionToast(t("study.toast.buried", { time: rolloverTime }), () =>
+        unburyMut.mutate(cardId),
+      );
       void queryClient
         .refetchQueries({ queryKey: queryKeys.queue(String(deckId)) })
         .then(() => setRevealed(false));
+      void invalidateTodayCounts(queryClient);
     },
   });
 
@@ -243,17 +283,15 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
     onSuccess: (undone) => {
       if (undone) {
         showActionToast(t("study.toast.undone", { action: formatUndoAction(undone) }));
-        if (undone.kind === "answer-card") {
+        if (isStudyStepUndoKind(undone.kind)) {
           setRevealed(false);
+          setSessionUndoSteps((n) => Math.max(0, n - 1));
+        }
+        if (undone.kind === "answer-card") {
           setSessionAnswered((n) => Math.max(0, n - 1));
           const prevCompleted = completedHistoryRef.current.pop();
           if (prevCompleted !== undefined) {
             setSessionCompleted((n) => Math.max(0, n - prevCompleted));
-          }
-          const prevXp = xpHistoryRef.current.pop();
-          if (prevXp && prevXp.xp > 0) {
-            rewardedCardIdsRef.current.delete(prevXp.cardId);
-            setSessionXp((xp) => Math.max(0, xp - prevXp.xp));
           }
           const prevPassed = passHistoryRef.current.pop();
           if (prevPassed) {
@@ -270,7 +308,7 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
           clearTimeout(streakTimerRef.current);
           setStreakBadgeCount(null);
         }
-        void queryClient.invalidateQueries({ queryKey: queryKeys.queueAll });
+        void queryClient.removeQueries({ queryKey: queryKeys.queueAll });
         void invalidateTodayCounts(queryClient);
         void queryClient.invalidateQueries({ queryKey: queryKeys.notesAll });
       }
@@ -280,23 +318,53 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   const flagMut = useMutation({
     mutationFn: ({ cardId, flag }: { cardId: number; flag: number }) =>
       ipc.setCardFlag([cardId], flag),
-    onSuccess: () => setFlagMenuOpen(false),
+    onSuccess: (_data, variables) => {
+      queryClient.setQueryData<StudyCardWithFlag | null>(queryKeys.queue(String(deckId)), (prev) =>
+        prev && prev.card_id === variables.cardId ? { ...prev, flag: variables.flag } : prev,
+      );
+      setFlagMenuOpen(false);
+    },
   });
 
-  const card = cardQuery.data ?? null;
+  const waitingForFirstFetch = !cardQuery.isFetchedAfterMount;
+  const card = waitingForFirstFetch ? null : (cardQuery.data ?? null);
+  const finishDeckCardIdsQuery = useQuery({
+    queryKey: queryKeys.deckCardIds(deckId, true),
+    queryFn: async () => (await ipc.deckCardIds(deckId, true)) ?? null,
+    enabled: tauri && !waitingForFirstFetch && card === null && sessionAnswered === 0,
+  });
+  const deckEmpty =
+    sessionAnswered === 0 &&
+    Array.isArray(finishDeckCardIdsQuery.data) &&
+    finishDeckCardIdsQuery.data.length === 0;
+  const cardFlag = card?.flag ?? 0;
   currentRemainingRef.current = card ? card.new_count + card.learning_count + card.review_count : 0;
   const actionBusy =
     suspendMut.isPending || buryMut.isPending || unburyMut.isPending || flagMut.isPending;
 
   const night = useTheme((s) => s.resolved === "dark");
-  const [frontQueue, setFrontQueue] = useState<QueueEntry[]>([]);
-  const [backQueue, setBackQueue] = useState<QueueEntry[]>([]);
+  const [frontPrepared, setFrontPrepared] = useState<{
+    cardId: number;
+    items: QueueEntry[];
+  } | null>(null);
+  const [backPrepared, setBackPrepared] = useState<{ cardId: number; items: QueueEntry[] } | null>(
+    null,
+  );
   const [typedAnswer, setTypedAnswer] = useState("");
-  const currentQueue = revealed ? backQueue : frontQueue;
+  const activeSidePrepared = revealed ? backPrepared : frontPrepared;
+  const sideReady = Boolean(
+    card && activeSidePrepared && activeSidePrepared.cardId === card.card_id,
+  );
+  const currentQueue = sideReady && activeSidePrepared ? activeSidePrepared.items : EMPTY_QUEUE;
+  const activeSideKey = card && sideReady ? `${card.card_id}:${revealed ? "back" : "front"}` : "";
 
   // Sound + TTS sequencer — plays [sound:...] files and {{tts:}} utterances
-  // in the document order the render engine's unified queue reports.
-  const [queueIdx, setQueueIdx] = useState(-1);
+  // keyed synchronously by `(card_id, side)` so stale queues never replay on the next card.
+  const [playState, setPlayState] = useState<{ key: string; idx: number; seq: number }>({
+    key: "",
+    idx: -1,
+    seq: 0,
+  });
   const cardKey = card?.card_id ?? -1;
   const shownAtRef = useRef(Date.now());
 
@@ -315,17 +383,31 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
   }, [revealed]);
 
   useEffect(() => {
-    setQueueIdx(currentQueue.length > 0 ? 0 : -1);
-  }, [cardKey, revealed]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!activeSideKey || currentQueue.length === 0) {
+      setPlayState((s) =>
+        s.key === activeSideKey && s.idx === -1
+          ? s
+          : { key: activeSideKey, idx: -1, seq: s.seq + 1 },
+      );
+      return;
+    }
+    setPlayState((s) => ({ key: activeSideKey, idx: 0, seq: s.seq + 1 }));
+  }, [activeSideKey, currentQueue]);
 
   const replayAudio = useCallback(() => {
-    if (currentQueue.length > 0) setQueueIdx(0);
-  }, [currentQueue.length]);
+    if (!activeSideKey || currentQueue.length === 0) return;
+    setPlayState((s) => ({ key: activeSideKey, idx: 0, seq: s.seq + 1 }));
+  }, [activeSideKey, currentQueue.length]);
 
   useEffect(() => {
-    if (queueIdx < 0 || queueIdx >= currentQueue.length) return;
-    const entry = currentQueue[queueIdx];
-    const advance = () => setQueueIdx((i) => i + 1);
+    if (!activeSideKey || playState.key !== activeSideKey) return;
+    if (playState.idx < 0 || playState.idx >= currentQueue.length) return;
+    const entry = currentQueue[playState.idx];
+    let disposed = false;
+    const advance = () => {
+      if (disposed) return;
+      setPlayState((s) => (s.key === activeSideKey ? { ...s, idx: s.idx + 1 } : s));
+    };
 
     if (entry.kind === "file") {
       if (!tauri) {
@@ -334,29 +416,36 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
       }
       const audio = new Audio(mediaUrl(entry.name));
       audio.volume = getCardEffectiveVolume();
-      audio.play().catch(() => {});
       audio.onended = advance;
+      audio.onerror = advance;
+      try {
+        void Promise.resolve(audio.play()).catch(advance);
+      } catch {
+        advance();
+      }
       const unsub = subscribeCardEffectiveVolume((vol) => {
         audio.volume = vol;
       });
       return () => {
+        disposed = true;
         unsub();
+        audio.onended = null;
+        audio.onerror = null;
         audio.pause();
         audio.src = "";
       };
     }
 
-    let cancelled = false;
     void speak(entry.text, { lang: entry.lang, voices: entry.voices, rate: entry.rate }).then(
       () => {
-        if (!cancelled) advance();
+        if (!disposed) advance();
       },
     );
     return () => {
-      cancelled = true;
+      disposed = true;
       cancelSpeech();
     };
-  }, [tauri, queueIdx, currentQueue]);
+  }, [tauri, activeSideKey, playState, currentQueue]);
 
   // Close flag menu on outside click.
   useEffect(() => {
@@ -392,7 +481,7 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
       }
       if (typing) return;
 
-      const isUndo = (e.key === "z" || e.key === "Z") && !e.altKey && !e.shiftKey;
+      const isUndo = matchesKey(e, "KeyZ", "z") && !e.altKey && !e.shiftKey;
       if (isUndo) {
         e.preventDefault();
         if (!undoMut.isPending) {
@@ -401,14 +490,14 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
         return;
       }
 
-      if (e.key === "f" && !e.metaKey && !e.ctrlKey) {
+      if (matchesKey(e, "KeyF", "f") && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         toggleFocusMode();
         return;
       }
       if (!card || answerMut.isPending || actionBusy || tutorSaveOpen) return;
 
-      if ((e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey && revealed) {
+      if (matchesKey(e, "KeyT", "t") && !e.metaKey && !e.ctrlKey && !e.altKey && revealed) {
         e.preventDefault();
         setTutorOpen((open) => !open);
         return;
@@ -416,27 +505,33 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
 
       if (tutorOpen) return;
 
-      if (e.key === "r" && !e.metaKey && !e.ctrlKey) {
+      if (matchesKey(e, "KeyR", "r") && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         replayAudio();
         return;
       }
-      if (!revealed && (e.key === " " || e.key === "Enter")) {
+      if (
+        !revealed &&
+        (matchesKey(e, "Space", " ") ||
+          matchesKey(e, "Enter", "Enter") ||
+          matchesKey(e, "NumpadEnter"))
+      ) {
         e.preventDefault();
         setRevealed(true);
         return;
       }
-      if (revealed && ["1", "2", "3", "4"].includes(e.key)) {
+      const ratingDigit = revealed ? digitHotkey(e) : null;
+      if (ratingDigit) {
         e.preventDefault();
-        const btn = getAnswerButtons(card).find((b) => b.hotkey === e.key);
+        const btn = getAnswerButtons(card).find((b) => b.hotkey === ratingDigit);
         if (btn) answerMut.mutate({ cardId: card.card_id, rating: btn.rating });
         return;
       }
-      if (e.key === "s" && !e.metaKey && !e.ctrlKey) {
+      if (matchesKey(e, "KeyS", "s") && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         suspendMut.mutate(card.card_id);
       }
-      if (e.key === "b" && !e.metaKey && !e.ctrlKey) {
+      if (matchesKey(e, "KeyB", "b") && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         buryMut.mutate(card.card_id);
       }
@@ -501,6 +596,42 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
       </button>
     </div>
   );
+
+  const actionToastNode = actionToast ? (
+    <motion.div
+      key="action-toast"
+      data-testid="study-action-toast"
+      role="status"
+      aria-live="polite"
+      initial={prefersReduced ? { opacity: 1 } : { opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={prefersReduced ? { opacity: 0 } : { opacity: 0, y: 6 }}
+      transition={{ duration: dur.fast, ease }}
+      className="glass-panel pointer-events-auto flex max-w-full items-center gap-2.5 rounded-lg border px-3 py-1.5 text-xs shadow-md sm:text-sm"
+    >
+      <span className="truncate">{actionToast.message}</span>
+      {actionToast.onUndo && (
+        <button
+          type="button"
+          className="shrink-0 rounded-sm font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={actionToast.onUndo}
+        >
+          {t("decks.undo")}
+        </button>
+      )}
+      <button
+        type="button"
+        aria-label={t("common.close")}
+        onClick={() => {
+          clearTimeout(toastTimerRef.current);
+          setActionToast(null);
+        }}
+        className="shrink-0 rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <X className="size-3.5" aria-hidden="true" />
+      </button>
+    </motion.div>
+  ) : null;
 
   return (
     <div className="relative flex h-full flex-col">
@@ -569,6 +700,15 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
             total={sessionTotal}
             className="min-w-0 flex-1 border-b-0 bg-transparent px-0 py-0 sm:px-0"
           />
+          {cardFlag > 0 && (
+            <span
+              data-testid="study-card-flag"
+              className={`inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-[11px] font-medium ${FLAG_COLORS[cardFlag] ?? ""}`}
+            >
+              <Flag className="size-3 fill-current" aria-hidden="true" />
+              {t("study.flagNumber", { n: cardFlag })}
+            </span>
+          )}
           <StreakBadge count={streakBadgeCount} />
         </div>
       )}
@@ -584,7 +724,9 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
         />
       )}
 
-      {card ? (
+      {waitingForFirstFetch ? (
+        <div className="flex-1" aria-busy="true" />
+      ) : card ? (
         <motion.div
           key={card.card_id}
           initial={{ opacity: 0, y: 8 }}
@@ -602,7 +744,11 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
               night={night}
               scale={studyScale}
               className="keepsake-card min-h-0 flex-1 rounded-xl border border-border bg-card p-4 sm:p-8 overflow-auto"
-              onQueue={revealed ? setBackQueue : setFrontQueue}
+              onQueue={(items) =>
+                revealed
+                  ? setBackPrepared({ cardId: card.card_id, items })
+                  : setFrontPrepared({ cardId: card.card_id, items })
+              }
               onTypedInput={!revealed ? setTypedAnswer : undefined}
               typedAnswer={revealed ? typedAnswer : undefined}
             />
@@ -623,7 +769,7 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
                   scale={studyScale}
                   className="keepsake-card absolute inset-0 rounded-xl border border-border bg-card p-4 sm:p-8 overflow-auto"
                   style={{ backfaceVisibility: "hidden" }}
-                  onQueue={setFrontQueue}
+                  onQueue={(items) => setFrontPrepared({ cardId: card.card_id, items })}
                   onTypedInput={setTypedAnswer}
                 />
                 {/* Back — answer (pre-rotated so it faces forward when parent is at 180°) */}
@@ -635,7 +781,7 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
                   scale={studyScale}
                   className="keepsake-card absolute inset-0 rounded-xl border border-border bg-card p-4 sm:p-8 overflow-auto"
                   style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
-                  onQueue={setBackQueue}
+                  onQueue={(items) => setBackPrepared({ cardId: card.card_id, items })}
                   typedAnswer={typedAnswer}
                 />
               </motion.div>
@@ -660,9 +806,12 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
                         hint={btn.hint}
                         hotkey={btn.hotkey}
                         variant={btn.variant}
-                        onClick={() =>
-                          answerMut.mutate({ cardId: card.card_id, rating: btn.rating })
-                        }
+                        disabled={answerMut.isPending || actionBusy}
+                        onClick={() => {
+                          if (answerPendingRef.current || answerMut.isPending) return;
+                          answerPendingRef.current = true;
+                          answerMut.mutate({ cardId: card.card_id, rating: btn.rating });
+                        }}
                       />
                     </motion.div>
                   ))}
@@ -685,98 +834,146 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
               )}
             </AnimatePresence>
 
-            {/* Card actions: tutor / audio / suspend / bury / flag */}
-            <div className="mt-3 flex flex-wrap items-center justify-end gap-1">
-              {revealed && (
-                <Button
-                  variant={tutorOpen ? "secondary" : "ghost"}
-                  size="sm"
-                  aria-expanded={tutorOpen}
-                  aria-pressed={tutorOpen}
-                  title={t("ai.tutor.shortcutHint")}
-                  className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
-                  onClick={() => setTutorOpen((open) => !open)}
-                >
-                  <Sparkles className="size-3.5 text-primary" aria-hidden />
-                  {t("ai.tutor.button")}
-                  <Kbd className="ms-0.5">T</Kbd>
-                </Button>
-              )}
-              {currentQueue.length > 0 && (
+            {/* Card actions: previous / tutor / audio / suspend / bury / flag */}
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-1">
+              <Button
+                data-testid="study-prev-card"
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+                disabled={
+                  undoMut.isPending ||
+                  answerMut.isPending ||
+                  !(sessionUndoSteps > 0 || isStudyStepUndoKind(undoStatusQuery.data?.kind))
+                }
+                onClick={() => undoMut.mutate()}
+                title={
+                  undoStatusQuery.data
+                    ? t("decks.undoAction", { action: formatUndoAction(undoStatusQuery.data) })
+                    : t("study.previousCardHint")
+                }
+              >
+                <ArrowLeft className="size-3.5 rtl:rotate-180" aria-hidden="true" />
+                {t("study.previousCard")}
+              </Button>
+              <div className="flex flex-wrap items-center justify-end gap-1">
+                {revealed && (
+                  <Button
+                    variant={tutorOpen ? "secondary" : "ghost"}
+                    size="sm"
+                    aria-expanded={tutorOpen}
+                    aria-pressed={tutorOpen}
+                    title={t("ai.tutor.shortcutHint")}
+                    className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+                    onClick={() => setTutorOpen((open) => !open)}
+                  >
+                    <Sparkles className="size-3.5 text-primary" aria-hidden />
+                    {t("ai.tutor.button")}
+                    <Kbd className="ms-0.5">T</Kbd>
+                  </Button>
+                )}
+                {currentQueue.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+                    onClick={replayAudio}
+                    title={t("study.replayHint")}
+                  >
+                    <Volume2 className="size-3.5" />
+                    {t("study.replay")}
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
                   className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
-                  onClick={replayAudio}
-                  title={t("study.replayHint")}
-                >
-                  <Volume2 className="size-3.5" />
-                  {t("study.replay")}
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
-                disabled={actionBusy}
-                onClick={() => suspendMut.mutate(card.card_id)}
-                title={t("study.suspendHint")}
-              >
-                <MinusCircle className="size-3.5" />
-                {t("study.suspend")}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
-                disabled={actionBusy}
-                onClick={() => buryMut.mutate(card.card_id)}
-                title={t("study.buryHint")}
-              >
-                <SkipForward className="size-3.5" />
-                {t("study.bury")}
-              </Button>
-              <div className="relative" ref={flagRef}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 gap-1.5 px-2 text-xs"
                   disabled={actionBusy}
-                  onClick={() => setFlagMenuOpen((o) => !o)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    flagMut.mutate({ cardId: card.card_id, flag: 0 });
-                  }}
-                  title={t("study.flagHint")}
+                  onClick={() => suspendMut.mutate(card.card_id)}
+                  title={t("study.suspendHint")}
                 >
-                  <Flag className="size-3.5 text-muted-foreground" />
-                  <span className="text-muted-foreground">{t("study.flag")}</span>
+                  <MinusCircle className="size-3.5" />
+                  {t("study.suspend")}
                 </Button>
-                <AnimatePresence>
-                  {flagMenuOpen && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.95, y: 4 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95, y: 4 }}
-                      transition={{ duration: dur.fast, ease }}
-                      role="menu"
-                      aria-label={t("study.setFlag")}
-                      className="glass-panel absolute bottom-full end-0 mb-1 flex overflow-hidden rounded-lg border shadow-md"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+                  disabled={actionBusy}
+                  onClick={() => buryMut.mutate(card.card_id)}
+                  title={t("study.hideTomorrowHint", { time: rolloverTime })}
+                >
+                  <SkipForward className="size-3.5" />
+                  {t("study.hideTomorrow")}
+                </Button>
+                <div className="relative" ref={flagRef}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1.5 px-2 text-xs"
+                    disabled={actionBusy}
+                    onClick={() => setFlagMenuOpen((o) => !o)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      flagMut.mutate({ cardId: card.card_id, flag: 0 });
+                    }}
+                    title={t("study.flagHint")}
+                  >
+                    <Flag
+                      className={`size-3.5 ${cardFlag > 0 ? `${FLAG_COLORS[cardFlag] ?? ""} fill-current` : "text-muted-foreground"}`}
+                    />
+                    <span
+                      className={
+                        cardFlag > 0
+                          ? (FLAG_COLORS[cardFlag] ?? "text-foreground")
+                          : "text-muted-foreground"
+                      }
                     >
-                      {[1, 2, 3, 4].map((f) => (
-                        <button
-                          key={f}
-                          role="menuitem"
-                          aria-label={t("study.flagNumber", { n: f })}
-                          className={`p-2 hover:bg-accent ${FLAG_COLORS[f]}`}
-                          onClick={() => flagMut.mutate({ cardId: card.card_id, flag: f })}
-                        >
-                          <Flag className="size-4" />
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                      {cardFlag > 0 ? t("study.flagNumber", { n: cardFlag }) : t("study.flag")}
+                    </span>
+                  </Button>
+                  <AnimatePresence>
+                    {flagMenuOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 4 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 4 }}
+                        transition={{ duration: dur.fast, ease }}
+                        role="menu"
+                        aria-label={t("study.setFlag")}
+                        className="glass-panel absolute bottom-full end-0 mb-1 flex overflow-hidden rounded-lg border shadow-md"
+                      >
+                        {[1, 2, 3, 4].map((f) => (
+                          <button
+                            key={f}
+                            role="menuitem"
+                            aria-label={t("study.flagNumber", { n: f })}
+                            aria-checked={cardFlag === f}
+                            className={`p-2 hover:bg-accent ${FLAG_COLORS[f]} ${cardFlag === f ? "bg-accent" : ""}`}
+                            onClick={() =>
+                              flagMut.mutate({
+                                cardId: card.card_id,
+                                flag: cardFlag === f ? 0 : f,
+                              })
+                            }
+                          >
+                            <Flag className={`size-4 ${cardFlag === f ? "fill-current" : ""}`} />
+                          </button>
+                        ))}
+                        {cardFlag > 0 && (
+                          <button
+                            role="menuitem"
+                            aria-label={t("study.clearFlag")}
+                            className="px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                            onClick={() => flagMut.mutate({ cardId: card.card_id, flag: 0 })}
+                          >
+                            {t("study.clearFlag")}
+                          </button>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               </div>
             </div>
 
@@ -794,19 +991,39 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
               />
             )}
 
-            {!focusMode && (
-              <div className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground/70">
-                <Kbd>Space</Kbd> {t("study.hint.reveal")}
-                <span className="mx-1">·</span>
-                <Kbd>1–4</Kbd> {t("study.hint.rate")}
-                <span className="mx-1">·</span>
-                <Kbd>T</Kbd> {t("ai.tutor.button")}
-                <span className="mx-1">·</span>
-                <Kbd>Z</Kbd> {t("decks.undo")}
-                <span className="mx-1">·</span>
-                <Kbd>F</Kbd> {t("study.hint.focus")}
-              </div>
-            )}
+            <div className="mt-3 flex min-h-9 items-center justify-center">
+              {actionToastNode ? (
+                <AnimatePresence>{actionToastNode}</AnimatePresence>
+              ) : (
+                !focusMode && (
+                  <div
+                    data-testid="study-shortcut-legend"
+                    className="flex flex-wrap items-center justify-center gap-1.5 text-[11px] text-muted-foreground/70"
+                  >
+                    {revealed ? (
+                      <>
+                        <Kbd>
+                          {t("study.hint.rateRange", {
+                            max: formatNumber(getAnswerButtons(card).length),
+                          })}
+                        </Kbd>{" "}
+                        {t("study.hint.rate")}
+                        <span className="mx-1">·</span>
+                        <Kbd>T</Kbd> {t("ai.tutor.button")}
+                      </>
+                    ) : (
+                      <>
+                        <Kbd>Space</Kbd> {t("study.hint.reveal")}
+                      </>
+                    )}
+                    <span className="mx-1">·</span>
+                    <Kbd>Z</Kbd> {t("study.hint.undoAnswer")}
+                    <span className="mx-1">·</span>
+                    <Kbd>F</Kbd> {t("study.hint.focus")}
+                  </div>
+                )
+              )}
+            </div>
           </div>
         </motion.div>
       ) : (
@@ -823,6 +1040,10 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
             sessionAnswered > 0
           }
           deckId={deckId}
+          deckEmpty={deckEmpty}
+          isFiltered={isFiltered}
+          canUndo={!deckEmpty && (sessionUndoSteps > 0 || undoStatusQuery.data !== null)}
+          onAddNote={() => void navigate({ to: "/add", search: { deckId } })}
           onExit={onExit}
           onUndo={() => undoMut.mutate()}
           undoPending={undoMut.isPending}
@@ -848,25 +1069,10 @@ function Session({ deckId, onExit }: { deckId: number; onExit: () => void }) {
       </AnimatePresence>
 
       <AnimatePresence>
-        {actionToast && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: dur.fast, ease }}
-            className="glass-panel absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-3 py-2 text-sm shadow-md"
-          >
-            <span>{actionToast.message}</span>
-            {actionToast.onUndo && (
-              <button
-                type="button"
-                className="font-medium text-primary hover:underline"
-                onClick={actionToast.onUndo}
-              >
-                {t("decks.undo")}
-              </button>
-            )}
-          </motion.div>
+        {!card && actionToastNode && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center px-4">
+            {actionToastNode}
+          </div>
         )}
       </AnimatePresence>
     </div>
@@ -944,12 +1150,14 @@ function AnswerButton(props: {
   hint: string;
   hotkey: string;
   variant: "again" | "hard" | "good" | "easy";
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
-    <motion.div whileTap={{ scale: 0.97 }} className="w-full">
+    <motion.div whileTap={{ scale: props.disabled ? 1 : 0.97 }} className="w-full">
       <Button
         variant={props.variant}
+        disabled={props.disabled}
         className="h-auto w-full flex-col gap-0.5 py-2"
         onClick={props.onClick}
       >

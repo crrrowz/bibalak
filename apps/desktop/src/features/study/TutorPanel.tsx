@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookmarkPlus, Check, Copy, Loader2, Sparkles, X } from "lucide-react";
+import { BookmarkPlus, Check, Copy, Sparkles, X } from "lucide-react";
 import type { AIActionRequest, StudyCardDto } from "@bibalak/ipc-types";
 import { CardFace } from "@/components/CardFace";
 import {
@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Kbd } from "@/components/Kbd";
 import { Select } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { useAiActionRunner } from "@/hooks/useAiActionRunner";
 import { buildAppendedFieldHtml } from "@/lib/aiFormat";
 import { t } from "@/lib/i18n";
@@ -341,7 +342,7 @@ export function TutorPanel({
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pe-1">
               {runner.phase === "loading-preview" && (
                 <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  <Spinner />
                   <span>{t("ai.loadingPreview")}</span>
                 </div>
               )}
@@ -404,7 +405,7 @@ export function TutorPanel({
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pe-1">
           {noteQuery.isLoading && (
             <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              <Spinner />
               <span>{t("common.loading")}</span>
             </div>
           )}
@@ -476,7 +477,7 @@ export function TutorPanel({
           >
             {saveMut.isPending ? (
               <>
-                <Loader2 className="me-1.5 size-3.5 animate-spin" aria-hidden />
+                <Spinner className="me-1.5" />
                 {t("ai.tutor.saving")}
               </>
             ) : (

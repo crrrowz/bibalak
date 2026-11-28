@@ -196,11 +196,7 @@ export function TimeGridAllDayStrip({
               >
                 <span className="flex min-w-0 items-center gap-1">
                   {isDone && <Check className="size-3 shrink-0 text-good" aria-hidden="true" />}
-                  <span
-                    dir="auto"
-                    title={h.title}
-                    className="min-w-0 overflow-hidden leading-snug [overflow-wrap:anywhere]"
-                  >
+                  <span dir="auto" title={h.title} className="min-w-0 truncate leading-snug">
                     {h.title}
                   </span>
                 </span>

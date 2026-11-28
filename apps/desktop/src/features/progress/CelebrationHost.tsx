@@ -1,13 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Check, X } from "lucide-react";
 import { AvatarStage } from "@/components/avatar/AvatarStage";
 import { useGameDepthState } from "@/features/game/depth/useGameDepth";
 import { useGameState } from "@/features/game/useGameState";
 import { useMotivationState } from "@/features/motivation/useMotivation";
-import { pushNotification } from "@/features/notifications/notificationStore";
+import {
+  pushNotification,
+  setNotificationCollectionScope,
+} from "@/features/notifications/notificationStore";
 import { formatNumber, t } from "@/lib/i18n";
+import { ipc, isTauri } from "@/lib/ipc";
 import { dur, ease, useReducedMotion } from "@/lib/motion";
+import { queryKeys } from "@/lib/queryKeys";
 import { playStyleCue } from "@/lib/styleAudio";
 import { getStyleSkin } from "@/lib/styles/skins";
 import { cn } from "@/lib/utils";
@@ -17,6 +23,19 @@ import { GameRankDialog } from "./GameRankDialog";
 import { useProgressSummary } from "./useProgressSummary";
 
 export const GOAL_CELEBRATED_DAY_KEY = "keepsake-goal-celebrated-day";
+
+function hashCollectionScope(raw: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < raw.length; i++) {
+    h ^= raw.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
+function scopedCelebrationKey(baseKey: string, scopeHash: string): string {
+  return scopeHash ? `${baseKey}:${scopeHash}` : baseKey;
+}
 
 interface PendingDialog {
   mode: "game_rank" | "scholar_certificate";
@@ -66,30 +85,61 @@ export function CelebrationHost() {
   const reducedMotion = Boolean(useReducedMotion());
   const { data } = useProgressSummary();
   const { data: motivationData } = useMotivationState();
+  const appInfoQuery = useQuery({
+    queryKey: queryKeys.appInfo,
+    queryFn: async () => (await ipc.appInfo()) ?? null,
+    enabled: isTauri(),
+    staleTime: Infinity,
+  });
+  const mediaDir = appInfoQuery.data?.media_dir ?? "";
+  const scopeHash = useMemo(() => (mediaDir ? hashCollectionScope(mediaDir) : ""), [mediaDir]);
+
+  useEffect(() => {
+    setNotificationCollectionScope(mediaDir || null);
+  }, [mediaDir]);
+
   const gameQuery = useGameState(skin !== null);
   const depthQuery = useGameDepthState(style === "game");
   const [pending, setPending] = useState<PendingDialog | null>(null);
   const [goalBanner, setGoalBanner] = useState<GoalCelebrationState | null>(null);
   const sawUnmetDayRef = useRef<number | null>(null);
+  const prevStyleRef = useRef<Style>(style);
+  const styleChanged = prevStyleRef.current !== style;
+
+  useEffect(() => {
+    prevStyleRef.current = style;
+  }, [style]);
 
   useEffect(() => {
     if (!motivationData) return;
     const today = motivationData.today_day_index;
-    const seenDay = readHighWater(GOAL_CELEBRATED_DAY_KEY);
+    const goalKey = scopedCelebrationKey(GOAL_CELEBRATED_DAY_KEY, scopeHash);
+    let seenDay = readHighWater(goalKey);
+    if (seenDay !== null && today < seenDay) {
+      // Collection switched or reset to an earlier day index: clear stale high-water ceiling.
+      seenDay = null;
+    }
 
     if (!motivationData.goal_met_today) {
       sawUnmetDayRef.current = today;
+      if (seenDay === null && readHighWater(goalKey) !== null) {
+        try {
+          localStorage.removeItem(goalKey);
+        } catch {
+          // ignore storage failures
+        }
+      }
       return;
     }
 
     const transitionedThisSession = sawUnmetDayRef.current === today;
     if (seenDay === null) {
-      writeHighWater(GOAL_CELEBRATED_DAY_KEY, today);
+      writeHighWater(goalKey, today);
       if (!transitionedThisSession) {
         return;
       }
     } else if (today > seenDay) {
-      writeHighWater(GOAL_CELEBRATED_DAY_KEY, today);
+      writeHighWater(goalKey, today);
     } else {
       return;
     }
@@ -99,10 +149,10 @@ export function CelebrationHost() {
       earned: motivationData.today_xp,
       goal: motivationData.daily_goal_xp,
     });
-    if (style === "game" || style === "scholar") {
+    if (!styleChanged && (style === "game" || style === "scholar")) {
       playStyleCue("unlock");
     }
-  }, [motivationData, style]);
+  }, [motivationData, scopeHash, style, styleChanged]);
 
   useEffect(() => {
     if (!goalBanner) return;
@@ -122,15 +172,17 @@ export function CelebrationHost() {
     for (const s of allSkins) {
       const currentLevel = data.level;
       const currentTier = s.rankForLevel(currentLevel).index;
-      const seenLevel = readHighWater(s.celebration.levelSeenStorageKey);
-      const seenTier = readHighWater(s.celebration.tierSeenStorageKey);
+      const levelKey = scopedCelebrationKey(s.celebration.levelSeenStorageKey, scopeHash);
+      const tierKey = scopedCelebrationKey(s.celebration.tierSeenStorageKey, scopeHash);
+      const seenLevel = readHighWater(levelKey);
+      const seenTier = readHighWater(tierKey);
 
       const isActiveSkin = skin?.id === s.id;
 
       if (seenLevel === null) {
-        writeHighWater(s.celebration.levelSeenStorageKey, currentLevel);
+        writeHighWater(levelKey, currentLevel);
       } else if (currentLevel > seenLevel) {
-        writeHighWater(s.celebration.levelSeenStorageKey, currentLevel);
+        writeHighWater(levelKey, currentLevel);
         if (isActiveSkin) {
           pushNotification({
             kind: "level_up",
@@ -147,9 +199,9 @@ export function CelebrationHost() {
       }
 
       if (seenTier === null) {
-        writeHighWater(s.celebration.tierSeenStorageKey, currentTier);
+        writeHighWater(tierKey, currentTier);
       } else if (currentTier > seenTier) {
-        writeHighWater(s.celebration.tierSeenStorageKey, currentTier);
+        writeHighWater(tierKey, currentTier);
         if (isActiveSkin) {
           const rankLabel = t(s.rankForLevel(currentLevel).labelKey);
           pushNotification({
@@ -173,10 +225,10 @@ export function CelebrationHost() {
       }
     }
 
-    if (cueTriggered) {
+    if (cueTriggered && !styleChanged) {
       playStyleCue("level_up");
     }
-  }, [data, skin]);
+  }, [data, scopeHash, skin, styleChanged]);
 
   const avatar = gameQuery.data?.avatar ?? null;
   const equipped = gameQuery.data?.equipped ?? null;

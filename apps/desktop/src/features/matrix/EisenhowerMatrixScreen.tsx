@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Check, FolderKanban, LayoutGrid, List, Undo2 } from "lucide-react";
+import { CalendarClock, Check, FolderKanban, LayoutGrid, List } from "lucide-react";
 import type {
   MatrixQuadrantDto,
   QuadrantKey,
@@ -17,7 +17,7 @@ import { useProgressSummary } from "@/features/progress/useProgressSummary";
 import { errorMessage, ipc, isTauri } from "@/lib/ipc";
 import { formatNumber, t, tn } from "@/lib/i18n";
 import { queryKeys } from "@/lib/queryKeys";
-import { formatUndoAction } from "@/lib/undo";
+import { pushUndoToast } from "@/lib/undoToast";
 import { cn } from "@/lib/utils";
 import { toast } from "@/stores/toast";
 import {
@@ -154,15 +154,29 @@ export function EisenhowerMatrixScreen() {
   const toggleCompleteMut = useMutation({
     mutationFn: (task: TaskDto) =>
       task.completed_at !== null ? ipc.reopenTask(task.id) : ipc.completeTask(task.id),
-    onSuccess: () => void invalidateAll(),
+    onSuccess: (_data, task) => {
+      void invalidateAll();
+      pushUndoToast(
+        t(task.completed_at !== null ? "undo.action.reopenTask" : "undo.action.completeTask", {
+          title: task.title,
+        }),
+        () => undoMut.mutateAsync(),
+      );
+    },
     onError: onMutError,
   });
 
   const deleteTaskMut = useMutation({
     mutationFn: (id: string) => ipc.deleteTask(id),
     onSuccess: (_res, id) => {
+      const deletedTitle = tasks.find((item) => item.id === id)?.title ?? "";
       if (selectedTaskId === id) setSelectedTaskId(null);
       void invalidateAll();
+      if (deletedTitle) {
+        pushUndoToast(t("undo.action.deleteTask", { title: deletedTitle }), () =>
+          undoMut.mutateAsync(),
+        );
+      }
     },
     onError: onMutError,
   });
@@ -604,19 +618,6 @@ export function EisenhowerMatrixScreen() {
               </button>
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => undoMut.mutate()}
-              disabled={!tauri || undoMut.isPending || !undoAction}
-              title={
-                undoAction
-                  ? t("decks.undoAction", { action: formatUndoAction(undoAction) })
-                  : t("decks.undoEmpty")
-              }
-            >
-              <Undo2 /> {t("decks.undo")}
-            </Button>
             {viewMode === "matrix" && (
               <Button
                 variant="outline"

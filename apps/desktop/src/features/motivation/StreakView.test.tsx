@@ -190,4 +190,22 @@ describe("StreakView (16e)", () => {
       expect(calSpy).toHaveBeenCalledWith(2024, 2);
     });
   });
+
+  it("A5-07: renders month title as h2 when showTitle is false so headings never skip from h1 to h3", async () => {
+    vi.spyOn(ipcModule.ipc, "getMotivationState").mockResolvedValue(
+      (motivationMocks.get_motivation_state as () => MotivationStateDto)(),
+    );
+    vi.spyOn(ipcModule.ipc, "getStreakCalendar").mockResolvedValue(makeCalendar(2026, 11));
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <StreakContent showTitle={false} />
+      </QueryClientProvider>,
+    );
+
+    const h2 = await screen.findByRole("heading", { level: 2 });
+    expect(h2).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 3 })).toBeNull();
+  });
 });

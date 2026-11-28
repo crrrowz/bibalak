@@ -574,7 +574,7 @@ mod tests {
 
         run(&mut conn).unwrap();
 
-        assert_eq!(user_version(&conn).unwrap(), 15);
+        assert_eq!(user_version(&conn).unwrap(), MIGRATIONS.len() as i64);
         let expected_id =
             bibalak_core::motivation::motivation_settings_id(bibalak_core::progress::NIL_USER_ID);
         let (id, goal, usn): (String, i64, i64) = conn
@@ -866,5 +866,46 @@ mod tests {
         let check = Connection::open(&db_path).unwrap();
         assert_eq!(user_version(&check).unwrap(), 99);
         assert!(!dir.path().join("collection.pre-v99.sqlite").exists());
+    }
+
+    #[test]
+    fn migration_v15_on_disk_to_v16_creates_notes_sort_field_index() {
+        let dir = H2TempDir::new("mig_v15");
+        let db_path = dir.path().join("collection.sqlite");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            for (version, sql) in MIGRATIONS.iter().take(15).enumerate() {
+                conn.execute_batch(sql).unwrap();
+                conn.pragma_update(None, "user_version", version as i64 + 1)
+                    .unwrap();
+            }
+            conn.execute_batch(
+                r#"
+                INSERT INTO notetypes (id, name, kind, "mod", usn, config)
+                VALUES (1, 'Basic', 0, 1000, 0, '{}');
+                INSERT INTO notes (id, guid, notetype_id, "mod", usn, tags, fields, sort_field)
+                VALUES (1, 'guid-v15-1', 1, 1000, 0, '', 'Alpha' || char(31) || 'Beta', 'Alpha');
+                "#,
+            )
+            .unwrap();
+        }
+
+        let storage = crate::SqliteStorage::open(&db_path).unwrap();
+        let conn = storage.lock();
+        assert_eq!(user_version(&conn).unwrap(), MIGRATIONS.len() as i64);
+        let idx_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_notes_sort_field'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx_count, 1);
+        let sort_field: String = conn
+            .query_row("SELECT sort_field FROM notes WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(sort_field, "Alpha");
     }
 }

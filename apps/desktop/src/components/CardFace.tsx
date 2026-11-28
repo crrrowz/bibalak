@@ -9,6 +9,7 @@ import {
   parseFrameMessage,
   prepareForFrame,
   themeVariables,
+  type FrameMessage,
 } from "@/lib/cardFrame";
 import { t } from "@/lib/i18n";
 import { getCardEffectiveVolume, useSound } from "@/stores/sound";
@@ -29,6 +30,48 @@ interface CardFaceProps {
   onTypedInput?: (value: string) => void;
   /** What the user typed on the front side, to diff against `.keepsake-typeans` (back side only). */
   typedAnswer?: string;
+}
+
+const SAFE_STUDY_CODES = new Set([
+  "Space",
+  "Enter",
+  "Escape",
+  "Digit1",
+  "Digit2",
+  "Digit3",
+  "Digit4",
+  "Numpad1",
+  "Numpad2",
+  "Numpad3",
+  "Numpad4",
+  "KeyZ",
+  "KeyF",
+  "KeyT",
+  "KeyR",
+  "KeyS",
+  "KeyB",
+]);
+
+const SAFE_STUDY_KEYS = new Set([
+  " ",
+  "enter",
+  "escape",
+  "1",
+  "2",
+  "3",
+  "4",
+  "z",
+  "f",
+  "t",
+  "r",
+  "s",
+  "b",
+]);
+
+function isSafeStudyKey(msg: Extract<FrameMessage, { type: "key" }>): boolean {
+  if (msg.ctrlKey || msg.metaKey || msg.altKey) return false;
+  if (msg.code) return SAFE_STUDY_CODES.has(msg.code);
+  return SAFE_STUDY_KEYS.has(msg.key.toLowerCase());
 }
 
 /**
@@ -135,14 +178,15 @@ export function CardFace({
           frame.focus();
           break;
         case "key":
+          if (!isSafeStudyKey(msg)) break;
           document.dispatchEvent(
             new KeyboardEvent("keydown", {
               key: msg.key,
               code: msg.code,
-              ctrlKey: msg.ctrlKey,
+              ctrlKey: false,
               shiftKey: msg.shiftKey,
-              altKey: msg.altKey,
-              metaKey: msg.metaKey,
+              altKey: false,
+              metaKey: false,
               bubbles: true,
               cancelable: true,
             }),

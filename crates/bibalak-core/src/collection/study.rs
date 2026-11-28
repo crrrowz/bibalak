@@ -29,6 +29,7 @@ fn prefer_new(new_done: u32, new_remaining: u32, rev_done: u32, rev_remaining: u
 /// Precomputed non-filtered deck hierarchy and remaining daily allowances for
 /// one pass over a study subtree or deck list.
 pub(crate) struct StudySubtreePlan {
+    parents: HashMap<i64, Option<i64>>,
     children: HashMap<i64, Vec<i64>>,
     filtered: HashSet<i64>,
     subtree_studied: HashMap<i64, (u32, u32)>,
@@ -44,6 +45,7 @@ impl StudySubtreePlan {
             .all_today_studied(collection.today_start_ms())?;
         let extra_new = collection.storage.all_day_extra_new(collection.today())?;
 
+        let mut parents: HashMap<i64, Option<i64>> = HashMap::with_capacity(decks.len());
         let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
         let mut filtered: HashSet<i64> = HashSet::new();
         for d in &decks {
@@ -51,6 +53,7 @@ impl StudySubtreePlan {
                 filtered.insert(d.id);
                 continue;
             }
+            parents.insert(d.id, d.parent_id);
             if let Some(pid) = d.parent_id {
                 children.entry(pid).or_default().push(d.id);
             }
@@ -89,11 +92,33 @@ impl StudySubtreePlan {
         }
 
         Ok(Self {
+            parents,
             children,
             filtered,
             subtree_studied,
             subtree_remaining,
         })
+    }
+
+    /// Remaining `(new, review)` cap imposed by every non-filtered ancestor above `deck_id`
+    /// (Anki v3 `rslib/src/scheduler/queue/builder.rs` deck-tree limits).
+    fn ancestor_cap(&self, deck_id: i64) -> (u32, u32) {
+        if self.filtered.contains(&deck_id) {
+            return (u32::MAX, u32::MAX);
+        }
+        let mut cap = (u32::MAX, u32::MAX);
+        let mut seen = HashSet::new();
+        let mut curr = self.parents.get(&deck_id).copied().flatten();
+        while let Some(pid) = curr {
+            if !seen.insert(pid) || self.filtered.contains(&pid) {
+                break;
+            }
+            if let Some(&(n, r)) = self.subtree_remaining.get(&pid) {
+                cap = (cap.0.min(n), cap.1.min(r));
+            }
+            curr = self.parents.get(&pid).copied().flatten();
+        }
+        cap
     }
 
     fn compute_subtree_studied(
@@ -137,9 +162,25 @@ impl StudySubtreePlan {
 
     /// Accumulate per-deck study data across `deck_id`'s non-filtered subtree
     /// under Anki v3 daily limits: every deck's effective limit is capped by its
-    /// own remaining allowance and every ancestor's up to (and including)
-    /// `deck_id`, and each subtree total is capped by its root's allowance.
+    /// own remaining allowance and every ancestor's up to the root (including
+    /// ancestors above `deck_id`), and each subtree total is capped by its root's allowance.
     pub(crate) fn map_subtree<T, F, C>(
+        &self,
+        deck_id: i64,
+        parent_cap: (u32, u32),
+        fetch: &mut F,
+        combine: &C,
+    ) -> CoreResult<T>
+    where
+        F: FnMut(i64, (u32, u32)) -> CoreResult<T>,
+        C: Fn(T, Vec<T>, (u32, u32)) -> T,
+    {
+        let anc = self.ancestor_cap(deck_id);
+        let root_parent_cap = (parent_cap.0.min(anc.0), parent_cap.1.min(anc.1));
+        self.map_subtree_inner(deck_id, root_parent_cap, fetch, combine)
+    }
+
+    fn map_subtree_inner<T, F, C>(
         &self,
         deck_id: i64,
         parent_cap: (u32, u32),
@@ -160,7 +201,7 @@ impl StudySubtreePlan {
         let kids = self.children_of(deck_id);
         let mut child_vals = Vec::with_capacity(kids.len());
         for &kid in kids {
-            child_vals.push(self.map_subtree(kid, my_cap, fetch, combine)?);
+            child_vals.push(self.map_subtree_inner(kid, my_cap, fetch, combine)?);
         }
         Ok(combine(own, child_vals, my_cap))
     }
@@ -287,6 +328,25 @@ impl Collection {
         let review = queue.review;
         let learning_ahead = queue.learning_ahead;
 
+        // If an answer was just undone, return that undone card next when it is
+        // still eligible in this deck's subtree (Anki rslib/src/scheduler/answering/undo.rs).
+        if let Some(undone_id) = self.last_undone_card_id() {
+            if self.is_undone_card_eligible(
+                undone_id,
+                deck_id,
+                &plan,
+                today,
+                now_ms,
+                today_end_ms,
+                &learning,
+                &new,
+                &review,
+                &learning_ahead,
+            )? {
+                return Ok(Some(undone_id));
+            }
+        }
+
         // A just-answered card must not resurface immediately — but only while
         // some other card can be shown instead. Look up last-answered times
         // once for every candidate that could be affected (due-now learning
@@ -386,6 +446,63 @@ impl Collection {
         }
     }
 
+    /// Return true when `undone_id` can be served next for `deck_id`.
+    #[allow(clippy::too_many_arguments)]
+    fn is_undone_card_eligible(
+        &self,
+        undone_id: i64,
+        deck_id: i64,
+        plan: &StudySubtreePlan,
+        today: i32,
+        now_ms: i64,
+        today_end_ms: i64,
+        learning: &[i64],
+        new: &[i64],
+        review: &[i64],
+        learning_ahead: &[i64],
+    ) -> CoreResult<bool> {
+        if learning.contains(&undone_id)
+            || new.contains(&undone_id)
+            || review.contains(&undone_id)
+            || learning_ahead.contains(&undone_id)
+        {
+            return Ok(true);
+        }
+        let Some(card) = self.storage.study_card(undone_id)? else {
+            return Ok(false);
+        };
+        if self.storage.card_queue(undone_id)?.is_some_and(|q| q < 0) {
+            return Ok(false);
+        }
+        let subtree = self.study_subtree(deck_id)?;
+        if !subtree.contains(&card.deck_id) {
+            return Ok(false);
+        }
+        let is_filtered = plan.filtered.contains(&deck_id);
+        let anc = plan.ancestor_cap(card.deck_id);
+        let own_rem = plan
+            .subtree_remaining
+            .get(&card.deck_id)
+            .copied()
+            .unwrap_or((0, 0));
+        let eff = (anc.0.min(own_rem.0), anc.1.min(own_rem.1));
+        let q = self.storage.card_queue(undone_id)?.unwrap_or(0);
+        match card.state.phase {
+            CardPhase::New => Ok(eff.0 > 0),
+            CardPhase::Review => Ok(eff.1 > 0 && (is_filtered || card.due <= i64::from(today))),
+            CardPhase::Learning | CardPhase::Relearning => {
+                if is_filtered {
+                    return Ok(true);
+                }
+                if q == 3 {
+                    Ok(card.due <= i64::from(today))
+                } else {
+                    Ok(card.due <= now_ms.saturating_add(20 * 60_000) && card.due < today_end_ms)
+                }
+            }
+        }
+    }
+
     /// Unbury all buried cards if the day has rolled over since the last unbury.
     /// Returns `true` if an unbury was executed.
     pub fn maybe_unbury_day_rollover(&self) -> CoreResult<bool> {
@@ -470,13 +587,17 @@ impl Collection {
         let leech_threshold = config.leech_threshold;
         let algorithm = config.algorithm;
         let today = self.today();
+        let min_ivl = config.minimum_interval_days.max(1);
+        let max_ivl = config.maximum_interval_days.max(min_ivl);
         let ctx = SchedContext { today, config };
         let outcome = scheduler_set.answer(algorithm, &card.state, rating, &ctx);
 
         let now = self.clock.now_ms();
         let due = match outcome.interval {
             Interval::Days(days) => {
-                let fuzzed = scheduler_set.fuzz_days(days, card_id);
+                let fuzzed = scheduler_set
+                    .fuzz_days(days, card_id)
+                    .clamp(min_ivl.min(days), max_ivl);
                 i64::from(today) + i64::from(fuzzed)
             }
             Interval::Minutes(minutes) => now + i64::from(minutes) * 60_000,
@@ -562,27 +683,27 @@ impl Collection {
                 i64::from(next.interval_days),
             ) && next.phase == crate::scheduling::CardPhase::Review,
         };
-        let outcome =
-            self.storage
-                .apply_answer_with_game(card_id, next, due, log, reward.as_ref(), &ctx)?;
+        // Leech detection: only fire when this answer recorded a new lapse.
+        let is_leech = leech_threshold > 0
+            && next.lapses > prev.lapses
+            && next.lapses.is_multiple_of(leech_threshold);
+        let outcome = self.storage.apply_answer_atomic(
+            card_id,
+            note_id,
+            next,
+            due,
+            log,
+            reward.as_ref(),
+            is_leech,
+            &ctx,
+        )?;
         let granted = outcome.reward_granted;
-        // Sibling bury: keep siblings off the queue for the rest of the session.
-        let buried_siblings = self.storage.bury_siblings(note_id, card_id, now_ms)?;
+        let buried_siblings = outcome.buried_siblings;
         if !buried_siblings.is_empty() {
             self.mark_bury_day_initialized(now_ms);
         }
-        // Leech detection.
-        let is_leech =
-            leech_threshold > 0 && next.lapses > 0 && next.lapses.is_multiple_of(leech_threshold);
-        // Undo removes the tag only if this answer added it.
-        let added_leech_tag = is_leech
-            && !self
-                .storage
-                .note_detail(note_id)?
-                .is_some_and(|n| n.tags.iter().any(|t| t == "leech"));
+        let added_leech_tag = outcome.added_leech_tag;
         if is_leech {
-            self.storage.add_note_tag(note_id, "leech", now_ms)?;
-            self.storage.suspend_cards(&[card_id], now_ms)?;
             self.events.emit(DomainEvent::NoteUpdated { note_id });
         }
         let revlog_id = outcome.revlog_id;
@@ -594,7 +715,8 @@ impl Collection {
         let day_end_ms = day_start_ms + crate::progress::MS_PER_DAY;
         let created_ms = self.created_ms;
         let created_day = crate::progress::created_epoch_day(created_ms, tz_offset, rollover);
-        self.record_undo(UndoAction::AnswerCard, move |s, now| {
+        self.set_last_undone_card_id(None);
+        self.record_undo_for_card(UndoAction::AnswerCard, card_id, move |s, now| {
             s.undo_answer(
                 card_id,
                 &prev_state,
@@ -605,7 +727,7 @@ impl Collection {
                 undo_reward_key.as_deref(),
                 now,
             )?;
-            s.revoke_streak_freeze_if_inactive(answer_day, day_start_ms, day_end_ms, now)?;
+            s.revoke_streak_freeze_if_inactive(answer_day, tz_offset, rollover, created_ms, now)?;
             let undo_today =
                 crate::progress::day_index_for_ms(now, tz_offset, rollover, created_day) as i32;
             if crate::progress::is_habit_day_reward_eligible(answer_day, undo_today) {
@@ -638,6 +760,7 @@ impl Collection {
             crate::progress::NIL_USER_ID,
             self.today_start_ms(),
             self.today_end_ms(),
+            self.today(),
         )?;
         let spent_gold_cents = self
             .storage
@@ -711,6 +834,15 @@ impl Collection {
         )
     }
 
+    fn record_cards_restore_undo(&self, action: UndoAction, prev: Vec<crate::model::Card>) {
+        if prev.len() == 1 {
+            let card_id = prev[0].id;
+            self.record_undo_for_card(action, card_id, move |s, now| s.restore_cards(&prev, now));
+        } else {
+            self.record_undo(action, move |s, now| s.restore_cards(&prev, now));
+        }
+    }
+
     /// Suspend cards (sets `queue = -1`). Records one undo step and emits one event.
     pub fn suspend_cards(&self, card_ids: &[i64]) -> CoreResult<()> {
         if card_ids.is_empty() {
@@ -720,10 +852,14 @@ impl Collection {
         let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage.suspend_cards(card_ids, now_ms)?;
         if !prev.is_empty() {
+            if self
+                .last_undone_card_id()
+                .is_some_and(|id| card_ids.contains(&id))
+            {
+                self.set_last_undone_card_id(None);
+            }
             let count = prev.len() as u32;
-            self.record_undo(UndoAction::SuspendCards { count }, move |s, now| {
-                s.restore_cards(&prev, now)
-            });
+            self.record_cards_restore_undo(UndoAction::SuspendCards { count }, prev);
         }
         self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         Ok(())
@@ -738,10 +874,16 @@ impl Collection {
         let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage.unsuspend_cards(card_ids, now_ms)?;
         if !prev.is_empty() {
+            if prev.len() == 1 {
+                self.set_last_undone_card_id(Some(prev[0].id));
+            } else if self
+                .last_undone_card_id()
+                .is_some_and(|id| card_ids.contains(&id))
+            {
+                self.set_last_undone_card_id(None);
+            }
             let count = prev.len() as u32;
-            self.record_undo(UndoAction::UnsuspendCards { count }, move |s, now| {
-                s.restore_cards(&prev, now)
-            });
+            self.record_cards_restore_undo(UndoAction::UnsuspendCards { count }, prev);
         }
         self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         Ok(())
@@ -757,10 +899,14 @@ impl Collection {
         let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage.bury_cards(card_ids, now_ms)?;
         if !prev.is_empty() {
+            if self
+                .last_undone_card_id()
+                .is_some_and(|id| card_ids.contains(&id))
+            {
+                self.set_last_undone_card_id(None);
+            }
             let count = prev.len() as u32;
-            self.record_undo(UndoAction::BuryCards { count }, move |s, now| {
-                s.restore_cards(&prev, now)
-            });
+            self.record_cards_restore_undo(UndoAction::BuryCards { count }, prev);
         }
         self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         Ok(())
@@ -776,10 +922,16 @@ impl Collection {
         let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage.unbury_cards(card_ids, now_ms)?;
         if !prev.is_empty() {
+            if prev.len() == 1 {
+                self.set_last_undone_card_id(Some(prev[0].id));
+            } else if self
+                .last_undone_card_id()
+                .is_some_and(|id| card_ids.contains(&id))
+            {
+                self.set_last_undone_card_id(None);
+            }
             let count = prev.len() as u32;
-            self.record_undo(UndoAction::UnburyCards { count }, move |s, now| {
-                s.restore_cards(&prev, now)
-            });
+            self.record_cards_restore_undo(UndoAction::UnburyCards { count }, prev);
         }
         self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         Ok(())
@@ -794,6 +946,12 @@ impl Collection {
         let prev = self.storage.cards_by_ids(card_ids)?;
         self.storage.set_card_flag(card_ids, flag, now_ms)?;
         if !prev.is_empty() {
+            if self
+                .last_undone_card_id()
+                .is_some_and(|id| card_ids.contains(&id))
+            {
+                self.set_last_undone_card_id(None);
+            }
             let count = prev.len() as u32;
             self.record_undo(UndoAction::SetCardFlag { count }, move |s, now| {
                 s.restore_cards(&prev, now)
@@ -815,6 +973,12 @@ impl Collection {
             self.storage
                 .forget_cards_with_revlog(card_ids, reset_counts, now_ms)?;
         if !prev.is_empty() {
+            if self
+                .last_undone_card_id()
+                .is_some_and(|id| card_ids.contains(&id))
+            {
+                self.set_last_undone_card_id(None);
+            }
             let count = prev.len() as u32;
             self.record_undo(UndoAction::ForgetCards { count }, move |s, now| {
                 s.restore_cards(&prev, now)?;
@@ -823,6 +987,60 @@ impl Collection {
             self.events.emit(DomainEvent::DeckChanged { deck_id: 0 });
         }
         Ok(())
+    }
+
+    /// Perform a full deck-level progress reset (F1): resets cards in `deck_id` (and
+    /// non-filtered subdecks), wipes their `revlog` rows, soft-deletes their review
+    /// XP/gold ledger grants, revokes pet credits, clears today's extra-new override,
+    /// invalidates XP caches, and reconciles motivation. Undo restores everything.
+    pub fn reset_deck_progress(&self, deck_id: i64) -> CoreResult<u32> {
+        self.reset_deck_progress_scoped(deck_id, true)
+    }
+
+    /// Variant of [`Collection::reset_deck_progress`] allowing the UI dialog to choose
+    /// whether non-filtered subdecks are included.
+    pub fn reset_deck_progress_scoped(
+        &self,
+        deck_id: i64,
+        include_subdecks: bool,
+    ) -> CoreResult<u32> {
+        let deck = self
+            .storage
+            .deck_by_id(deck_id)?
+            .ok_or_else(|| CoreError::NotFound(format!("deck {deck_id}")))?;
+        if deck.is_filtered {
+            return Err(CoreError::Invalid(
+                "cannot reset progress of a filtered deck".into(),
+            ));
+        }
+        let deck_ids = if include_subdecks {
+            self.study_subtree(deck_id)?
+        } else {
+            vec![deck_id]
+        };
+        let now_ms = self.clock.now_ms();
+        let today = self.today();
+        let snap = self.storage.reset_deck_progress(&deck_ids, today, now_ms)?;
+        let count = snap.cards.len() as u32;
+        if let Some(undone_id) = self.last_undone_card_id() {
+            if snap.cards.iter().any(|c| c.id == undone_id) {
+                self.set_last_undone_card_id(None);
+            }
+        }
+        let _ = self.reconcile_motivation(true)?;
+        if count > 0 || !snap.day_limit_overrides.is_empty() {
+            self.record_undo(
+                UndoAction::ResetDeckProgress {
+                    name: deck.name,
+                    count,
+                },
+                move |s, now| s.restore_deck_reset(&snap, now),
+            );
+        }
+        self.events.emit(DomainEvent::DeckChanged { deck_id });
+        self.events.emit(DomainEvent::SchemaChanged);
+        self.events.emit(DomainEvent::GameChanged);
+        Ok(count)
     }
 
     /// Reschedule `card_ids` using an Anki relative due-date string (`"0"`, `"3"`, `"1-7"`).
@@ -839,6 +1057,12 @@ impl Collection {
             .storage
             .set_due_date(card_ids, min_days, max_days, today, now_ms)?;
         if !prev.is_empty() {
+            if self
+                .last_undone_card_id()
+                .is_some_and(|id| card_ids.contains(&id))
+            {
+                self.set_last_undone_card_id(None);
+            }
             let count = prev.len() as u32;
             self.record_undo(UndoAction::SetDueDate { count }, move |s, now| {
                 s.restore_cards(&prev, now)

@@ -11,6 +11,7 @@ vi.mock("./ipc", () => ({
   isTauri: () => true,
   ipc: {
     setLocalOffset: vi.fn(),
+    getCollectionPrefs: vi.fn().mockResolvedValue({ rollover_hour: 4 }),
   },
 }));
 
@@ -143,7 +144,7 @@ describe("useCoreEvents", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.archivedHabits });
   });
 
-  it("14d: invalidates gameState, customRewards, spendHistory, and gameDepthState on game-changed, card-answered, productivity-changed, and schema-changed", () => {
+  it("14d: invalidates gameState on game-changed/card-answered/productivity-changed/schema-changed and depth caches on game/schema changes", () => {
     const { emit, invalidateSpy } = mountCoreEvents();
 
     for (const event of [
@@ -155,11 +156,19 @@ describe("useCoreEvents", () => {
       invalidateSpy.mockClear();
       emit(event);
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.gameState });
+    }
+
+    for (const event of ["game-changed", "schema-changed"] satisfies CoreEventName[]) {
+      invalidateSpy.mockClear();
+      emit(event);
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.customRewards });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.spendHistory });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.gameDepthState });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.progressSummary });
     }
+
+    invalidateSpy.mockClear();
+    emit("game-changed");
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.progressSummary });
   });
 
   it("ARCH7: invalidates notesDetail(id) on notes-changed and notetypesDetail(id) on schema-changed", () => {
